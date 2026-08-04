@@ -1,0 +1,5 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "后端分层规范索引，实现前先过一遍已有约定"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "app/ 模块划分（connectors/ingest/retrieval/agent/api）需要和项目既有后端目录结构约定对齐"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "content_item/segment 建表、Alembic 迁移、HNSW/GIN 索引写法需遵循项目数据库约定"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "EmptySuccess/TransientFetchError 的异常类型设计和传播方式需符合项目错误处理约定"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "empty_success_total 等可观测性指标、429/重试日志需符合项目日志规范"}

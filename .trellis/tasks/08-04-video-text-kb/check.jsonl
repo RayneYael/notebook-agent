@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "check 阶段核对代码是否遵循后端分层规范索引"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "check 阶段核对是否有禁止模式、测试覆盖是否达标"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "check 阶段重点核对 EmptySuccess/failed vs no_text 状态区分是否正确实现，这是PRD里最容易出错的地方"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "check 阶段核对迁移与索引是否符合项目数据库约定"}
