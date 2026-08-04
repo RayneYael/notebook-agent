@@ -7,7 +7,7 @@ P0 范围 = design.md「实施顺序」表的步骤 1–6，入口/出口用命�
 ## 前置
 
 - [x] 确认本机可跑 Docker（M1，运行环境见 design.md「运行环境」小节）
-- [ ] 确认 `ZHIPU_API_KEY` 可用（智谱 Embedding-3 调用需要）
+- [x] 确认 `ZHIPU_API_KEY` 可用（智谱 Embedding-3 调用需要；2026-08-05 真实 YouTube 摄入已完成 1536 维向量写入）
 - [x] 装 `deno`（yt-dlp 依赖，缺失时实测 1/6 概率随机失败）
 
 ## 步骤 1 — 基础设施
@@ -53,6 +53,8 @@ docker compose exec postgres psql -U postgres -d kb \
 ```
 
 期望：`state='ready'`（若有字幕）或合理的中间态，`raw_object_key` 非空且能在 MinIO 里找到对应 json3 对象。
+
+已验证（2026-08-05）：`qz9tKlF431k` 选择 `auto_caption/en-orig`，最终为 `item=1 state=ready`；数据库有 291 个分段，原始对象、内容哈希、合法时间戳和 1536 维向量均通过聚合验收。字幕轨与 yt-dlp 运行环境的具体修复记录在子任务 `08-05-youtube-subtitle-track-reliability`。
 
 **回滚点**：单个视频摄入失败不影响表结构，删除对应 `content_item` 行重试即可。
 

@@ -14,7 +14,7 @@ dependencies = [
     "celery==5.6.3",
     "boto3==1.43.63",
     "python-dotenv==1.2.2",
-    "yt-dlp>=2026.7,<2026.9",
+    "yt-dlp[default,curl-cffi]>=2026.7,<2026.9",
     "prometheus-client>=0.22,<1",
 ]
 

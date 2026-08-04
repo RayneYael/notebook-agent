@@ -53,14 +53,14 @@
 
 ## Acceptance Criteria
 
-- [ ] 回归单测证明：元数据语言为英文且存在英文原始轨时，选择 `en`/`en-orig`，不会选择 `zh-Hans`。
-- [ ] 字幕选择的官方/自动来源优先级、缺语言降级和无字幕分支均有自动化覆盖。
-- [ ] `.venv` 中 yt-dlp 版本满足 `pyproject.toml` 的范围，`curl_cffi` 可导入，且至少存在一个可用 impersonation target。
-- [ ] 完整 pytest 套件通过。
-- [ ] 至少一个真实 YouTube 视频摄入后，`content_item.state='ready'`、`fail_reason IS NULL`、`text_source IN ('official_cc','auto_caption')`、`raw_object_key` 与 `content_hash` 均非空。
-- [ ] 真实条目有至少一个 `segment`；所有分段文本非空，`start_sec`/`end_sec` 合法，embedding 非空且 `vector_dims(embedding)=1536`。
-- [ ] 若验收条目是 `qz9tKlF431k`，其最终 `content_item.lang='en'`，且数据库中不存在同用户、同平台、同视频的重复条目。
-- [ ] 最终交付记录真实视频 ID、字幕轨、内容条目 ID、segment 数量和数据库验收查询结果。
+- [x] 回归单测证明：元数据语言为英文且存在英文原始轨时，选择 `en`/`en-orig`，不会选择 `zh-Hans`。
+- [x] 字幕选择的官方/自动来源优先级、缺语言降级和无字幕分支均有自动化覆盖。
+- [x] `.venv` 中 yt-dlp 版本满足 `pyproject.toml` 的范围，`curl_cffi` 可导入，且至少存在一个可用 impersonation target。
+- [x] 完整 pytest 套件通过。
+- [x] 至少一个真实 YouTube 视频摄入后，`content_item.state='ready'`、`fail_reason IS NULL`、`text_source IN ('official_cc','auto_caption')`、`raw_object_key` 与 `content_hash` 均非空。
+- [x] 真实条目有至少一个 `segment`；所有分段文本非空，`start_sec`/`end_sec` 合法，embedding 非空且 `vector_dims(embedding)=1536`。
+- [x] 若验收条目是 `qz9tKlF431k`，其最终 `content_item.lang='en'`，且数据库中不存在同用户、同平台、同视频的重复条目。
+- [x] 最终交付记录真实视频 ID、字幕轨、内容条目 ID、segment 数量和数据库验收查询结果。
 
 ## Out of Scope
 
@@ -73,3 +73,10 @@
 
 - 本任务是父任务 `08-04-video-text-kb` 的 P0 可靠性子任务。
 - 真正的 YouTube 429 仍按外部服务故障处理；修复目标是避免因为错误选择翻译轨而制造不必要的 429 请求。
+
+## Completion Evidence (2026-08-05)
+
+- 环境：`yt-dlp 2026.07.04`、`curl-cffi 0.15.0`；`--list-impersonate-targets` 列出 curl-cffi targets，`pip check` 通过。
+- 自动化：`pytest -q` → `30 passed`。
+- 真实摄入：`qz9tKlF431k` → `item=1 state=ready`；yt-dlp 元数据复查的选中轨为 `('auto_caption', 'en-orig')`。本次命令临时设置了 certifi 的 `SSL_CERT_FILE`，以处理本机 Python 对智谱 HTTPS 的 CA 校验。
+- 数据库：`id=1`、`lang=en`、`text_source=auto_caption`、`segment_count=291`、`duplicate_count=1`；`has_raw`、`has_hash`、`text_ok`、`timing_ok` 和 `embedding_ok` 全为 `true`，`fail_reason=null`。

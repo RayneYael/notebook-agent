@@ -3,7 +3,7 @@
   "name": "youtube-subtitle-track-reliability",
   "title": "修复 YouTube 字幕轨选择与 yt-dlp 运行环境",
   "description": "优先选择视频原始语言字幕，更新 yt-dlp 与 impersonation 依赖，完成真实视频摄入及数据库验收。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
