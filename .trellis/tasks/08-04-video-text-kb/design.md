@@ -337,9 +337,31 @@ LLM 只在 Agent 层做「这些结果里哪些偏工程实践」这类**需要�
 # item 内保留 top-3 片段，相邻片段（gap < 30s）合并为一段展示
 ```
 
-## Agent 工具层
+## Agent 工具层（P1，紧接 P0）
 
-LangGraph，工具签名保持窄且可组合：
+P0 一旦完成 embedding 数据库的真实数据验证，下一阶段不先做 Web UI/扩展，而是先打通自然语言检索闭环：
+
+```
+用户自然语言问题
+  → LangGraph Agent 判断检索意图并生成查询
+  → search_segments（P1 默认走 pgvector；BM25 可作为独立补充调用）
+  → 按需要调用 get_neighbors / get_item 扩展上下文
+  → open_at 生成来源定位
+  → 基于检索证据回答
+```
+
+P1 入口为 `python -m app.cli ask "<自然语言问题>"`。CLI 只是最薄的交互壳；Agent 本体放在 `app/agent/`，不能把工具选择和回答逻辑写进 CLI。
+
+P1 的最低目录形态：
+
+```
+app/agent/
+  tools.py       # 数据库检索工具；参数/返回值使用结构化类型
+  graph.py       # LangGraph 工具调用循环、系统约束、终止条件
+  prompts.py     # 证据约束与回答格式
+```
+
+首版 Agent 只开放只读工具，工具签名保持窄且可组合：
 
 ```python
 search_items(query, platform?, date_range?, kind?, tags?) -> list[ItemHit]
@@ -347,9 +369,17 @@ search_segments(query, filters?) -> list[SegmentHit]     # 时间戳/段落级
 get_item(item_id) -> ItemDetail
 get_neighbors(segment_id, window=2) -> list[Segment]     # 上下文扩展
 open_at(item_id, pos) -> str                             # 生成跳转 URL
-transcribe(item_id) -> JobStatus                         # 触发 ASR（需用户确认）
-mark_watched(item_id, state)
 ```
+
+`transcribe` 和 `mark_watched` 不进入 P1 工具集。前者随 P5 ASR 加入且必须经过用户确认，后者等 P2 有用户状态交互后再加入。
+
+Agent 的回答约束：
+
+- 对知识库内容作答前必须至少成功调用一次检索工具，不能靠模型记忆代答
+- 每个关键结论附带 `item_id`、标题、证据片段和时间戳/段落链接
+- 检索无结果或证据不足时明确返回「知识库中未找到」，不得补写看似合理的内容
+- P1 允许 Agent 改写查询、追加检索和读取相邻片段，但基础相关性仍由 pgvector/BM25 决定，LLM 不直接给数据库候选打相关性分
+- 工具调用设置最大轮数和超时，防止无结果时循环搜索
 
 `open_at` 按 `kind` 分叉，这是唯一需要区分视频/图文的地方：
 
@@ -359,7 +389,7 @@ bilibili → https://www.bilibili.com/video/{bvid}?t={int(sec)}
 wechat   → {url}#anchor-{anchor}      # 段落锚点
 ```
 
-`transcribe` **必须经用户确认**才执行（PRD 决策 3）。Agent 可以建议但不能自动触发——实测 1.8x 实时，一次误触发能占满 CPU 半小时。
+后续加入 `transcribe` 时**必须经用户确认**才执行（PRD 决策 3）。Agent 可以建议但不能自动触发——实测 1.8x 实时，一次误触发能占满 CPU 半小时。
 
 ## 依赖与运行环境
 
@@ -376,7 +406,7 @@ pgvector/pgvector:pg17
 
 ### 运行环境：单机 M1，暂不需要 GPU
 
-整套栈除 ASR 外都不吃 GPU：FastAPI/Celery/Redis/Postgres+pgvector/MinIO 是常规 IO/DB 负载；嵌入走 OpenAI API；重排是小型 cross-encoder，CPU 上个人库规模（20 候选/次、低频查询）足够。
+整套栈除 ASR 外都不吃 GPU：FastAPI/Celery/Redis/Postgres+pgvector/MinIO 是常规 IO/DB 负载；嵌入走智谱 Embedding-3 API（1536 维、每批最多 64 条）；重排是小型 cross-encoder，CPU 上个人库规模（20 候选/次、低频查询）足够。
 
 唯一可能用到 GPU 的是 ASR。实测基线是 M1 CPU int8，`small` 模型 1.8x 实时（445s 音频耗 242s）。这个数字已经够用，原因是 ASR 在架构里是**低频、异步、用户显式触发**的兜底路径（PRD 决策 3：仅无字幕且用户要求时才跑），不在任何实时链路上——一个 20 分钟无字幕视频后台转录约 11 分钟，不阻塞摄入队列（`ingest/tasks.py` 里 ASR 队列已单独 `concurrency=1`，就是按 CPU 密集任务设计的）。
 
@@ -392,12 +422,12 @@ pgvector/pgvector:pg17
 4. **单用户优先** — schema 有 `user_id` 但不做多租户隔离、配额、权限。个人自用，加了是负担
 5. **不实现 B站 SESSDATA 刷新** — 服务端刷新会踢掉用户浏览器登录态（互斥），这正是选扩展方案的原因之一
 
-## 需要在 P0 验证的假设
+## 分阶段验证的假设
 
-设计里有两处我没有实测数据支撑，P0 必须验证：
+设计里有两处没有实测数据支撑，按其实际实施阶段验证：
 
-1. **语义切分（第 4 级）对中文是否真的有效** — 相邻 cue 嵌入的余弦相似度在中文口语转录上是否存在可识别的局部极小点，尚未验证。若无效，中文只能退回硬切+重叠，`hard_cut` 比例降不下来，需要重新评估是否引入标点恢复模型（如 `funasr` 的 punc 模型）
-2. **RRF 的 k=60 常数** — 这是论文默认值，在 20 候选的小规模下可能需要调小
+1. **P0：语义切分（第 4 级）对中文是否真的有效** — 相邻 cue 嵌入的余弦相似度在中文口语转录上是否存在可识别的局部极小点，尚未验证。若无效，中文只能退回硬切+重叠，`hard_cut` 比例降不下来，需要重新评估是否引入标点恢复模型（如 `funasr` 的 punc 模型）
+2. **P4：RRF 的 k=60 常数** — 这是论文默认值，在 20 候选的小规模下可能需要调小，不阻塞 P1 Agent 先使用向量检索工具形成闭环
 
 ## 实施顺序
 
@@ -414,6 +444,17 @@ pgvector/pgvector:pg17
 
 步骤 5 必须在步骤 6 之前 —— 守卫比切分质量优先，因为守卫缺失会静默丢数据，切分差只是效果差。
 
+### P1：自然语言检索 Agent（P0 后的下一个需求）
+
+| 步骤 | 产出 | 验证 |
+|---|---|---|
+| 1 | `app/agent/tools.py`：封装 `search_segments` / `get_neighbors` / `get_item` / `open_at` | 每个工具可独立测试，返回结构化来源信息 |
+| 2 | `app/agent/graph.py`：LangGraph 工具调用循环与只读白名单 | mock 模型验证多步调用、最大轮数和无结果终止 |
+| 3 | `app.cli ask` 自然语言入口 | 用自然语言定位只在视频中段出现的概念 |
+| 4 | 证据约束与真实库验收 | 答案包含标题、原文片段、时间戳链接；点击后确为对应内容 |
+
+P1 不要求 RRF/rerank，也不要求 UI。它验证的是 Agent 是否能把用户的自然语言意图可靠地转成数据库工具调用；检索排序增强和产品交互分别留到 P4、P2。
+
 ### P0 入口/出口：命令行，不搭 API/UI/扩展
 
 P0 的目的是验证「摄入 → 切分 → 检索」这条核心链路本身是否可行，不是验证产品形态。所以入口和出口都用命令行，不提前建 FastAPI 路由、Web UI 或浏览器扩展：
@@ -421,7 +462,6 @@ P0 的目的是验证「摄入 → 切分 → 检索」这条核心链路本身�
 - **入口**：`python -m app.cli ingest <url>` 直接调用 `save_item` 任务链（`ingest/tasks.py`），跳过 HTTP 层
 - **出口**：`python -m app.cli search <query>` 直接跑 `retrieval/search.py`，命令行打印 `item + segment + 跳转链接`
 
-`api/items.py`（POST /api/items、B站字幕回传）和浏览器扩展是 P1 才需要的东西——只有当 P0 证明链路本身成立后，才值得为「怎么把 URL 送进来」这件事搭外围。提前搭会把「方案是否可行」和「产品是否好用」两个问题混在一起，验证不动的时候不知道该查哪层。
+`api/items.py`（POST /api/items、B站字幕回传）和浏览器扩展顺延到 P2——P0 之后先用 P1 Agent 验证「自然语言能否可靠调用知识库」；该闭环成立后，再为「怎么把 URL 送进来」搭外围。
 
-module 结构里的 `api/` 目录本身不受影响（仍是最终形态的一部分），只是实现顺序上排在 P1，不在 P0 范围。
-
+module 结构里的 `api/` 目录本身不受影响（仍是最终形态的一部分），只是实现顺序上排在 P2，不在 P0 范围。

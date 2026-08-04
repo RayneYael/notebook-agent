@@ -19,7 +19,7 @@ from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientF
 from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
-from app.ingest.embed import OpenAIEmbedder
+from app.ingest.embed import ZhipuEmbedder
 from app.ingest.validate import guard_transcript
 from app.models import AppUser, ContentItem, Segment
 
@@ -99,7 +99,13 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Any | 
         db.flush()
         if embedder is None:
             settings = get_settings()
-            embedder = OpenAIEmbedder(settings.openai_api_key or "", model=settings.embedding_model)
+            embedder = ZhipuEmbedder(
+                settings.zhipu_api_key or "",
+                model=settings.embedding_model,
+                endpoint=settings.embedding_endpoint,
+                dimensions=settings.embedding_dimensions,
+                batch_size=settings.embedding_batch_size,
+            )
         semantic = lambda texts: embedder.embed(texts)
         chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
         vectors = embedder.embed([part.text for part in chunks])

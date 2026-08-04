@@ -4,7 +4,7 @@ import argparse
 
 from app.config import get_settings
 from app.db import session
-from app.ingest.embed import OpenAIEmbedder
+from app.ingest.embed import ZhipuEmbedder
 from app.ingest.tasks import ingest_url
 from app.retrieval.search import bm25_search, vector_search
 
@@ -30,7 +30,13 @@ def main() -> None:
         print(f"item={item_id} state={state}")
         return
     settings = get_settings()
-    embedder = OpenAIEmbedder(settings.openai_api_key or "", model=settings.embedding_model)
+    embedder = ZhipuEmbedder(
+        settings.zhipu_api_key or "",
+        model=settings.embedding_model,
+        endpoint=settings.embedding_endpoint,
+        dimensions=settings.embedding_dimensions,
+        batch_size=settings.embedding_batch_size,
+    )
     with session() as db:
         lexical = bm25_search(db, args.query, k=args.k)
         vector = vector_search(db, embedder.embed([args.query])[0], k=args.k)

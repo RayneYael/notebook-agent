@@ -18,7 +18,10 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-05-knowledge-retrieval-agent",
+    "08-05-youtube-subtitle-track-reliability"
+  ],
   "parent": null,
   "relatedFiles": [],
   "notes": "",

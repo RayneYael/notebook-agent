@@ -23,6 +23,11 @@ def _env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(name, default)
 
 
+def _env_int(name: str, default: int) -> int:
+    value = os.environ.get(name)
+    return int(value) if value is not None else default
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -32,9 +37,25 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
-    # --- OpenAI ---
-    openai_api_key: str | None = field(default_factory=lambda: _env("OPENAI_API_KEY"))
-    embedding_model: str = field(default_factory=lambda: _env("EMBEDDING_MODEL", "text-embedding-3-small") or "text-embedding-3-small")
+    # --- Zhipu Embedding-3 ---
+    zhipu_api_key: str | None = field(default_factory=lambda: _env("ZHIPU_API_KEY"))
+    embedding_model: str = field(
+        default_factory=lambda: _env("EMBEDDING_MODEL", "embedding-3")
+        or "embedding-3"
+    )
+    embedding_endpoint: str = field(
+        default_factory=lambda: _env(
+            "EMBEDDING_ENDPOINT",
+            "https://open.bigmodel.cn/api/paas/v4/embeddings",
+        )
+        or "https://open.bigmodel.cn/api/paas/v4/embeddings"
+    )
+    embedding_dimensions: int = field(
+        default_factory=lambda: _env_int("EMBEDDING_DIMENSIONS", 1536)
+    )
+    embedding_batch_size: int = field(
+        default_factory=lambda: _env_int("EMBEDDING_BATCH_SIZE", 64)
+    )
 
     # --- Postgres / SQLAlchemy ---
     database_url: str = field(default_factory=lambda: _build_database_url())

@@ -1,0 +1,5 @@
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/agent-framework-selection.md", "reason": "核对实现是否遵守选型边界、只读工具和可测试性要求"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "核对测试覆盖、依赖边界和代码质量要求"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/provider-gateway-and-channel-boundary.md", "reason": "核对provider专有逻辑隔离和统一渠道契约"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/wechat-channel-options.md", "reason": "核对渠道实现是否使用官方接口并保持Agent核心隔离"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/agent-framework-shortlist.md", "reason": "核对最终框架选择是否满足多provider、多gateway和渠道解耦要求"}

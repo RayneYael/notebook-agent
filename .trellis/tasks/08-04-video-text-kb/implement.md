@@ -2,12 +2,12 @@
 
 配套文档：`prd.md`（需求/验收）、`design.md`（技术设计）。本文只排 P0 的执行顺序和验证命令，不重复设计决策。
 
-P0 范围 = design.md「实施顺序」表的步骤 1–6，入口/出口用命令行（design.md 已定）。P1（扩展/Web UI/`api/`）不在本次执行范围内。
+P0 范围 = design.md「实施顺序」表的步骤 1–6，入口/出口用命令行（design.md 已定）。P1 是紧接其后的自然语言检索 Agent；扩展/Web UI/`api/` 顺延到 P2，均不在本次执行范围内。
 
 ## 前置
 
 - [x] 确认本机可跑 Docker（M1，运行环境见 design.md「运行环境」小节）
-- [ ] 确认 `OPENAI_API_KEY` 可用（嵌入调用需要，整库成本量级 $0.1–0.2，见 design.md）
+- [ ] 确认 `ZHIPU_API_KEY` 可用（智谱 Embedding-3 调用需要）
 - [x] 装 `deno`（yt-dlp 依赖，缺失时实测 1/6 概率随机失败）
 
 ## 步骤 1 — 基础设施
@@ -17,7 +17,7 @@ P0 范围 = design.md「实施顺序」表的步骤 1–6，入口/出口用命�
 - [x] `docker-compose.yml`：`pgvector/pgvector:pg17` / `redis` / `minio`
 - [x] `app/models.py`：`content_item` + `segment` 两表的 SQLAlchemy 模型（对齐 design.md 数据模型章节的 DDL，包括枚举类型、`loc_ck` 约束、`UNIQUE(item_id, seq)`）
 - [x] `migrations/`：Alembic 初始化 + 首版迁移（含 HNSW / GIN / trigram 三个索引）
-- [x] `app/config.py`：读取 `OPENAI_API_KEY`、DB/Redis/MinIO 连接串（环境变量，不硬编码）
+- [x] `app/config.py`：读取 `ZHIPU_API_KEY`、智谱 embedding 参数及 DB/Redis/MinIO 连接串（环境变量，不硬编码）
 
 **验证**
 
@@ -92,11 +92,11 @@ docker compose exec postgres psql -U postgres -d kb \
 
 **产出**
 
-- [x] `app/ingest/embed.py`：调用 embedding API，写入 `segment.embedding`
+- [x] `app/ingest/embed.py`：调用智谱 Embedding-3 API，按最多 64 条顺序拆批并写入 `segment.embedding`
 - [x] `app/retrieval/search.py`：
   - [x] `vector_search(query, k)` — `embedding <=> query_vec`
   - [x] `bm25_search(query, k)` — 英文走 `fts @@ websearch_to_tsquery('english', ...)`；中文走 `text ILIKE` + `gin_trgm_ops`（design.md 双轨方案，按 `content_item.lang` 分派）
-  - [ ] RRF 融合（`score = sum(1/(60+rank_i))`）留到 P3，本步骤**不实现**，避免把「两路各自是否可用」和「融合是否合理」两个问题混在一起
+  - [ ] RRF 融合（`score = sum(1/(60+rank_i))`）留到 P4，本步骤**不实现**，避免把「两路各自是否可用」和「融合是否合理」两个问题混在一起
 - [x] `app/cli.py`：`search <query>` 子命令，**并排打印两路结果**（各自 top-k + 各自的 `item + segment + 跳转链接`），不做自动合并展示
 
 **验证（对应 PRD P0 验收标准，扩展为双路对比）**
@@ -110,7 +110,7 @@ python -m app.cli search "<只在某中文视频中段出现的概念>"
 
 期望：
 - 两路结果里至少一路的 Top 结果命中目标 segment，跳转链接落在那句话所在时间点附近（人工核对，PRD 明确要求的端到端验收，不是单测能替代的）
-- 记录中文查询下 BM25/trigram 路的召回质量——如果明显弱于向量路，是预期内的（trigram 定位是"回退"，design.md 已说明），但要写进结果观察里，供 P2 中文切分降级链参考
+- 记录中文查询下 BM25/trigram 路的召回质量——如果明显弱于向量路，是预期内的（trigram 定位是"回退"，design.md 已说明），但要写进结果观察里，供 P3 中文切分降级链参考
 
 **回滚点**：`embed.py` 失败不影响已切分的 `segment.text`，重跑该函数即可补齐 `embedding` 列，无需重新摄入。
 
@@ -171,14 +171,14 @@ docker compose exec postgres psql -U postgres -d kb \
 ## 完成后的收尾
 
 - [ ] 跑一遍完整 CLI 闭环：`ingest` 20 个视频 → `search` 验证中段概念命中 → 人工核对跳转
-- [ ] 记录 `empty_success_total` 和 `hard_cut` 占比的当前基线值（作为 P2 中文降级链的对比基准，design.md 已引用 19/20 这个数字）
+- [ ] 记录 `empty_success_total` 和 `hard_cut` 占比的当前基线值（作为 P3 中文降级链的对比基准，design.md 已引用 19/20 这个数字）
 - [ ] 更新 `prd.md` 的 P0 / P0 回归三条验收标准为已勾选状态
-- [ ] 提请用户 review，确认 P0 是否验证了核心价值假设，再决定是否继续 P1
+- [ ] 提请用户 review，确认 P0 是否验证了核心价值假设，然后进入 P1 自然语言检索 Agent
 
 ## 不在本次范围（明确排除，避免执行中蔓延）
 
-- `api/items.py`、B站字幕回传协议、浏览器扩展 —— P1
-- RRF 融合 + rerank —— P3（P0 步骤4已接入向量+BM25双路对比，但不做融合/重排，见步骤4范围边界）
-- Agent 工具层（LangGraph） —— P3
-- B站 / 微信公众号 connector —— P2
-- ASR —— P4
+- 自然语言检索 Agent（LangGraph） —— 紧接本任务的 P1，不并入 P0 收尾
+- `api/items.py`、B站字幕回传协议、浏览器扩展 —— P2
+- B站 / 微信公众号 connector —— P3
+- RRF 融合 + rerank —— P4（P0 步骤4已接入向量+BM25双路对比，但不做融合/重排，见步骤4范围边界）
+- ASR —— P5
