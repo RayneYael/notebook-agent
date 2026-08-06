@@ -220,6 +220,28 @@ adapter；30 秒仍未达到时 LangBot 退出且 adapter 不会启动。由 sys
 LangBot 4.10.6。升级版本时重新取得上游 source、先做 `--dry-run`，再重新审查全部 hunk。
 未应用补丁时不得通过隐私或渠道可用性验收。
 
+启动时必须使用应用了该补丁的同一份 Python package。仅仅在另一个源码目录执行
+`patch`，不会改变已安装的 `langbot` 命令；这种情况下旧版的 readiness gate 可能仍是
+空实现，而 `/healthz` 仍会返回 200。源码树或本机生成的 patched package 需要显式放到
+运行时搜索路径，例如：
+
+```bash
+PYTHONPATH=/absolute/path/to/patched_site \
+  /absolute/path/to/langbot-venv/bin/langbot
+```
+
+启动前可用下面的只读检查确认解释器加载了目标文件（不要打印环境变量或 secret）：
+
+```bash
+PYTHONPATH=/absolute/path/to/patched_site \
+  /absolute/path/to/langbot-venv/bin/python -c \
+  'import inspect; from langbot.pkg.plugin.connector import PluginRuntimeConnector; \
+print(inspect.getsourcefile(PluginRuntimeConnector))'
+```
+
+输出必须指向已应用补丁的 `langbot/pkg/plugin/connector.py`；之后仍要以
+`Required plugins initialized; message adapters may start.` 作为 readiness 判据。
+
 ### 7.2 安装 plugin
 
 把整个目录复制或挂载到 LangBot plugin workspace：

@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-06-debug-wechat-double-reply"
+  ],
   "parent": "08-05-knowledge-retrieval-agent",
   "relatedFiles": [],
   "notes": "",

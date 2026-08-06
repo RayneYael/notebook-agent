@@ -55,7 +55,13 @@ async def RuntimePipeline._reply_fail_closed(query: Query, failure: Exception) -
   `KB_BOT_CHANNELS`. Do not duplicate those values in LangBot core config/logs.
 - A required bridge event is valid only when its manifest appears in
   `emitted_plugins` and it calls `prevent_default()`. The bridge replies via
-  `EventContext.reply(...)` before that early return.
+  `EventContext.reply(...)` before that early return. LangBot plugin runtime
+  serializes each emitted `PluginContainer` as a dict whose
+  `plugin["manifest"]` is a `ComponentManifest` dump; the original
+  `manifest.yaml` metadata is therefore at
+  `plugin["manifest"]["manifest"]["metadata"]`. Required-plugin validation
+  must decode this nested shape defensively and must not assume a flat
+  `plugin["manifest"]["metadata"]` mapping.
 - The bridge keeps a bounded, short-lived in-memory claim keyed by bot UUID and
   platform message ID. A duplicate delivery may still reach LangBot, but only
   the first claim may POST to the gateway and reply to the platform. The key is

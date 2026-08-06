@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import hashlib
+import ast
 import os
 from pathlib import Path
 import subprocess
 import sys
+from typing import Any
 import zipfile
 
 import pytest
@@ -32,12 +34,45 @@ def test_startup_patch_contains_readiness_and_fail_closed_contract() -> None:
     assert "validate_required_plugin_event(event_ctx, bound_plugins)" in patch_text
     assert "await self._reply_fail_closed(query, plugin_error)" in patch_text
     assert "await self._execute_from_stage(0, query)" not in patch_text
+    assert "component_manifest.get('manifest', component_manifest)" in patch_text
+    assert "_emitted_plugin_ref(plugin)" in patch_text
 
     # The patch must remove every known private-message log/storage path.
     assert "Private message received [redacted]" in patch_text
     assert "message content redacted" in patch_text
     assert "'message_preview': str(message_chain)[:200]" in patch_text
     assert "user_id='redacted'" in patch_text
+
+
+def test_deployed_connector_accepts_real_nested_plugin_container_dump() -> None:
+    """Exercise the helper against the runtime's actual serialized shape."""
+
+    connector_path = ROOT / ".runtime/langbot/patched_site/langbot/pkg/plugin/connector.py"
+    if not connector_path.is_file():
+        pytest.skip("local patched LangBot runtime is not installed")
+    tree = ast.parse(connector_path.read_text(encoding="utf-8"))
+    function = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.FunctionDef) and node.name == "_emitted_plugin_ref"
+    )
+    namespace: dict[str, Any] = {"Any": Any}
+    exec(compile(ast.Module(body=[function], type_ignores=[]), str(connector_path), "exec"), namespace)
+    extract = namespace["_emitted_plugin_ref"]
+
+    nested = {
+        "manifest": {
+            "owner": "notebook-agent",
+            "manifest": {
+                "metadata": {
+                    "author": "notebook-agent",
+                    "name": "notebook-knowledge-agent",
+                }
+            },
+        }
+    }
+    assert extract(nested) == "notebook-agent/notebook-knowledge-agent"
+    assert extract({"manifest": {"metadata": {"name": "missing-author"}}}) is None
 
 
 def test_startup_patch_applies_to_pinned_langbot_wheel_when_supplied(tmp_path: Path) -> None:

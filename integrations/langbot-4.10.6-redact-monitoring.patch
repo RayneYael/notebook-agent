@@ -140,7 +140,7 @@
 +        )
 +        self._runtime_connected = asyncio.Event()
 +        self._required_plugins_ready = asyncio.Event()
-@@ -73,0 +93,82 @@
+@@ -73,0 +93,95 @@
 +    @staticmethod
 +    def _parse_required_plugins(value: Any) -> tuple[str, ...]:
 +        if value is None:
@@ -178,6 +178,22 @@
 +            )
 +        return timeout
 +
++    @staticmethod
++    def _emitted_plugin_ref(plugin: Any) -> str | None:
++        """Extract author/name from PluginContainer.model_dump()."""
++        if not isinstance(plugin, dict):
++            return None
++        component_manifest = plugin.get('manifest')
++        if not isinstance(component_manifest, dict):
++            return None
++        manifest = component_manifest.get('manifest', component_manifest)
++        metadata = manifest.get('metadata') if isinstance(manifest, dict) else None
++        author = metadata.get('author') if isinstance(metadata, dict) else None
++        plugin_name = metadata.get('name') if isinstance(metadata, dict) else None
++        if not isinstance(author, str) or not isinstance(plugin_name, str):
++            return None
++        return f'{author}/{plugin_name}'
++
 +    def _mark_runtime_disconnected(self) -> None:
 +        self._runtime_connected.clear()
 +        self._required_plugins_ready.clear()
@@ -206,12 +222,9 @@
 +        emitted_plugin_refs: set[str] = set()
 +        if isinstance(emitted_plugins, list):
 +            for plugin in emitted_plugins:
-+                manifest = plugin.get('manifest') if isinstance(plugin, dict) else None
-+                metadata = manifest.get('metadata') if isinstance(manifest, dict) else None
-+                author = metadata.get('author') if isinstance(metadata, dict) else None
-+                plugin_name = metadata.get('name') if isinstance(metadata, dict) else None
-+                if author and plugin_name:
-+                    emitted_plugin_refs.add(f'{author}/{plugin_name}')
++                plugin_ref = self._emitted_plugin_ref(plugin)
++                if plugin_ref:
++                    emitted_plugin_refs.add(plugin_ref)
 +
 +        missing_plugins = [plugin_ref for plugin_ref in required_plugins if plugin_ref not in emitted_plugin_refs]
 +        if missing_plugins:
