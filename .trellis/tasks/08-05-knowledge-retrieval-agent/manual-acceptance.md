@@ -21,18 +21,22 @@ python -m app.cli users --help
 
 ## 1. 隐私与固定版本
 
-- [ ] 确认 LangBot 为 4.10.6，plugin SDK 为 0.4.13。
-- [ ] 对 LangBot 源码先 `patch --dry-run -p1`、再应用
+- [x] 确认 LangBot 为 4.10.6，plugin SDK 为 0.4.13。
+- [x] 对 LangBot 源码先 `patch --dry-run -p1`、再应用
       `integrations/langbot-4.10.6-redact-monitoring.patch`。
-- [ ] 安装并启用 `integrations/langbot_kb_plugin/`。
-- [ ] 应用和插件使用同一个高熵 `CHANNEL_GATEWAY_SECRET`，且文件未被提交。
-- [ ] `KB_BOT_CHANNELS` 明确包含 Telegram 与微信两个 bot UUID，没有默认渠道。
-- [ ] `plugin.required_plugins` 明确包含
+- [x] 安装并启用 `integrations/langbot_kb_plugin/`。
+- [x] 应用和插件使用同一个高熵 `CHANNEL_GATEWAY_SECRET`，且文件未被提交。
+- [x] `KB_BOT_CHANNELS` 明确包含 Telegram 与微信两个 bot UUID，没有默认渠道。
+- [x] `plugin.required_plugins` 明确包含
       `notebook-agent/notebook-knowledge-agent`；bridge pipeline 关闭“启用全部插件”并显式绑定它。
-- [ ] LangBot 日志出现 `Required plugins initialized; message adapters may start.` 后，两个
+- [x] LangBot 日志出现 `Required plugins initialized; message adapters may start.` 后，两个
       adapter 才开始运行；不得使用固定等待时间或 Local Agent fallback。
-- [ ] 启动后检查 LangBot 日志和 monitoring：看不到私聊正文、昵称、sender ID；
+- [x] 启动后检查 LangBot 日志和 monitoring：看不到私聊正文、昵称、sender ID；
       monitoring 内容应是固定 `[redacted by notebook-agent deployment]`。
+
+以上固定版本、启动顺序与隐私证据由已完成的
+`08-06-fix-langbot-startup-race` 和 `08-06-diagnose-wechat-whoami` 子任务提供；
+不代表 Telegram 端到端、跨渠道知识库或禁用/恢复项目已经验收。
 
 LangBot Telegram 配置参考：https://docs.langbot.app/en/usage/platforms/telegram
 
@@ -90,13 +94,17 @@ python -m app.cli ingest --user-id <B> '<B的视频URL>'
 
 ## 6. 微信个人号私聊 smoke 与并发网关
 
-- [ ] OpenClaw/iLink 扫码登录成功，私聊入站能收到并回复。
+- [x] OpenClaw/iLink 扫码登录成功，私聊入站能收到并回复。
 - [ ] Telegram 与微信保持同时启用，交错发送消息，回复回到正确来源。
 - [ ] 同一用户在 Telegram 与微信的知识库相同，但两边对话上下文默认不混合。
 - [ ] 人为停止微信 adapter 后，Telegram 仍能继续完成问答。
 - [ ] 恢复微信 adapter 后，微信可再次问答，不需要重建 AppUser。
 - [ ] 检查 fallback `compat-...` message ID 是否被使用，并在结果中记录；这是
       LangBot 4.10.6 未稳定序列化平台 message ID 的已知限制。
+
+微信基础 smoke 已在 `08-06-diagnose-wechat-whoami` 中验证：同一身份重复和安全重启后
+`/whoami` 均返回相同内部编号，重复微信身份键为 `0`。本节其余并发、知识库和 adapter
+隔离项目仍需在本父任务中人工执行。
 
 ## 7. 禁用与恢复
 

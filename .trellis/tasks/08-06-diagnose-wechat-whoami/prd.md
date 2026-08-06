@@ -15,13 +15,13 @@
 
 ## Acceptance Criteria
 
-- [ ] 形成一份按时间和层级记录的根因结论，说明消息最后到达的边界、失败机制和修复点。
-- [ ] 微信 bot 已启用并绑定专用桥接 pipeline；该 pipeline 只启用 `notebook-agent/notebook-knowledge-agent` 插件。
-- [ ] 插件运行时继承正确的 `KB_BOT_CHANNELS`、loopback gateway URL 和共享密钥，未映射 bot 继续 fail closed。
-- [ ] Notebook Agent 网关健康，签名校验成功，`/whoami` 创建或解析可信微信身份并返回内部用户编号。
-- [ ] 同一微信身份连续发送两次 `/whoami` 得到相同编号，不创建重复 `AppUser` 或 `ChannelIdentity`。
-- [ ] LangBot monitoring、bot 日志、plugin 日志和任务证据中不出现私聊正文、昵称或外部 sender ID 明文。
-- [ ] LangBot 或 gateway 重启后 pipeline/bot 绑定仍存在，`/whoami` 仍可回复。
+- [x] 形成一份按时间和层级记录的根因结论，说明消息最后到达的边界、失败机制和修复点。
+- [x] 微信 bot 已启用并绑定专用桥接 pipeline；该 pipeline 只启用 `notebook-agent/notebook-knowledge-agent` 插件。
+- [x] 插件运行时继承正确的 `KB_BOT_CHANNELS`、loopback gateway URL 和共享密钥，未映射 bot 继续 fail closed。
+- [x] Notebook Agent 网关健康，签名校验成功，`/whoami` 创建或解析可信微信身份并返回内部用户编号。
+- [x] 同一微信身份连续发送两次 `/whoami` 得到相同编号，不创建重复 `AppUser` 或 `ChannelIdentity`。
+- [x] LangBot monitoring、bot 日志、plugin 日志和任务证据中不出现私聊正文、昵称或外部 sender ID 明文。
+- [x] LangBot 或 gateway 重启后 pipeline/bot 绑定仍存在，`/whoami` 仍可回复。
 
 ## Notes
 

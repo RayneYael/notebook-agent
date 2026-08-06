@@ -43,8 +43,13 @@ pipeline 消费 `reply_message_chain`。
 - `GET http://127.0.0.1:8765/health`：`status=ok`。
 - 修复后、人工复测前数据库基线：users=1、identities=0、wechat identities=0。
 
-## 待人工验证
+## 人工验证结果
 
-真实微信收发无法由单元测试替代。仍需同一微信账号连续发送两次 `/whoami`，确认
-收到相同内部用户编号；随后重启 gateway 与 LangBot runtime 再复测一次，并检查
-监控和日志没有私聊正文、昵称或外部 sender ID 明文。
+- 用户确认同一微信账号重复 `/whoami` 返回相同内部用户编号；任务记录不保存该编号。
+- gateway 与 LangBot 按安全顺序重启后，required bridge 在 adapter 开放前达到
+  `initialized`，两个 health endpoint 均正常；用户再次确认 `/whoami` 回复和内部编号
+  均正常。
+- 只读聚合查询确认重复微信身份键数量为 `0`，未读取或输出外部身份值。
+- 本次重启后的 LangBot monitoring 没有保存消息或 error 记录，因此没有 `/whoami`
+  正文落入 monitoring；用户随后在管理面板完成 monitoring 与 bot/plugin 日志复查，
+  确认未发现私聊正文、昵称或外部 sender ID 明文。
