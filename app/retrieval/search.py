@@ -29,13 +29,13 @@ def _hits(rows) -> list[Hit]:
     return [Hit(item.id, item.title, item.platform_id, segment.id, segment.text, float(segment.start_sec), float(score)) for segment, item, score in rows]
 
 
-def vector_search(db, query_vector: list[float], *, user_id: int = 1, k: int = 20) -> list[Hit]:
+def vector_search(db, query_vector: list[float], *, user_id: int, k: int = 20) -> list[Hit]:
     distance = Segment.embedding.cosine_distance(query_vector)
     stmt = select(Segment, ContentItem, (1 - distance).label("score")).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.state == "ready", Segment.embedding.isnot(None)).order_by(distance).limit(k)
     return _hits(db.execute(stmt).all())
 
 
-def bm25_search(db, query: str, *, user_id: int = 1, k: int = 20) -> list[Hit]:
+def bm25_search(db, query: str, *, user_id: int, k: int = 20) -> list[Hit]:
     is_zh = bool(re.search(r"[\u3400-\u9fff]", query))
     base = select(Segment, ContentItem).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.state == "ready")
     if is_zh:

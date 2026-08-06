@@ -1,0 +1,39 @@
+--- a/langbot/pkg/pipeline/monitoring_helper.py
++++ b/langbot/pkg/pipeline/monitoring_helper.py
+@@ -34,2 +34,3 @@ class MonitoringHelper:
+-            # Check if session exists, if not, record session start
+-            session_id = f'{query.launcher_type.value if hasattr(query.launcher_type, "value") else query.launcher_type}_{query.launcher_id}'
++            # Private content is persisted only by notebook-agent's tenant store.
++            # Do not duplicate external session identities here.
++            session_id = 'redacted-private-session'
+@@ -46,6 +47,2 @@ class MonitoringHelper:
+-            # Try to record message
+-            # Use JSON serialization to preserve message chain structure (including image URLs, etc.)
+-            if hasattr(query, 'message_chain') and hasattr(query.message_chain, 'model_dump'):
+-                message_content = json.dumps(query.message_chain.model_dump(), ensure_ascii=False)
+-            else:
+-                message_content = str(query)
++            # LangBot monitoring must not duplicate private message content.
++            message_content = '[redacted by notebook-agent deployment]'
+@@ -65,8 +62,8 @@ class MonitoringHelper:
+                 platform=query.launcher_type.value
+                 if hasattr(query.launcher_type, 'value')
+                 else str(query.launcher_type),
+-                user_id=query.sender_id,
+-                user_name=sender_name,
++                user_id='redacted',
++                user_name=None,
+                 runner_name=runner_name,
+                 variables=None,  # Will be updated in record_query_success
+             )
+@@ -89,8 +86,8 @@ class MonitoringHelper:
+                     platform=query.launcher_type.value
+                     if hasattr(query.launcher_type, 'value')
+                     else str(query.launcher_type),
+-                    user_id=query.sender_id,
+-                    user_name=sender_name,
++                    user_id='redacted',
++                    user_name=None,
+                 )
+ 
+             return message_id

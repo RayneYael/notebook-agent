@@ -28,6 +28,11 @@ def _env_int(name: str, default: int) -> int:
     return int(value) if value is not None else default
 
 
+def _env_float(name: str, default: float) -> float:
+    value = os.environ.get(name)
+    return float(value) if value is not None else default
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -68,6 +73,45 @@ class Settings:
     minio_access_key: str | None = field(default_factory=lambda: _env("MINIO_ROOT_USER"))
     minio_secret_key: str | None = field(default_factory=lambda: _env("MINIO_ROOT_PASSWORD"))
     minio_bucket: str = field(default_factory=lambda: _env("MINIO_BUCKET", "kb-raw") or "kb-raw")
+
+    # --- Knowledge retrieval Agent ---
+    agent_model: str = field(
+        default_factory=lambda: _env("AGENT_MODEL", "openai:gpt-5-mini")
+        or "openai:gpt-5-mini"
+    )
+    agent_api_key: str | None = field(default_factory=lambda: _env("AGENT_API_KEY"))
+    agent_base_url: str | None = field(default_factory=lambda: _env("AGENT_BASE_URL"))
+    agent_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("AGENT_TIMEOUT_SECONDS", 45.0)
+    )
+    agent_request_limit: int = field(
+        default_factory=lambda: _env_int("AGENT_REQUEST_LIMIT", 6)
+    )
+    agent_tool_calls_limit: int = field(
+        default_factory=lambda: _env_int("AGENT_TOOL_CALLS_LIMIT", 10)
+    )
+    agent_output_token_limit: int = field(
+        default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
+    )
+    context_max_turns: int = field(
+        default_factory=lambda: _env_int("CONTEXT_MAX_TURNS", 8)
+    )
+    context_token_budget: int = field(
+        default_factory=lambda: _env_int("CONTEXT_TOKEN_BUDGET", 6000)
+    )
+    channel_link_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("CHANNEL_LINK_TTL_SECONDS", 600)
+    )
+    channel_gateway_secret: str | None = field(
+        default_factory=lambda: _env("CHANNEL_GATEWAY_SECRET")
+    )
+    channel_gateway_host: str = field(
+        default_factory=lambda: _env("CHANNEL_GATEWAY_HOST", "127.0.0.1")
+        or "127.0.0.1"
+    )
+    channel_gateway_port: int = field(
+        default_factory=lambda: _env_int("CHANNEL_GATEWAY_PORT", 8765)
+    )
 
 
 def _build_database_url() -> str:

@@ -3,3 +3,5 @@
 {"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/provider-gateway-and-channel-boundary.md", "reason": "多provider/gateway配置、fallback策略和多渠道适配边界"}
 {"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/wechat-channel-options.md", "reason": "微信渠道adapter候选、边界与推荐顺序"}
 {"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/agent-framework-shortlist.md", "reason": "Agent框架候选、官方能力和统一PoC对比方法"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/multiuser-channel-runtime-selection.md", "reason": "多用户身份边界、三渠道 runtime 选型与五天验证策略"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md", "reason": "LangBot固定版本身份/session/message-id spike与Path B冻结结论"}

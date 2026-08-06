@@ -13,6 +13,7 @@ venv/
 
 # Docker volumes / local data
 data/
+.runtime/
 
 # OS
 .DS_Store

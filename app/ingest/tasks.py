@@ -49,7 +49,7 @@ def _connector(url: str) -> YouTubeConnector:
     raise ValueError(f"unsupported URL: {url}")
 
 
-def create_item(url: str, *, user_id: int = 1, why_saved: str | None = None, connector: Any | None = None, session_factory=None) -> int:
+def create_item(url: str, *, user_id: int, why_saved: str | None = None, connector: Any | None = None, session_factory=None) -> int:
     connector = connector or _connector(url)
     platform_id = connector.match(url)
     if not platform_id:
@@ -58,8 +58,7 @@ def create_item(url: str, *, user_id: int = 1, why_saved: str | None = None, con
     factory = session_factory or get_session_factory()
     with factory() as db:
         if db.get(AppUser, user_id) is None:
-            db.add(AppUser(id=user_id))
-            db.flush()
+            raise LookupError(f"app user {user_id} not found")
         existing = db.scalar(select(ContentItem).where(ContentItem.user_id == user_id, ContentItem.platform == connector.platform, ContentItem.platform_id == platform_id))
         if existing:
             return existing.id
@@ -135,7 +134,7 @@ def fetch_text_task(self, item_id: int) -> str:
     return process_item(item_id)
 
 
-def ingest_url(url: str, *, user_id: int = 1, why_saved: str | None = None, connector=None, embedder=None, object_store=None, session_factory=None) -> tuple[int, str]:
+def ingest_url(url: str, *, user_id: int, why_saved: str | None = None, connector=None, embedder=None, object_store=None, session_factory=None) -> tuple[int, str]:
     connector = connector or _connector(url)
     item_id = create_item(url, user_id=user_id, why_saved=why_saved, connector=connector, session_factory=session_factory)
     try:

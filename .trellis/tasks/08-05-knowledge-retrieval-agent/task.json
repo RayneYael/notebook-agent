@@ -3,7 +3,7 @@
   "name": "knowledge-retrieval-agent",
   "title": "自然语言知识库检索 Agent",
   "description": "基于 P0 已建立的 pgvector embedding 数据库，让 Agent 通过自然语言自主调用只读检索工具，返回带证据片段和时间戳链接的答案。",
-  "status": "planning",
+  "status": "in_progress",
   "dev_type": null,
   "scope": null,
   "package": null,
@@ -18,7 +18,9 @@
   "commit": null,
   "pr_url": null,
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-06-diagnose-wechat-whoami"
+  ],
   "parent": "08-04-video-text-kb",
   "relatedFiles": [],
   "notes": "",

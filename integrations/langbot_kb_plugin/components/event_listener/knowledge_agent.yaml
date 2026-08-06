@@ -1,0 +1,13 @@
+apiVersion: v1
+kind: EventListener
+metadata:
+  name: knowledge-agent-bridge
+  label:
+    en_US: Knowledge Agent Bridge
+    zh_Hans: 知识库 Agent 桥接
+spec: {}
+execution:
+  python:
+    path: knowledge_agent.py
+    attr: KnowledgeAgentEventListener
+

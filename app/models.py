@@ -5,8 +5,8 @@ section) exactly: enum types, `content_item` + `segment` tables, the
 `loc_ck` mutual-exclusion constraint, uniqueness constraints, and the
 HNSW / GIN / trigram indexes on `segment`.
 
-`app_user` is intentionally minimal (single-user MVP, no auth logic) — it
-exists only so `content_item.user_id` has something to reference.
+`app_user` is the internal tenant root. Channel identities and conversation
+threads are application-owned authorization state and never model arguments.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TSVECTOR
 from sqlalchemy.dialects.postgresql import ENUM as PgEnum
@@ -61,15 +62,128 @@ ingest_state_enum = PgEnum(
 
 
 class AppUser(Base):
-    """Minimal user table — single-user MVP, no auth/roles/permissions.
-
-    Exists solely to satisfy `content_item.user_id` FK (design.md 已知取舍:
-    单用户优先，schema 有 user_id 但不做多租户隔离).
-    """
+    """Internal tenant; external platform identifiers live separately."""
 
     __tablename__ = "app_user"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ChannelIdentity(Base):
+    """A trusted platform identity bound to one internal tenant."""
+
+    __tablename__ = "channel_identity"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[str] = mapped_column(Text, nullable=False)
+    external_user_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint(
+            "channel",
+            "account_id",
+            "external_user_id",
+            name="uq_channel_identity_external",
+        ),
+        Index("ix_channel_identity_user", "app_user_id"),
+    )
+
+
+class ChannelLinkToken(Base):
+    """Hashed, short-lived, single-use token for cross-channel linking."""
+
+    __tablename__ = "channel_link_token"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    target_channel: Mapped[str | None] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (Index("ix_channel_link_token_user", "app_user_id"),)
+
+
+class ConversationThread(Base):
+    """One recoverable logical conversation inside a trusted channel chat."""
+
+    __tablename__ = "conversation_thread"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("app_user.id", ondelete="CASCADE"), nullable=False
+    )
+    channel_identity_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("channel_identity.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    channel: Mapped[str] = mapped_column(Text, nullable=False)
+    account_id: Mapped[str] = mapped_column(Text, nullable=False)
+    external_conversation_id: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_conversation_thread_user_updated", "app_user_id", updated_at.desc()),
+        Index(
+            "uq_conversation_thread_active",
+            "channel_identity_id",
+            "external_conversation_id",
+            unique=True,
+            postgresql_where=text("closed_at IS NULL"),
+        ),
+    )
+
+
+class ConversationTurn(Base):
+    """A completed, idempotent user/assistant turn and its model history."""
+
+    __tablename__ = "conversation_turn"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    thread_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("conversation_thread.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    message_id: Mapped[str] = mapped_column(Text, nullable=False)
+    user_text: Mapped[str] = mapped_column(Text, nullable=False)
+    assistant_text: Mapped[str] = mapped_column(Text, nullable=False)
+    sources: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
+    model_messages: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False, server_default="completed")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint("thread_id", "message_id", name="uq_conversation_turn_message"),
+        Index("ix_conversation_turn_thread_created", "thread_id", created_at.desc()),
+    )
 
 
 class ContentItem(Base):

@@ -1,0 +1,2 @@
+# LangBot supplies langbot-plugin. The bridge otherwise uses Python stdlib only.
+

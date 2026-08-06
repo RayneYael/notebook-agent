@@ -96,6 +96,7 @@ def test_synchronous_embedding_failure_marks_item_failed(monkeypatch):
     with pytest.raises(RuntimeError, match="embedding failed"):
         ingest_url(
             "https://youtu.be/dQw4w9WgXcQ",
+            user_id=1,
             connector=object(),
             session_factory=lambda: DB(),
         )

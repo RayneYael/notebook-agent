@@ -7,7 +7,7 @@
 - Python 3.11 + SQLAlchemy + PostgreSQL/pgvector。
 - 现有 retrieval 层已经提供向量与词法检索；Agent 不应生成 SQL，只能调用封装后的只读工具。
 - P1 只有一个 Agent、4 个左右的只读工具、一次运行通常在秒级完成。
-- P1 不需要多 Agent、写操作审批、跨进程恢复、长期记忆或复杂分支图。
+- P1 不需要多 Agent、写操作审批、长期用户记忆或复杂分支图，但需要把有界对话历史持久化并在 runtime 重启后恢复。
 - 必须能在 pytest 中用确定性模型替身验证工具循环，不能让单元测试调用真实模型。
 
 ## 候选比较
@@ -15,9 +15,9 @@
 | 候选 | 与本项目匹配的能力 | 主要代价/错配 | 初步结论 |
 |---|---|---|---|
 | **PydanticAI** | Python 原生；工具、依赖和最终输出强类型；内建 Agent 工具循环；支持多个模型供应商和 OpenAI-compatible 端点；提供 `TestModel` / `FunctionModel` 和禁止真实模型请求的测试开关 | 新增一套框架依赖；可观测性深度更偏向 Logfire 集成 | **当前首选**，尤其适合保持模型可替换和确定性测试 |
-| **OpenAI Agents SDK** | SDK 管理 Agent loop；函数工具；会话、guardrail、最大运行边界；内置 tracing 可记录模型/工具/guardrail/handoff | 最顺滑路径以 OpenAI 平台为中心；当前 P1 不需要 session、handoff、approval 等较多能力 | 若产品明确接受 OpenAI-only，则是首选替代 |
+| **OpenAI Agents SDK** | SDK 管理 Agent loop；函数工具；会话、guardrail、最大运行边界；内置 tracing 可记录模型/工具/guardrail/handoff | 最顺滑路径以 OpenAI 平台为中心；当前 P1 不需要 handoff、approval 等较多能力，且不能接受 OpenAI-only 绑定 | 若产品明确接受 OpenAI-only，才作为替代 |
 | **直接使用 Responses API** | 依赖最少；完全控制工具 schema、调用循环、停止条件和响应状态 | 需要自行实现多轮 tool-call loop、错误映射、测试替身、运行记录与后续会话策略 | P1 规模虽小，但维护成本没有带来足够产品价值，不推荐 |
-| **LangGraph** | durable execution、checkpoint、streaming、human-in-the-loop、持久状态和复杂图编排 | 官方将其定位为低层、长运行、有状态 orchestration；P1 的短时只读检索不使用这些核心能力 | **暂不采用**；未来出现可恢复长任务或复杂审批图时再评估 |
+| **LangGraph** | durable execution、checkpoint、streaming、human-in-the-loop、持久状态和复杂图编排 | P1 只需普通对话 turn 持久化，不需要恢复执行到一半的图节点；引入图编排仍然过重 | **暂不采用**；未来出现可恢复长任务或复杂审批图时再评估 |
 
 ## 已确认的产品决策
 
@@ -26,9 +26,15 @@
 
 因此 OpenAI-only 方案不适合作为默认路线。**PydanticAI 是当前领先候选，但框架尚未定案**；完整 shortlist 及用户调研维度见 `agent-framework-shortlist.md`。是否额外部署 LiteLLM 等独立 gateway，仍需根据 routing/fallback 需求单独判断。
 
-## 当前领先候选（尚未定案）
+## 当前落地决策
 
-如果优先考虑 P1 的小体量、强类型和可测试性，建议优先验证 **PydanticAI**；无论最终选择哪个框架，都把领域工具保持为普通 Python service：
+多渠道和私有多用户约束加入后，Agent loop 不能再脱离 gateway 选择。当前采用带停止条件的两阶段路线：
+
+1. 先限时验证 **LangBot Local Agent + 自定义 retrieval tool** 是否可以从可信 platform event/session context 取得 sender identity，并在模型参数之外绑定内部 `AppUser.id`。
+2. 若通过，五天首版只运行 LangBot，减少 runtime 数量；若不通过，立即改为 **LangBot 渠道层 + PydanticAI Agent 核心**。
+3. 失败时可以研究 Hermes 的 session key、gateway adapter 和 tool context 源码作为实现参考，但不能用 prompt identity 或模型可写的 `user_id` 绕过边界。
+
+无论走哪条路径，都把领域工具保持为普通 Python service：
 
 ```text
 app/retrieval/*                 现有数据库检索能力
@@ -61,7 +67,8 @@ OpenAI 官方当前将 GPT-5.6 家族分为 `sol`（旗舰能力）、`terra`（
 3. 知识库问答必须至少出现一次成功检索调用。该规则由运行后校验执行，不能只写在 prompt 里。
 4. 设置最大模型请求数、工具超时和结果条数；空结果允许 Agent 改写后再查，但重试次数有上限。
 5. 单元测试使用确定性模型替身；真实模型只用于显式的端到端验收。
-6. P1 不保存长期会话状态，除非产品需求确认需要多轮追问。
+6. P1 保存受 turn 数和 token budget 限制的会话历史，并支持 runtime 重启恢复；不抽取用户画像或做跨会话语义长期记忆。
+7. 微信、Telegram 等 channel adapter 必须能够同时运行；渠道生命周期、消息路由和故障隔离不能依赖模型 provider。
 
 ## 官方资料
 
@@ -76,8 +83,8 @@ OpenAI 官方当前将 GPT-5.6 家族分为 `sol`（旗舰能力）、`terra`（
 - [PydanticAI Testing](https://pydantic.dev/docs/ai/guides/testing/)
 - [PydanticAI Models and Providers](https://pydantic.dev/docs/ai/models/overview/)
 
-## 待用户决策
+## 后续产品澄清
 
-- 从 `agent-framework-shortlist.md` 的候选中完成框架调研和最终选择。
-- 首批用户交互渠道范围，以及 P1 是否仍以 CLI 为唯一入口。
-- 首版多 provider/gateway 只做显式配置切换，还是需要自动 fallback / routing。
+- 首版必须把短期对话历史持久化，并能在 Agent/channel runtime 重启后恢复；这不等同于长期用户记忆。
+- 用户所说的“多网关”指微信、Telegram、Slack 等 channel gateway 同时运行，不是模型 provider 的自动 fallback/routing。
+- 模型 provider 保持可替换；自动 fallback/routing 不作为渠道并发验收的前置条件。

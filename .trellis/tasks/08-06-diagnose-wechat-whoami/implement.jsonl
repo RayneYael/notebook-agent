@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "诊断日志必须遵循项目脱敏和结构化记录约束"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "检查桥接插件与网关失败路径和用户可理解回复"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证 AppUser 与 ChannelIdentity 幂等创建和唯一约束"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md", "reason": "复用固定 LangBot 版本、事件字段和隐私风险研究"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/design.md", "reason": "保持父任务多用户、渠道身份和会话隔离设计"}

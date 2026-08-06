@@ -1,0 +1,6 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "检查最小修复、回归范围和禁止模式"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "验证日志与任务证据不泄漏私聊正文和外部身份"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "验证重复 /whoami 不产生重复用户或渠道身份"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/manual-acceptance.md", "reason": "对照真实微信 smoke、身份稳定性和隐私验收"}
+{"file": ".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md", "reason": "核对 LangBot 4.10.6 事件与 message ID 已知限制"}
