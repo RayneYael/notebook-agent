@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "08-06-diagnose-wechat-whoami",
-    "08-06-connect-agent-embedding"
+    "08-06-connect-agent-embedding",
+    "08-06-agent-save-video-tool"
   ],
   "parent": "08-04-video-text-kb",
   "relatedFiles": [],

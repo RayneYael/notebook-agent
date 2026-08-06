@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Load backend guidance and quality routing"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Preserve tenant ownership and idempotent ContentItem writes"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Keep queue, URL, and ingestion outcomes distinct and safe"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Do not expose natural-language input, external identity, or backend payloads"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Preserve multi-channel bridge, timeout, and privacy contracts"}
+{"file": ".trellis/spec/backend/youtube-connector.md", "reason": "Move metadata work to the worker while preserving connector and transcript guarantees"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Coordinate Agent, channel, persistence, Celery, and deployment changes as one contract"}
+{"file": ".trellis/tasks/08-06-agent-save-video-tool/research/current-save-path-audit.md", "reason": "Extend the existing ingestion primitives instead of creating a parallel path"}

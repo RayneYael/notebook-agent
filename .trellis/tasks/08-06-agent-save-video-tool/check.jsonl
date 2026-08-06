@@ -1,0 +1,8 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Run backend final quality routing"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review Agent tool selection, side effects, and tests"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify tenant isolation and duplicate-save behavior"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify input, identity, and queue diagnostics are redacted"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify bridge timeout and concurrent channels remain correct"}
+{"file": ".trellis/spec/backend/youtube-connector.md", "reason": "Verify async worker refactor preserves connector guarantees"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Run a full cross-layer consistency review"}
+{"file": ".trellis/tasks/08-06-agent-save-video-tool/research/current-save-path-audit.md", "reason": "Check the implementation reuses the existing ingestion pipeline"}
