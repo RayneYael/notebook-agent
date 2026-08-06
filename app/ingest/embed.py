@@ -3,12 +3,22 @@
 from __future__ import annotations
 
 import json
+import math
+from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 
 class EmbeddingError(RuntimeError):
     pass
+
+
+class EmbeddingProvider(Protocol):
+    """The small, shared boundary used by ingestion and query retrieval."""
+
+    dimensions: int
+
+    def embed(self, texts: list[str]) -> list[list[float]]: ...
 
 
 class ZhipuEmbedder:
@@ -25,6 +35,8 @@ class ZhipuEmbedder:
     ) -> None:
         if not api_key:
             raise ValueError("ZHIPU_API_KEY is required for embedding")
+        if dimensions < 1:
+            raise ValueError("embedding dimensions must be positive")
         if not 1 <= batch_size <= self.MAX_BATCH_SIZE:
             raise ValueError(
                 f"embedding batch_size must be between 1 and {self.MAX_BATCH_SIZE}"
@@ -51,13 +63,41 @@ class ZhipuEmbedder:
                 "dimensions": self.dimensions,
             }
         ).encode()
-        request = Request(self.endpoint, data=payload, headers={"Authorization": f"Bearer {self.api_key}", "Content-Type": "application/json"})
+        request = Request(
+            self.endpoint,
+            data=payload,
+            headers={
+                "Authorization": f"Bearer {self.api_key}",
+                "Content-Type": "application/json",
+            },
+        )
         try:
             with urlopen(request, timeout=60) as response:
                 data = json.load(response)
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
-            raise EmbeddingError(f"embedding request failed: {exc}") from exc
-        ordered = sorted(data.get("data", []), key=lambda row: row["index"])
-        if len(ordered) != len(texts):
-            raise EmbeddingError("embedding response count mismatch")
-        return [row["embedding"] for row in ordered]
+            raise EmbeddingError("embedding request failed") from exc
+        try:
+            rows = data.get("data", [])
+            if not isinstance(rows, list):
+                raise TypeError("data is not a list")
+            ordered = sorted(rows, key=lambda row: row["index"])
+            if len(ordered) != len(texts):
+                raise EmbeddingError("embedding response count mismatch")
+            if [row["index"] for row in ordered] != list(range(len(texts))):
+                raise EmbeddingError("embedding response index mismatch")
+            vectors = [row["embedding"] for row in ordered]
+            for vector in vectors:
+                if not isinstance(vector, list) or len(vector) != self.dimensions:
+                    raise EmbeddingError("embedding response dimension mismatch")
+                if any(
+                    isinstance(value, bool)
+                    or not isinstance(value, (int, float))
+                    or not math.isfinite(value)
+                    for value in vector
+                ):
+                    raise EmbeddingError("embedding response contains invalid values")
+            return [[float(value) for value in vector] for vector in vectors]
+        except (EmbeddingError, KeyError, TypeError, ValueError) as exc:
+            if isinstance(exc, EmbeddingError):
+                raise
+            raise EmbeddingError("embedding response is invalid") from exc

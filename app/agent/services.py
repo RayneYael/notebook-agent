@@ -4,19 +4,28 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+import math
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.agent.types import Citation
 from app.channels.types import TenantContext
+from app.ingest.embed import EmbeddingError, EmbeddingProvider
 from app.models import ContentItem, Segment
 from app.retrieval.search import bm25_search, vector_search
 
 
 class KnowledgeNotFound(LookupError):
     """Raised uniformly for missing and cross-tenant resources."""
+
+
+class EmbeddingUnavailable(RuntimeError):
+    """Query embedding is missing or could not be safely produced."""
+
+
+class RetrievalUnavailable(RuntimeError):
+    """Database retrieval did not finish and must not be presented as no evidence."""
 
 
 @dataclass(frozen=True)
@@ -61,7 +70,7 @@ class KnowledgeServices:
         tenant: TenantContext,
         session_factory: Callable[[], Session],
         *,
-        embedder: Any | None = None,
+        embedder: EmbeddingProvider | None = None,
         max_results: int = 10,
     ) -> None:
         self._tenant = tenant
@@ -76,40 +85,61 @@ class KnowledgeServices:
         if not query:
             return []
         limit = max(1, min(limit, self._max_results))
-        with self._session_factory() as db:
-            hits = bm25_search(
-                db, query, user_id=self._tenant.app_user_id, k=limit
-            )
-            if self._embedder is not None:
-                vectors = self._embedder.embed([query])
-                if vectors:
-                    hits.extend(
-                        vector_search(
-                            db,
-                            vectors[0],
-                            user_id=self._tenant.app_user_id,
-                            k=limit,
-                        )
-                    )
-
-            segment_ids: list[int] = []
-            for hit in sorted(hits, key=lambda value: value.score, reverse=True):
-                if hit.segment_id not in segment_ids:
-                    segment_ids.append(hit.segment_id)
-                if len(segment_ids) >= limit:
-                    break
-            if not segment_ids:
-                return []
-            rows = db.execute(
-                select(Segment, ContentItem)
-                .join(ContentItem, Segment.item_id == ContentItem.id)
-                .where(
-                    ContentItem.user_id == self._tenant.app_user_id,
-                    Segment.id.in_(segment_ids),
+        vector = self._embed_query(query)
+        try:
+            with self._session_factory() as db:
+                hits = bm25_search(
+                    db, query, user_id=self._tenant.app_user_id, k=limit
                 )
-            ).all()
-            by_id = {segment.id: _citation(item, segment) for segment, item in rows}
-            return [by_id[value] for value in segment_ids if value in by_id]
+                hits.extend(
+                    vector_search(
+                        db,
+                        vector,
+                        user_id=self._tenant.app_user_id,
+                        k=limit,
+                    )
+                )
+
+                segment_ids: list[int] = []
+                for hit in sorted(hits, key=lambda value: value.score, reverse=True):
+                    if hit.segment_id not in segment_ids:
+                        segment_ids.append(hit.segment_id)
+                    if len(segment_ids) >= limit:
+                        break
+                if not segment_ids:
+                    return []
+                rows = db.execute(
+                    select(Segment, ContentItem)
+                    .join(ContentItem, Segment.item_id == ContentItem.id)
+                    .where(
+                        ContentItem.user_id == self._tenant.app_user_id,
+                        Segment.id.in_(segment_ids),
+                    )
+                ).all()
+                by_id = {
+                    segment.id: _citation(item, segment) for segment, item in rows
+                }
+                return [by_id[value] for value in segment_ids if value in by_id]
+        except EmbeddingUnavailable:
+            raise
+        except Exception as exc:
+            raise RetrievalUnavailable("retrieval unavailable") from exc
+
+    def _embed_query(self, query: str) -> list[float]:
+        if self._embedder is None:
+            raise EmbeddingUnavailable("embedding provider is not configured")
+        try:
+            vectors = self._embedder.embed([query])
+            if len(vectors) != 1:
+                raise ValueError("query embedding count mismatch")
+            vector = vectors[0]
+            if len(vector) != self._embedder.dimensions:
+                raise ValueError("query embedding dimension mismatch")
+            if any(not math.isfinite(value) for value in vector):
+                raise ValueError("query embedding contains invalid values")
+            return vector
+        except Exception as exc:
+            raise EmbeddingUnavailable("query embedding unavailable") from exc
 
     def get_neighbors(self, segment_id: int, *, radius: int = 1) -> list[Citation]:
         """Return adjacent segments only when the anchor belongs to this tenant."""

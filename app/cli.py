@@ -7,15 +7,11 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 
-from app.agent.provider import build_model
-from app.agent.runtime import KnowledgeAgent
-from app.agent.services import KnowledgeServices
-from app.channels.service import ChannelService
+from app.bootstrap import build_channel_service, build_embedding_provider
 from app.channels.http_gateway import serve as serve_channel_gateway
 from app.channels.types import ChannelEnvelope
 from app.config import get_settings
 from app.db import get_session_factory, session
-from app.ingest.embed import ZhipuEmbedder
 from app.ingest.tasks import ingest_url
 from app.models import AppUser, ChannelIdentity
 from app.retrieval.search import bm25_search, vector_search
@@ -66,16 +62,12 @@ def main() -> None:
     if args.command == "gateway-server":
         serve_channel_gateway(settings)
         return
-    embedder = ZhipuEmbedder(
-        settings.zhipu_api_key or "",
-        model=settings.embedding_model,
-        endpoint=settings.embedding_endpoint,
-        dimensions=settings.embedding_dimensions,
-        batch_size=settings.embedding_batch_size,
-    )
     if args.command == "ask":
-        asyncio.run(_ask(args, settings, embedder))
+        asyncio.run(_ask(args, settings))
         return
+    embedder = build_embedding_provider(settings)
+    if embedder is None:
+        raise SystemExit("embedding provider is not configured")
     with session() as db:
         lexical = bm25_search(db, args.query, user_id=args.user_id, k=args.k)
         vector = vector_search(
@@ -118,19 +110,10 @@ def _users(args) -> None:
         print(f"user={user.id} state={state}")
 
 
-async def _ask(args, settings, embedder) -> None:
+async def _ask(args, settings) -> None:
     factory = get_session_factory()
     _ensure_cli_identity(factory, args.user_id)
-
-    def service_factory(request):
-        return KnowledgeServices(
-            request.tenant,
-            factory,
-            embedder=embedder if settings.zhipu_api_key else None,
-        )
-
-    agent = KnowledgeAgent(build_model(settings), settings, service_factory)
-    service = ChannelService(factory, agent, settings)
+    service = build_channel_service(settings)
     envelope = ChannelEnvelope(
         channel="cli",
         account_id="local",

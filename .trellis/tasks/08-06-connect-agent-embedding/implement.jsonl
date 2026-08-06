@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec entry point and quality checklist routing."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Preserve the fail-closed channel bridge and privacy boundary while changing Agent composition."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"CLI and gateway currently duplicate embedding composition; implementation must create one owner."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The change crosses channel, Agent, embedding, retrieval, database, and answer boundaries."}
+{"file":".trellis/tasks/08-06-connect-agent-embedding/research/current-connection-audit.md","reason":"Documents the existing partial connection, exact gaps, and invariants to preserve."}
+{"file":".trellis/tasks/08-05-knowledge-retrieval-agent/research/provider-gateway-and-channel-boundary.md","reason":"Preserve the selected PydanticAI/provider/channel separation and shared Agent contract."}

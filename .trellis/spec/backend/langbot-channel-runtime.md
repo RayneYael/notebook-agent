@@ -56,6 +56,10 @@ async def RuntimePipeline._reply_fail_closed(query: Query, failure: Exception) -
 - A required bridge event is valid only when its manifest appears in
   `emitted_plugins` and it calls `prevent_default()`. The bridge replies via
   `EventContext.reply(...)` before that early return.
+- The bridge keeps a bounded, short-lived in-memory claim keyed by bot UUID and
+  platform message ID. A duplicate delivery may still reach LangBot, but only
+  the first claim may POST to the gateway and reply to the platform. The key is
+  never logged or persisted; it only collapses a redelivery burst.
 - Set `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE` to certifi's CA path on macOS
   when OpenClaw/iLink reports a certificate verification failure.
 
@@ -66,6 +70,7 @@ async def RuntimePipeline._reply_fail_closed(query: Query, failure: Exception) -
 | Required plugin config malformed or timeout | LangBot startup fails before `PlatformManager.run()` | No adapter starts |
 | Runtime connected; plugin not `initialized` | Keep polling until deadline | No adapter starts |
 | Required bridge emitted and prevented default | Return from pipeline after bridge reply | Normal Notebook Agent response |
+| Duplicate delivery with the same bot/message correlation | Suppress the later bridge reply | Exactly one final platform reply |
 | Runtime disconnected, missing emitted bridge, or no `prevent_default()` | `_reply_fail_closed()` returns fixed availability text | `MessageProcessor` is not called |
 | Pipeline has no explicit required bridge binding | Preserve upstream plugin semantics | Unchanged |
 | stdio runtime disconnect | Stop/restart LangBot safely | Never enable Local Agent fallback |
@@ -105,7 +110,7 @@ Assertions:
   a default stage can execute;
 - adapter/monitoring/processor/diagnostic paths are redacted;
 - `tests/test_langbot_bridge_plugin.py` confirms early-event replies use
-  `EventContext.reply(...)`.
+  `EventContext.reply(...)` and a duplicate fake delivery produces one reply.
 
 After deployment, verify the log marker
 `Required plugins initialized; message adapters may start.` occurs before the

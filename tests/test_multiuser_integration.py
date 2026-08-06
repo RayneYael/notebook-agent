@@ -39,6 +39,17 @@ from app.models import AppUser, ChannelIdentity, ContentItem, Segment
 from app.retrieval.search import vector_search
 
 
+class FakeEmbeddingProvider:
+    dimensions = 1536
+
+    def __init__(self):
+        self.queries = []
+
+    def embed(self, texts):
+        self.queries.extend(texts)
+        return [[0.01] * self.dimensions for _ in texts]
+
+
 @pytest.fixture
 def db_factory():
     try:
@@ -181,8 +192,13 @@ def test_every_read_service_is_tenant_scoped(db_factory):
         item_b, segment_b = _add_item(db, tenant_b.app_user_id, "乙方专属月球草莓")
         db.commit()
 
-    service_a = KnowledgeServices(tenant_a, db_factory)
-    assert service_a.search_segments("乙方专属月球草莓") == []
+    embedder = FakeEmbeddingProvider()
+    service_a = KnowledgeServices(tenant_a, db_factory, embedder=embedder)
+    # Vector ranking may return tenant A's nearest candidate for a query that
+    # names tenant B. The security contract is that it can never hydrate B.
+    assert {
+        value.segment_id for value in service_a.search_segments("乙方专属月球草莓")
+    } == {segment_a.id}
     assert service_a.search_segments("甲方专属量子菠萝")[0].segment_id == segment_a.id
     for action in (
         lambda: service_a.get_neighbors(segment_b.id),
@@ -193,6 +209,7 @@ def test_every_read_service_is_tenant_scoped(db_factory):
             action()
     assert service_a.get_item(item_a.id).item_id == item_a.id
     assert service_a.open_at(segment_a.id).url.endswith("?t=42")
+    assert embedder.queries == ["乙方专属月球草莓", "甲方专属量子菠萝"]
     with db_factory() as db:
         vector_hits = vector_search(
             db, [0.01] * 1536, user_id=tenant_a.app_user_id, k=10
@@ -229,6 +246,23 @@ class RecordingAgent:
         )
 
 
+class NoEvidenceAgent:
+    def __init__(self):
+        self.calls = 0
+
+    async def run(self, request):
+        self.calls += 1
+        return AgentExecution(
+            AgentAnswer(
+                status="not_found",
+                text="知识库中未找到足够证据。",
+                thread_id=request.thread_public_id,
+                error_code="no_evidence",
+            ),
+            [],
+        )
+
+
 @pytest.mark.asyncio
 async def test_context_recovers_after_service_restart_and_replay_is_idempotent(db_factory):
     settings = replace(Settings(), context_max_turns=4, context_token_budget=1000)
@@ -246,6 +280,21 @@ async def test_context_recovers_after_service_restart_and_replay_is_idempotent(d
     assert agent.histories[0] == ()
     assert len(agent.histories[1]) == 2
     assert len(agent.histories) == 2
+
+
+@pytest.mark.asyncio
+async def test_no_evidence_replay_keeps_its_distinct_status_and_code(db_factory):
+    settings = replace(Settings(), context_max_turns=4, context_token_budget=1000)
+    agent = NoEvidenceAgent()
+    service = ChannelService(db_factory, agent, settings)
+    original = envelope(user=uuid4().hex, message="no-evidence-message")
+
+    first = await service.handle(original)
+    replay = await service.handle(original)
+
+    assert first.status == replay.status == "not_found"
+    assert first.error_code == replay.error_code == "no_evidence"
+    assert agent.calls == 1
 
 
 def test_context_window_and_channels_do_not_mix(db_factory):

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/index.md","reason":"Review against the backend quality entry point."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Verify channel fail-closed and privacy contracts remain intact."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Check that composition and embedding validation are not duplicated."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit every boundary from trusted request through citation output."}
+{"file":".trellis/tasks/08-06-connect-agent-embedding/research/current-connection-audit.md","reason":"Verify all identified gaps close without regressing existing invariants."}
+{"file":".trellis/tasks/08-05-knowledge-retrieval-agent/research/provider-gateway-and-channel-boundary.md","reason":"Check model/provider and multi-channel boundaries remain framework-neutral."}

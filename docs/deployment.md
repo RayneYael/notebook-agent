@@ -138,13 +138,19 @@ AGENT_BASE_URL=https://gateway.example/v1
 首版不做模型 provider 自动 fallback。更换 provider 只修改配置，不修改 Agent
 prompt、tool schema、tenant dependency 或 `AgentAnswer`。
 
-embedding 维度必须与数据库 `segment.embedding vector(1536)` 保持一致：
+embedding 的模型和维度必须与已写入数据库的 `segment.embedding vector(1536)` 保持一致：
 
 ```dotenv
 EMBEDDING_MODEL=embedding-3
 EMBEDDING_DIMENSIONS=1536
 EMBEDDING_BATCH_SIZE=64
 ```
+
+普通知识问题在进入 BM25/pgvector 前会先生成并校验 query embedding；缺少 key、provider
+故障、响应维度不符或含非有限数值时，请求会以“查询能力暂时不可用”结束，**不会**降级成
+看似成功的纯词法回答。`/start`、`/whoami`、`/link`、`/new` 是确定性身份/会话命令，
+不调用模型或 embedding，因此仍可用。成功但没有 tenant-owned 证据时，回复会说明知识库
+没有足够证据；这与“查询能力暂时不可用”是两种不同状态，排障时不要混淆。
 
 ## 6. 启动 Notebook Agent gateway
 
@@ -453,6 +459,15 @@ HMAC 或暴露未认证 endpoint 绕过。
 - 确认 `content_item.state` 已到 `ready`。
 - 确认 embedding key、model 和 1536 维度一致。
 - 不要把另一个用户的内部编号传给 ingest。
+
+### 普通知识问题回复“查询能力暂时不可用”
+
+- 检查 `ZHIPU_API_KEY` 是否只在应用的私有 `.env` / secret store 中配置，且 gateway 重启后已加载。
+- 确认 `EMBEDDING_MODEL`、endpoint 和 `EMBEDDING_DIMENSIONS=1536` 与导入内容时使用的配置一致。
+- provider 的超时、响应数量/维度错误或非有限数值会被安全拒绝；不要在日志中添加问题正文、
+  vector、请求 payload 或 API key 来排查。
+- 如果确定性命令也不可用，则先按“plugin 回复渠道暂时不可用”排查 gateway/bridge，而不是
+  把问题归因于 embedding。
 
 ### 重启后追问丢失
 

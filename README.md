@@ -12,7 +12,10 @@
 - Telegram、微信等已启用渠道可以同时运行；单个 adapter 故障不改变 Agent 核心。
 - 会话最近几轮保存在 PostgreSQL，服务重启后可以恢复；不同渠道默认不混合历史。
 - Agent 只有 `search_segments`、`get_neighbors`、`get_item`、`open_at` 四个只读工具。
-- 无检索、无证据或伪造引用编号的模型答案会被拒绝。
+- 普通知识问答必须使用 query embedding + pgvector；没有 provider 时会明确 fail closed，
+  不会伪装成纯词法检索。`/start`、`/whoami`、`/link`、`/new` 不受此影响。
+- 无证据与查询不可用会给出不同提示；伪造引用编号的草稿会在同一轮中强制重新检索，
+  修复失败也不会返回草稿。
 
 ## 本地启动
 
@@ -83,7 +86,8 @@ python -m app.cli users rebind-identity --identity-id 34 --user-id 12
    复制私聊正文和外部身份；未应用时隐私验收不得通过。
 5. 启动 `python -m app.cli gateway-server`，再启动 LangBot 与 plugin runtime。
 
-桥接仅接受 loopback HTTP，并校验 HMAC、时间戳与 nonce，重放请求会被拒绝。
+桥接仅接受 loopback HTTP，并校验 HMAC、时间戳与 nonce，重放请求会被拒绝；短时间内
+同一个平台 message ID 的重复投递也只会触发一条最终平台回复。
 Slack 后续只需增加并配置一个 `channel="slack"` adapter，不修改 Agent/retrieval。
 
 ## 验证

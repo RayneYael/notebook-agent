@@ -19,7 +19,7 @@ from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientF
 from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
-from app.ingest.embed import ZhipuEmbedder
+from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import guard_transcript
 from app.models import AppUser, ContentItem, Segment
 
@@ -68,7 +68,7 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
         return item.id
 
 
-def process_item(item_id: int, *, connector: Any | None = None, embedder: Any | None = None, object_store: Any | None = None, session_factory=None) -> str:
+def process_item(item_id: int, *, connector: Any | None = None, embedder: EmbeddingProvider | None = None, object_store: Any | None = None, session_factory=None) -> str:
     factory = session_factory or get_session_factory()
     with factory() as db:
         item = db.get(ContentItem, item_id)

@@ -8,11 +8,16 @@ from dataclasses import asdict, dataclass, field
 from typing import Callable
 
 from pydantic_ai import Agent, RunContext, UsageLimits
-from pydantic_ai.exceptions import UsageLimitExceeded
+from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLimitExceeded
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.models import Model
 
-from app.agent.services import KnowledgeNotFound, KnowledgeServices
+from app.agent.services import (
+    EmbeddingUnavailable,
+    KnowledgeNotFound,
+    KnowledgeServices,
+    RetrievalUnavailable,
+)
 from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.config import Settings
 
@@ -35,6 +40,10 @@ class AgentDeps:
     search_calls: int = 0
     tool_calls: int = 0
     citations: dict[int, Citation] = field(default_factory=dict)
+    last_search_citation_ids: set[int] = field(default_factory=set)
+    final_citation_ids: set[int] = field(default_factory=set)
+    citation_repair_search_calls: int | None = None
+    discarded_draft_count: int = 0
 
     def record(self, values: list[Citation] | Citation) -> None:
         rows = values if isinstance(values, list) else [values]
@@ -56,7 +65,7 @@ def build_agent(model: Model | str) -> Agent[AgentDeps, str]:
         deps_type=AgentDeps,
         output_type=str,
         instructions=INSTRUCTIONS,
-        retries=1,
+        retries={"tools": 1, "output": 1},
         tool_timeout=15.0,
     )
 
@@ -70,6 +79,9 @@ def build_agent(model: Model | str) -> Agent[AgentDeps, str]:
         ctx.deps.tool_calls += 1
         citations = ctx.deps.services.search_segments(query, limit=limit)
         ctx.deps.record(citations)
+        ctx.deps.last_search_citation_ids = {
+            citation.segment_id for citation in citations
+        }
         return [value.model_dump() for value in citations]
 
     @agent.tool
@@ -98,6 +110,35 @@ def build_agent(model: Model | str) -> Agent[AgentDeps, str]:
         citation = ctx.deps.services.open_at(segment_id)
         ctx.deps.record(citation)
         return citation.model_dump()
+
+    @agent.output_validator
+    def validate_evidence(ctx: RunContext[AgentDeps], output: str) -> str:
+        """Reject fabricated markers before the draft becomes an Agent result."""
+
+        citations = ctx.deps.citations
+        if not citations:
+            return output
+        cited_ids = {int(value) for value in re.findall(r"\[S(\d+)\]", output)}
+        allowed_ids = (
+            ctx.deps.last_search_citation_ids
+            if ctx.deps.citation_repair_search_calls is not None
+            else set(citations)
+        )
+        if cited_ids and cited_ids.issubset(allowed_ids):
+            if (
+                ctx.deps.citation_repair_search_calls is None
+                or ctx.deps.search_calls > ctx.deps.citation_repair_search_calls
+            ):
+                ctx.deps.final_citation_ids = cited_ids
+                return output
+        ctx.deps.discarded_draft_count += 1
+        if ctx.deps.citation_repair_search_calls is None:
+            ctx.deps.citation_repair_search_calls = ctx.deps.search_calls
+        raise ModelRetry(
+            "The draft did not cite only evidence returned by the tools. "
+            "Call search_segments again, then answer using only citation IDs from "
+            "the fresh tool result."
+        )
 
     return agent
 
@@ -138,6 +179,28 @@ class KnowledgeAgent:
             return self._failure(
                 request, "检索步骤已达到上限，请缩小问题范围后重试。", "limit"
             )
+        except EmbeddingUnavailable:
+            return self._failure(
+                request,
+                "查询能力暂时不可用，请稍后重试。",
+                "embedding_unavailable",
+            )
+        except RetrievalUnavailable:
+            return self._failure(
+                request,
+                "查询能力暂时不可用，请稍后重试。",
+                "retrieval_unavailable",
+            )
+        except UnexpectedModelBehavior:
+            if deps.citation_repair_search_calls is not None:
+                return self._failure(
+                    request,
+                    "暂时无法生成可靠答案，请换个问法或稍后重试。",
+                    "answer_unavailable",
+                )
+            return self._failure(
+                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error"
+            )
         except KnowledgeNotFound:
             return self._failure(request, "请求的知识片段不存在。", "not_found")
         except Exception:
@@ -151,7 +214,11 @@ class KnowledgeAgent:
                 "未完成必要的知识库检索，因此不返回无来源答案。",
                 "search_required",
             )
-        citations = list(deps.citations.values())
+        citations = [
+            citation
+            for segment_id, citation in deps.citations.items()
+            if segment_id in deps.final_citation_ids
+        ]
         if not citations:
             return AgentExecution(
                 AgentAnswer(
@@ -167,14 +234,6 @@ class KnowledgeAgent:
             return self._failure(
                 request, "模型没有生成可验证的答案。", "empty_answer"
             )
-        cited_ids = {int(value) for value in re.findall(r"\[S(\d+)\]", answer_text)}
-        allowed_ids = {value.segment_id for value in citations}
-        if not cited_ids or not cited_ids.issubset(allowed_ids):
-            return self._failure(
-                request,
-                "答案没有正确关联实际检索证据，因此已拒绝返回。",
-                "citation_required",
-            )
         answer_text = _append_sources(answer_text, citations)
         return AgentExecution(
             AgentAnswer(
@@ -183,7 +242,10 @@ class KnowledgeAgent:
                 citations=citations,
                 thread_id=request.thread_public_id,
             ),
-            result.new_messages(),
+            # A rejected draft is never persisted. Keeping the successful answer
+            # without model history preserves idempotency while avoiding replaying
+            # an invalid model response in a later context window.
+            [] if deps.discarded_draft_count else result.new_messages(),
         )
 
     @staticmethod

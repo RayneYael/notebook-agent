@@ -1,10 +1,13 @@
 from dataclasses import replace
+import json
 
 import pytest
+from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
 
 from app.agent.runtime import KnowledgeAgent, build_agent
-from app.agent.services import ItemDetails
+from app.agent.services import EmbeddingUnavailable, ItemDetails, RetrievalUnavailable
 from app.agent.types import AgentRequest, Citation
 from app.channels.types import TenantContext
 from app.config import Settings
@@ -132,14 +135,68 @@ async def test_agent_rejects_missing_or_fabricated_citation_markers():
         )
         result = await runtime.run(request())
         assert result.answer.status == "failed"
-        assert result.answer.error_code == "citation_required"
+        assert result.answer.error_code == "answer_unavailable"
+        assert "[S999]" not in result.answer.text
+
+
+@pytest.mark.asyncio
+async def test_agent_repairs_fabricated_citation_with_a_fresh_search():
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test",
+    )
+    services = FakeServices([citation])
+
+    def model(messages, _info):
+        tool_returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        retry_requested = any(
+            isinstance(part, RetryPromptPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not tool_returns or retry_requested and len(tool_returns) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_segments",
+                        json.dumps({"query": "safe retrieval"}),
+                        tool_call_id=f"search-{len(tool_returns)}",
+                    )
+                ]
+            )
+        if len(tool_returns) == 1:
+            return ModelResponse(parts=[TextPart("unsafe draft [S999]")])
+        return ModelResponse(parts=[TextPart("repaired answer [S3]")])
+
+    runtime = KnowledgeAgent(
+        FunctionModel(model),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: services,
+    )
+    result = await runtime.run(request())
+
+    assert result.answer.status == "ok"
+    assert "repaired answer [S3]" in result.answer.text
+    assert "S999" not in result.answer.text
+    assert services.calls.count("search_segments") == 2
+    assert result.new_messages == []
 
 
 @pytest.mark.asyncio
 async def test_agent_tool_error_and_request_limit_fail_closed():
     class BrokenServices(FakeServices):
         def search_segments(self, query, *, limit=6):
-            raise RuntimeError("database unavailable")
+            raise RetrievalUnavailable("database unavailable")
 
     settings = replace(Settings(), agent_timeout_seconds=2)
     broken = KnowledgeAgent(
@@ -149,7 +206,19 @@ async def test_agent_tool_error_and_request_limit_fail_closed():
     )
     failed = await broken.run(request())
     assert failed.answer.status == "failed"
-    assert failed.answer.error_code == "runtime_error"
+    assert failed.answer.error_code == "retrieval_unavailable"
+
+    class MissingEmbeddingServices(FakeServices):
+        def search_segments(self, query, *, limit=6):
+            raise EmbeddingUnavailable("provider unavailable")
+
+    unavailable = KnowledgeAgent(
+        TestModel(call_tools=["search_segments"], custom_output_text="answer"),
+        settings,
+        lambda _: MissingEmbeddingServices([]),
+    )
+    unavailable_result = await unavailable.run(request())
+    assert unavailable_result.answer.error_code == "embedding_unavailable"
 
     citation = Citation(
         item_id=2,

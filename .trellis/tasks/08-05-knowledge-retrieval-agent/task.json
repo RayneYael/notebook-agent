@@ -19,7 +19,8 @@
   "pr_url": null,
   "subtasks": [],
   "children": [
-    "08-06-diagnose-wechat-whoami"
+    "08-06-diagnose-wechat-whoami",
+    "08-06-connect-agent-embedding"
   ],
   "parent": "08-04-video-text-kb",
   "relatedFiles": [],

@@ -14,9 +14,38 @@ from langbot_plugin.api.entities import context, events
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
 
 
+class ReplyDeduplicator:
+    """Keep a short-lived, in-memory claim for one platform message reply."""
+
+    def __init__(self, *, ttl_seconds: float = 120.0, max_entries: int = 4096) -> None:
+        self._ttl_seconds = ttl_seconds
+        self._max_entries = max_entries
+        self._claimed: dict[str, float] = {}
+        self._lock = asyncio.Lock()
+
+    async def claim(self, correlation_id: str) -> bool:
+        now = time.monotonic()
+        async with self._lock:
+            self._claimed = {
+                key: expiry
+                for key, expiry in self._claimed.items()
+                if expiry > now
+            }
+            if correlation_id in self._claimed:
+                return False
+            if len(self._claimed) >= self._max_entries:
+                # Entries all have a fixed TTL; retaining only the newest safe
+                # bounded set is enough to collapse adapter redelivery bursts.
+                oldest = min(self._claimed, key=self._claimed.get)
+                del self._claimed[oldest]
+            self._claimed[correlation_id] = now + self._ttl_seconds
+            return True
+
+
 class KnowledgeAgentEventListener(EventListener):
     async def initialize(self):
         await super().initialize()
+        self._reply_deduplicator = ReplyDeduplicator()
 
         # This fires before LangBot's MessageProcessor. Preventing the default
         # path therefore also avoids its info-level private-message log.
@@ -40,6 +69,11 @@ class KnowledgeAgentEventListener(EventListener):
                 "message_id": _message_id(bot_uuid, event, message_text),
                 "text": message_text,
             }
+            deduplicator = getattr(self, "_reply_deduplicator", None)
+            if deduplicator is None:
+                deduplicator = self._reply_deduplicator = ReplyDeduplicator()
+            if not await deduplicator.claim(f"{bot_uuid}:{payload['message_id']}"):
+                return
             answer = await asyncio.to_thread(_post, payload)
             text = str(answer.get("text") or "知识库暂时无法回复，请稍后重试。")
         except Exception:

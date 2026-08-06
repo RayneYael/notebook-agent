@@ -58,3 +58,22 @@ def test_embed_rejects_incomplete_batch_response(monkeypatch):
 
     with pytest.raises(EmbeddingError, match="response count mismatch"):
         ZhipuEmbedder("secret").embed(["first", "second"])
+
+
+@pytest.mark.parametrize(
+    ("embedding", "message"),
+    [([1.0], "dimension mismatch"), ([float("nan"), 1.0], "invalid values")],
+)
+def test_embed_rejects_invalid_vector_shape_or_values(monkeypatch, embedding, message):
+    monkeypatch.setattr(
+        "app.ingest.embed.urlopen",
+        lambda *_args, **_kwargs: _response([{"index": 0, "embedding": embedding}]),
+    )
+
+    with pytest.raises(EmbeddingError, match=message):
+        ZhipuEmbedder("secret", dimensions=2).embed(["redacted-input"])
+
+
+def test_embed_rejects_non_positive_dimensions():
+    with pytest.raises(ValueError, match="dimensions must be positive"):
+        ZhipuEmbedder("secret", dimensions=0)

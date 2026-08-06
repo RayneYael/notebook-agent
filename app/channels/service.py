@@ -117,7 +117,7 @@ class ChannelService:
             db.commit()
 
         execution = await self._agent.run(request)
-        if execution.answer.status == "failed" or not execution.new_messages:
+        if execution.answer.status == "failed":
             return execution.answer
 
         with self._session_factory() as db:
@@ -194,4 +194,5 @@ def _answer_from_turn(turn, public_id: str) -> AgentAnswer:
         text=turn.assistant_text,
         citations=citations,
         thread_id=public_id,
+        error_code=None if citations else "no_evidence",
     )

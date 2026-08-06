@@ -148,3 +148,29 @@ async def test_gateway_failure_is_replied_without_default_pipeline(
     assert event_context.default_prevented is True
     assert event_context.postorder_prevented is True
     assert event_context.replies[0].root[0].text == "知识库渠道暂时不可用，请稍后重试。"
+
+
+@pytest.mark.asyncio
+async def test_duplicate_delivery_only_claims_one_platform_reply(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    module = _load_bridge_module(monkeypatch)
+    monkeypatch.setenv("KB_BOT_CHANNELS", '{"wechat-bot":"wechat"}')
+    calls = []
+
+    def post(_payload):
+        calls.append(True)
+        return {"text": "stable answer"}
+
+    monkeypatch.setattr(module, "_post", post)
+    listener = object.__new__(module.KnowledgeAgentEventListener)
+    first = _EventContext()
+    duplicate = _EventContext()
+
+    await listener._handle(first)
+    await listener._handle(duplicate)
+
+    assert len(calls) == 1
+    assert len(first.replies) == 1
+    assert duplicate.replies == []
+    assert duplicate.default_prevented is True
