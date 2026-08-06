@@ -51,6 +51,25 @@ loopback 检查。
 凭据只能进入未提交的 `.env`、systemd `EnvironmentFile`、容器 secret 或平台 secret
 存储。不要把 Telegram token、微信二维码、模型 key、绑定码写入仓库或日志。
 
+### macOS TLS CA
+
+部分 macOS Python 环境无法从系统钥匙串提供 OpenClaw/iLink 所需的 CA 链。若 LangBot
+日志出现 `SSLCertVerificationError`，先在**启动 LangBot 的同一个环境**中定位 certifi：
+
+```bash
+.venv/bin/python -c 'import certifi; print(certifi.where())'
+```
+
+把输出路径作为两个环境变量的值后再启动 LangBot：
+
+```dotenv
+SSL_CERT_FILE=/absolute/path/to/certifi/cacert.pem
+REQUESTS_CA_BUNDLE=/absolute/path/to/certifi/cacert.pem
+```
+
+这两个变量不是 secret；不要把机器上的绝对路径当作可移植默认值提交到仓库。Linux
+镜像若已经有正确 CA bundle，不需要强行添加它们。
+
 ## 3. 首次安装
 
 在项目根目录执行：
@@ -153,17 +172,47 @@ CHANNEL_GATEWAY_PORT=8765
 
 ## 7. 安装 LangBot 桥接
 
-### 7.1 应用隐私补丁
+### 7.1 应用启动就绪与隐私补丁
 
 在固定版本 LangBot 4.10.6 源码根目录执行：
 
 ```bash
+patch --dry-run -p1 < /absolute/path/to/notebook-agent/integrations/langbot-4.10.6-redact-monitoring.patch
 patch -p1 < /absolute/path/to/notebook-agent/integrations/langbot-4.10.6-redact-monitoring.patch
 ```
 
-补丁会阻止 LangBot monitoring 复制私聊正文、昵称与外部 sender 映射。插件使用
-更早的 `PersonMessageReceived` 事件阻止默认 pipeline，因此后续 MessageProcessor
-也不会记录问题正文。未应用补丁时不得通过隐私验收。
+文件名因兼容性保留 `redact-monitoring`，但补丁同时实现三件事：
+
+1. monitoring、adapter 日志、MessageProcessor 与 plugin diagnostic 不复制私聊正文、
+   昵称、外部 sender ID 或 message preview；
+2. 当 `plugin.required_plugins` 非空时，LangBot 只会在这些插件的 runtime 状态全部为
+   `initialized` 后启动任何 enabled adapter；
+3. 对显式绑定 required plugin 的 pipeline，每条消息都必须确认该插件处理了早期 event
+   并调用 `prevent_default()`。runtime 断线、插件缺席或未阻止默认处理时，LangBot
+   只返回固定“渠道暂时不可用”提示，绝不回退到 Local Agent。
+
+把下列配置写入 LangBot 的 `data/config.yaml`。本项目必须明确配置 bridge plugin；留空
+会保留上游兼容行为，但不会得到本部署的启动保护。
+
+```yaml
+plugin:
+  required_plugins:
+    - notebook-agent/notebook-knowledge-agent
+  required_plugins_ready_timeout_seconds: 30
+```
+
+deadline 是最长等待时间，不是启动延迟：状态首次达到 `initialized` 会立即开放全部
+adapter；30 秒仍未达到时 LangBot 退出且 adapter 不会启动。由 systemd/Docker 重启或
+人工排障，**不要添加固定 `sleep`，也不要配置 LangBot 内置模型作为 fallback**。
+
+环境变量部署可使用等价的 `PLUGIN__REQUIRED_PLUGINS`（逗号分隔）和
+`PLUGIN__REQUIRED_PLUGINS_READY_TIMEOUT_SECONDS`。变更后必须重启 LangBot；不要编辑
+被忽略的 `.runtime/langbot/patched_site` 作为长期配置来源。
+
+补丁只支持 wheel SHA-256 为
+`ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff` 的
+LangBot 4.10.6。升级版本时重新取得上游 source、先做 `--dry-run`，再重新审查全部 hunk。
+未应用补丁时不得通过隐私或渠道可用性验收。
 
 ### 7.2 安装 plugin
 
@@ -173,7 +222,16 @@ patch -p1 < /absolute/path/to/notebook-agent/integrations/langbot-4.10.6-redact-
 integrations/langbot_kb_plugin/
 ```
 
-plugin runtime 配置：
+将 `.env.example` 复制到**LangBot 已安装插件目录**的 `.env`，而不是项目根目录的
+`.env`。LangBot plugin worker 在非 Windows 环境从该安装目录加载其私有 `.env`：
+
+```bash
+cp /absolute/path/to/notebook-agent/integrations/langbot_kb_plugin/.env.example \
+  /absolute/path/to/langbot/data/plugins/notebook-agent__notebook-knowledge-agent/.env
+chmod 600 /absolute/path/to/langbot/data/plugins/notebook-agent__notebook-knowledge-agent/.env
+```
+
+plugin runtime 私有配置：
 
 ```dotenv
 CHANNEL_GATEWAY_SECRET=与Notebook-Agent完全相同的值
@@ -183,6 +241,8 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 
 `KB_BOT_CHANNELS` 必须列出每个启用 bot 的 UUID；没有默认值，未映射的 bot 会
 fail closed。UUID 来自 LangBot bot 配置，不是 Telegram 用户 ID 或微信昵称。
+同一个私有 `.env` 可以同时映射 Telegram、微信和后续其他 adapter 的多个 bot UUID。
+不要在 LangBot core 的日志、systemd unit、截图或工单中粘贴该文件内容。
 
 ### 7.3 配置并同时启用渠道
 
@@ -192,6 +252,10 @@ fail closed。UUID 来自 LangBot bot 配置，不是 Telegram 用户 ID 或微�
 2. 新建并启用 OpenClaw/iLink 微信 adapter，完成个人号扫码。
 3. 两个 bot 都绑定安装了 bridge plugin 的 pipeline。
 4. 两个 adapter 保持 enabled；不要配置“当前渠道”开关。
+
+bridge pipeline 必须关闭“启用全部插件”，并显式只绑定
+`notebook-agent/notebook-knowledge-agent`。这正是运行时 fail-closed gate 的适用范围；
+不要把 required bridge 仅靠全局自动发现绑定。
 
 平台配置参考：
 
@@ -205,9 +269,24 @@ fail closed。UUID 来自 LangBot bot 配置，不是 Telegram 用户 ID 或微�
 1. PostgreSQL、Redis、MinIO。
 2. `alembic upgrade head`。
 3. Notebook Agent `gateway-server`。
-4. LangBot plugin runtime。
-5. LangBot core 与全部 enabled adapters。
-6. 检查 gateway health，再用 Telegram `/whoami` 做渠道 smoke。
+4. 检查 gateway health；若使用 macOS CA workaround，同时向 LangBot 进程注入
+   `SSL_CERT_FILE` 与 `REQUESTS_CA_BUNDLE`。
+5. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
+6. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
+   `initialized`，**之后**才启动每个 enabled adapter；不要手工改变这个顺序。
+7. 检查 readiness，再做 Telegram `/whoami` 和微信私聊 smoke。
+
+readiness 检查不使用“等待 N 秒”。在 LangBot 进程日志中确认
+`Required plugins initialized; message adapters may start.`，再确认：
+
+```bash
+curl --fail http://127.0.0.1:<LangBot API port>/healthz
+```
+
+HTTP `healthz` 只有在 application 已通过启动 gate 并创建 HTTP task 后才会返回成功。
+管理面板的 plugin 详情还必须显示 bridge status 为 `initialized`；若 deadline 超时，先
+检查 plugin package、其私有 `.env` 权限、gateway health 和 CA，再重启 LangBot。不要
+先启动 adapter 试图“等它自己恢复”。
 
 日常停止采用相反顺序：
 
@@ -279,6 +358,8 @@ systemd 日志中不应出现问题正文、证据全文、平台 token 或外�
 | schema | `.venv/bin/alembic current` | 当前 revision 为 head |
 | migration drift | `.venv/bin/alembic check` | 无新 upgrade operation |
 | Agent 进程 | `GET http://127.0.0.1:8765/health` | HTTP 200、status ok |
+| LangBot readiness | 日志 marker + `GET /healthz` | required bridge 为 `initialized` 后 API 才可用 |
+| bridge runtime | LangBot plugin detail | `notebook-agent/notebook-knowledge-agent` 为 `initialized` |
 | 模型与检索 | CLI `ask` smoke | 有工具证据和时间戳 |
 | Telegram | `/whoami` | 返回稳定内部用户编号 |
 | 微信 | 私聊 `/whoami` | 返回绑定后的同一编号 |
@@ -341,6 +422,26 @@ ID、plugin event 顺序、monitoring 隐私补丁和两个 adapter 并发。不
 - 系统时钟偏差超过 60 秒，HMAC 请求会被拒绝。
 - bot UUID 未加入 `KB_BOT_CHANNELS`，或 channel 拼写不是 `telegram/wechat/slack`。
 
+### LangBot 在 adapter 出现前退出或 readiness deadline 超时
+
+- 检查 `plugin.required_plugins` 是否为精确的
+  `notebook-agent/notebook-knowledge-agent`，bridge pipeline 是否显式绑定它。
+- 在管理面板检查插件状态；`installed`、`starting` 或不存在都不是 `initialized`。
+- 检查安装插件目录的私有 `.env` 是否存在且为 `0600`，但不要打印文件内容。
+- 检查 gateway 的 loopback health、HMAC secret 是否两端一致，以及 macOS CA 设置。
+- stdio plugin runtime 断线后，LangBot 4.10.6 不能安全自动重连；停止 LangBot core 后
+  再按第 8 节顺序启动。Docker/WebSocket 重连期间消息会 fail closed，不会落入 Local Agent。
+
+### 微信二维码过期或重新登录失败
+
+1. 停止 LangBot core/adapters，保留 gateway、数据服务、bridge package 和私有 `.env`。
+2. 在 LangBot 管理面板为 OpenClaw/iLink 微信 adapter 发起新的登录会话；只在本机受信任
+   屏幕展示二维码，二维码不要截进仓库、日志或工单。
+3. 使用微信个人号完成扫码，等待管理面板显示成功并持久化登录状态。
+4. 重新启动 LangBot；先通过 required-plugin readiness，再做一次微信 `/whoami` smoke。
+5. 若仍出现 `SSLCertVerificationError`，回到本章的 macOS TLS CA 配置，不要靠反复扫码
+   或关闭 TLS 校验解决。
+
 ### HTTP 401
 
 检查共享密钥、时钟、请求 nonce，以及请求体是否在签名后被代理修改。不要通过关闭
@@ -369,7 +470,7 @@ HMAC 或暴露未认证 endpoint 绕过。
 ## 15. 部署完成定义
 
 部署完成不等于产品验收完成。部署阶段通过条件是：服务健康、migration 在 head、
-CLI 真实模型 smoke 成功、两个 LangBot adapter 同时 enabled、隐私补丁生效。之后仍需
+CLI 真实模型 smoke 成功、bridge plugin 为 `initialized` 后两个 LangBot adapter 同时
+enabled、启动/隐私补丁生效。之后仍需
 按 `manual-acceptance.md` 由人工核对 Telegram 完整 E2E、微信个人号 smoke、时间戳
 准确性、两用户数据隔离和断线故障隔离。
-

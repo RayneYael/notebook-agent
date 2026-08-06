@@ -1,12 +1,12 @@
 --- a/langbot/pkg/pipeline/monitoring_helper.py
 +++ b/langbot/pkg/pipeline/monitoring_helper.py
-@@ -34,2 +34,3 @@ class MonitoringHelper:
+@@ -34,2 +34,3 @@
 -            # Check if session exists, if not, record session start
 -            session_id = f'{query.launcher_type.value if hasattr(query.launcher_type, "value") else query.launcher_type}_{query.launcher_id}'
 +            # Private content is persisted only by notebook-agent's tenant store.
 +            # Do not duplicate external session identities here.
 +            session_id = 'redacted-private-session'
-@@ -46,6 +47,2 @@ class MonitoringHelper:
+@@ -46,6 +47,2 @@
 -            # Try to record message
 -            # Use JSON serialization to preserve message chain structure (including image URLs, etc.)
 -            if hasattr(query, 'message_chain') and hasattr(query.message_chain, 'model_dump'):
@@ -15,25 +15,283 @@
 -                message_content = str(query)
 +            # LangBot monitoring must not duplicate private message content.
 +            message_content = '[redacted by notebook-agent deployment]'
-@@ -65,8 +62,8 @@ class MonitoringHelper:
-                 platform=query.launcher_type.value
-                 if hasattr(query.launcher_type, 'value')
-                 else str(query.launcher_type),
+@@ -68,2 +65,2 @@
 -                user_id=query.sender_id,
 -                user_name=sender_name,
 +                user_id='redacted',
 +                user_name=None,
-                 runner_name=runner_name,
-                 variables=None,  # Will be updated in record_query_success
-             )
-@@ -89,8 +86,8 @@ class MonitoringHelper:
-                     platform=query.launcher_type.value
-                     if hasattr(query.launcher_type, 'value')
-                     else str(query.launcher_type),
+@@ -92,2 +89,2 @@
 -                    user_id=query.sender_id,
 -                    user_name=sender_name,
 +                    user_id='redacted',
 +                    user_name=None,
-                 )
- 
-             return message_id
+--- a/langbot/pkg/pipeline/pipelinemgr.py
++++ b/langbot/pkg/pipeline/pipelinemgr.py
+@@ -283,0 +284,18 @@
++    async def _reply_fail_closed(self, query: pipeline_query.Query, failure: Exception) -> None:
++        """Reply without exposing event data when a required bridge plugin is unavailable."""
++        try:
++            await query.adapter.reply_message(
++                message_source=query.message_event,
++                message=platform_message.MessageChain(
++                    [platform_message.Plain(text='知识库渠道暂时不可用，请稍后重试。')]
++                ),
++                quote_origin=False,
++            )
++        except Exception as reply_error:
++            self.ap.logger.warning(
++                f'Fail-closed reply failed for query {query.query_id}: {type(reply_error).__name__}'
++            )
++        self.ap.logger.warning(
++            f'Fail-closed required plugin event for query {query.query_id}: {type(failure).__name__}'
++        )
++
+@@ -319,0 +338 @@
++            required_plugins = self.ap.plugin_connector.required_plugins_for_pipeline(bound_plugins)
+@@ -337 +356,8 @@
+-            event_ctx = await self.ap.plugin_connector.emit_event(event_obj, bound_plugins)
++            try:
++                event_ctx = await self.ap.plugin_connector.emit_event(event_obj, bound_plugins)
++                self.ap.plugin_connector.validate_required_plugin_event(event_ctx, bound_plugins)
++            except Exception as plugin_error:
++                if required_plugins:
++                    await self._reply_fail_closed(query, plugin_error)
++                    return
++                raise
+--- a/langbot/pkg/pipeline/plugin_diagnostics.py
++++ b/langbot/pkg/pipeline/plugin_diagnostics.py
+@@ -249 +248,0 @@
+-        'message_preview': str(message_chain)[:200],
+--- a/langbot/pkg/pipeline/process/process.py
++++ b/langbot/pkg/pipeline/process/process.py
+@@ -39,3 +39 @@
+-        self.ap.logger.info(
+-            f'Processing request from {query.launcher_type.value}_{query.launcher_id} ({query.query_id}): {message_text}'
+-        )
++        self.ap.logger.info(f'Processing request {query.query_id} (message content redacted)')
+--- a/langbot/pkg/platform/botmgr.py
++++ b/langbot/pkg/platform/botmgr.py
+@@ -148,5 +148,4 @@
+-            if hasattr(message_chain, 'model_dump'):
+-                message_content = json.dumps(message_chain.model_dump(), ensure_ascii=False)
+-            else:
+-                message_content = str(message_chain)
+-
++            # Monitoring is not a private conversation store. Routing metadata
++            # is enough to diagnose a discard without persisting user content
++            # or external identity values.
++            message_content = '[redacted by notebook-agent deployment]'
+@@ -154,8 +153 @@
+-            if hasattr(message_event, 'sender'):
+-                if hasattr(message_event.sender, 'nickname'):
+-                    sender_name = message_event.sender.nickname
+-                elif hasattr(message_event.sender, 'member_name'):
+-                    sender_name = message_event.sender.member_name
+-
+-            # Use the same session_id format as monitoring_helper.py
+-            session_id = f'{launcher_type}_{launcher_id}'
++            session_id = 'redacted-private-session'
+@@ -174 +166 @@
+-                user_id=str(sender_id),
++                user_id='redacted',
+@@ -193 +185 @@
+-                    user_id=str(sender_id),
++                    user_id='redacted',
+@@ -204,4 +195,0 @@
+-            image_components = [
+-                component for component in event.message_chain if isinstance(component, platform_message.Image)
+-            ]
+-
+@@ -209,3 +197 @@
+-                f'{event.message_chain}',
+-                images=image_components,
+-                message_session_id=f'person_{event.sender.id}',
++                'Private message received [redacted]',
+@@ -265,4 +250,0 @@
+-            image_components = [
+-                component for component in event.message_chain if isinstance(component, platform_message.Image)
+-            ]
+-
+@@ -270,3 +252 @@
+-                f'{event.message_chain}',
+-                images=image_components,
+-                message_session_id=f'group_{event.group.id}',
++                'Group message received [redacted]',
+--- a/langbot/pkg/plugin/connector.py
++++ b/langbot/pkg/plugin/connector.py
+@@ -42,0 +43,12 @@
++class RequiredPluginConfigurationError(ValueError):
++    """Raised when required plugin configuration is malformed."""
++
++
++class RequiredPluginNotReadyError(RuntimeError):
++    """Raised when a required plugin is unavailable before an adapter may receive messages."""
++
++
++class RequiredPluginEventError(RuntimeError):
++    """Raised when a required plugin did not safely handle a pipeline event."""
++
++
+@@ -72,0 +85,7 @@
++        plugin_config = self.ap.instance_config.data.get('plugin', {})
++        self.required_plugins = self._parse_required_plugins(plugin_config.get('required_plugins', []))
++        self.required_plugins_ready_timeout_seconds = self._parse_ready_timeout(
++            plugin_config.get('required_plugins_ready_timeout_seconds', 30)
++        )
++        self._runtime_connected = asyncio.Event()
++        self._required_plugins_ready = asyncio.Event()
+@@ -73,0 +93,82 @@
++    @staticmethod
++    def _parse_required_plugins(value: Any) -> tuple[str, ...]:
++        if value is None:
++            return ()
++        if isinstance(value, str):
++            value = [item.strip() for item in value.split(',') if item.strip()]
++        if not isinstance(value, list):
++            raise RequiredPluginConfigurationError('plugin.required_plugins must be a list of author/name values')
++
++        required_plugins: list[str] = []
++        for item in value:
++            if not isinstance(item, str):
++                raise RequiredPluginConfigurationError('plugin.required_plugins entries must be strings')
++            plugin_ref = item.strip()
++            author, separator, plugin_name = plugin_ref.partition('/')
++            if not separator or not author or not plugin_name or '/' in plugin_name:
++                raise RequiredPluginConfigurationError(
++                    'plugin.required_plugins entries must use the author/name format'
++                )
++            if plugin_ref not in required_plugins:
++                required_plugins.append(plugin_ref)
++        return tuple(required_plugins)
++
++    @staticmethod
++    def _parse_ready_timeout(value: Any) -> float:
++        try:
++            timeout = float(value)
++        except (TypeError, ValueError) as exc:
++            raise RequiredPluginConfigurationError(
++                'plugin.required_plugins_ready_timeout_seconds must be a positive number'
++            ) from exc
++        if timeout <= 0:
++            raise RequiredPluginConfigurationError(
++                'plugin.required_plugins_ready_timeout_seconds must be a positive number'
++            )
++        return timeout
++
++    def _mark_runtime_disconnected(self) -> None:
++        self._runtime_connected.clear()
++        self._required_plugins_ready.clear()
++
++    def required_plugins_for_pipeline(self, bound_plugins: list[str] | None) -> tuple[str, ...]:
++        """Return configured required plugins explicitly bound to this pipeline.
++
++        A pipeline with ``enable_all_plugins`` does not opt into the strict guard:
++        it retains LangBot's upstream plugin semantics. Notebook Agent pipelines
++        explicitly bind their bridge plugin and are therefore fail closed.
++        """
++        if bound_plugins is None or not self.required_plugins:
++            return ()
++        bound_plugin_set = set(bound_plugins)
++        return tuple(plugin_ref for plugin_ref in self.required_plugins if plugin_ref in bound_plugin_set)
++
++    def validate_required_plugin_event(self, event_ctx: context.EventContext, bound_plugins: list[str] | None) -> None:
++        """Require configured bridge plugins to handle the current early event."""
++        required_plugins = self.required_plugins_for_pipeline(bound_plugins)
++        if not required_plugins:
++            return
++        if not self._runtime_connected.is_set():
++            raise RequiredPluginNotReadyError('plugin runtime is not connected')
++
++        emitted_plugins = getattr(event_ctx, '_emitted_plugins', [])
++        emitted_plugin_refs: set[str] = set()
++        if isinstance(emitted_plugins, list):
++            for plugin in emitted_plugins:
++                manifest = plugin.get('manifest') if isinstance(plugin, dict) else None
++                metadata = manifest.get('metadata') if isinstance(manifest, dict) else None
++                author = metadata.get('author') if isinstance(metadata, dict) else None
++                plugin_name = metadata.get('name') if isinstance(metadata, dict) else None
++                if author and plugin_name:
++                    emitted_plugin_refs.add(f'{author}/{plugin_name}')
++
++        missing_plugins = [plugin_ref for plugin_ref in required_plugins if plugin_ref not in emitted_plugin_refs]
++        if missing_plugins:
++            raise RequiredPluginEventError('required plugin did not handle the event')
++        if not event_ctx.is_prevented_default():
++            raise RequiredPluginEventError('required plugin did not prevent the default pipeline')
++
++        # A successfully handled event is stronger evidence than an earlier
++        # status query and also marks a reconnected runtime ready again.
++        self._required_plugins_ready.set()
++
+@@ -91,0 +193 @@
++                self._mark_runtime_disconnected()
+@@ -105,0 +208 @@
++            self._runtime_connected.set()
+@@ -117 +220,4 @@
+-            await self.handler_task
++            try:
++                await self.handler_task
++            finally:
++                self._mark_runtime_disconnected()
+@@ -130,0 +237 @@
++                self._mark_runtime_disconnected()
+@@ -155,0 +263 @@
++                self._mark_runtime_disconnected()
+@@ -188 +296 @@
+-        pass
++        """Wait for configured required plugins before adapters start receiving messages.
+@@ -189,0 +298,44 @@
++        The plugin runtime starts asynchronously. A fixed delay merely moves the
++        race, so this waits for both a successful runtime connection and the
++        runtime's authoritative ``initialized`` status until a configured
++        deadline is reached.
++        """
++        if not self.required_plugins:
++            return
++        if not self.is_enable_plugin:
++            raise RequiredPluginNotReadyError('required plugins configured while the plugin system is disabled')
++
++        loop = asyncio.get_running_loop()
++        deadline = loop.time() + self.required_plugins_ready_timeout_seconds
++        retry_delay = 0.05
++
++        while True:
++            remaining = deadline - loop.time()
++            if remaining <= 0:
++                raise RequiredPluginNotReadyError('timed out waiting for required plugins to initialize')
++
++            try:
++                await asyncio.wait_for(self._runtime_connected.wait(), timeout=remaining)
++                statuses = await asyncio.gather(
++                    *(self.get_plugin_info(*plugin_ref.split('/', 1)) for plugin_ref in self.required_plugins)
++                )
++            except asyncio.TimeoutError as exc:
++                raise RequiredPluginNotReadyError('timed out waiting for required plugins to initialize') from exc
++            except Exception as exc:
++                self.ap.logger.debug(f'Required plugin readiness check failed: {type(exc).__name__}')
++                statuses = []
++
++            if len(statuses) == len(self.required_plugins) and all(
++                isinstance(status, dict) and status.get('status') == 'initialized' for status in statuses
++            ):
++                self._required_plugins_ready.set()
++                self.ap.logger.info('Required plugins initialized; message adapters may start.')
++                return
++
++            self._required_plugins_ready.clear()
++            remaining = deadline - loop.time()
++            if remaining <= 0:
++                raise RequiredPluginNotReadyError('timed out waiting for required plugins to initialize')
++            await asyncio.sleep(min(retry_delay, remaining))
++            retry_delay = min(retry_delay * 2, 0.5)
++
+@@ -191 +343 @@
+-        if not hasattr(self, 'handler'):
++        if not self._runtime_connected.is_set() or not hasattr(self, 'handler'):
+--- a/langbot/templates/config.yaml
++++ b/langbot/templates/config.yaml
+@@ -119,0 +120,4 @@
++    # Required plugins must be initialized before enabled message adapters start.
++    # Empty keeps the upstream 4.10.6 startup behavior unchanged.
++    required_plugins: []
++    required_plugins_ready_timeout_seconds: 30

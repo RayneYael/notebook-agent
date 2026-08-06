@@ -14,13 +14,26 @@ configure the three values shown in `.env.example`, and start
 `python -m app.cli gateway-server` from the notebook-agent project first.
 
 Before platform acceptance, apply
-`../langbot-4.10.6-redact-monitoring.patch` to the fixed LangBot 4.10.6 source.
-The early `PersonMessageReceived` interception prevents the later processor log,
-while the patch prevents LangBot monitoring storage from duplicating message
-content and external identity values. At this early event, replies must be sent
-with `EventContext.reply(...)`: after `prevent_default()`, LangBot returns before
-it consumes `event.reply_message_chain`. If this patch is not applied, the
-privacy acceptance item must be treated as failed.
+`../langbot-4.10.6-redact-monitoring.patch` to the fixed LangBot 4.10.6 source
+with `patch --dry-run -p1` first. Despite its retained filename, the patch does
+three jobs: it redacts LangBot monitoring/adapter/processor/diagnostic paths,
+waits for configured required plugins before any enabled adapter starts, and
+fails closed if a required bridge plugin does not handle an early event. Configure
+`plugin.required_plugins` with `notebook-agent/notebook-knowledge-agent` and
+bind this plugin explicitly to each bridge pipeline. Do not use a fixed startup
+sleep or enable LangBot Local Agent as a fallback.
+
+The early `PersonMessageReceived` interception prevents default processing. At
+this early event, replies must be sent with `EventContext.reply(...)`: after
+`prevent_default()`, LangBot returns before it consumes `event.reply_message_chain`.
+If the patch is not applied, the privacy and channel-availability acceptance
+items must be treated as failed.
+
+The runtime worker loads its secret configuration from the installed plugin
+directory, for example
+`data/plugins/notebook-agent__notebook-knowledge-agent/.env`. Copy
+`.env.example` there and set mode `0600`; never place its real values in this
+repository, screenshots, or normal LangBot configuration logs.
 
 LangBot 4.10.6 does not consistently serialize the original platform message
 ID into plugin events. The bridge prefers `MessageChain.Source`; when absent it

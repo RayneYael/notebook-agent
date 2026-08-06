@@ -22,10 +22,15 @@ python -m app.cli users --help
 ## 1. 隐私与固定版本
 
 - [ ] 确认 LangBot 为 4.10.6，plugin SDK 为 0.4.13。
-- [ ] 对 LangBot 源码应用 `integrations/langbot-4.10.6-redact-monitoring.patch`。
+- [ ] 对 LangBot 源码先 `patch --dry-run -p1`、再应用
+      `integrations/langbot-4.10.6-redact-monitoring.patch`。
 - [ ] 安装并启用 `integrations/langbot_kb_plugin/`。
 - [ ] 应用和插件使用同一个高熵 `CHANNEL_GATEWAY_SECRET`，且文件未被提交。
 - [ ] `KB_BOT_CHANNELS` 明确包含 Telegram 与微信两个 bot UUID，没有默认渠道。
+- [ ] `plugin.required_plugins` 明确包含
+      `notebook-agent/notebook-knowledge-agent`；bridge pipeline 关闭“启用全部插件”并显式绑定它。
+- [ ] LangBot 日志出现 `Required plugins initialized; message adapters may start.` 后，两个
+      adapter 才开始运行；不得使用固定等待时间或 Local Agent fallback。
 - [ ] 启动后检查 LangBot 日志和 monitoring：看不到私聊正文、昵称、sender ID；
       monitoring 内容应是固定 `[redacted by notebook-agent deployment]`。
 
@@ -39,8 +44,10 @@ https://docs.langbot.app/en/usage/platforms/wechat/weixin
 1. 启动 PostgreSQL、Redis、MinIO，并执行 migration。
 2. 配置真实 embedding 和 Agent provider。
 3. 启动 `python -m app.cli gateway-server`，确认 `GET /health` 返回 `ok`。
-4. 启动 LangBot core 与 plugin runtime。
-5. 同时启用 Telegram 与微信 adapter，不做二选一配置。
+4. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它，再启动
+   LangBot core 并等待 required bridge 为 `initialized`。
+5. 同时启用 Telegram 与微信 adapter，不做二选一配置；patched core 会在 readiness 通过后
+   自动启动所有 enabled adapter。
 
 ## 3. 准备两份互斥知识库
 

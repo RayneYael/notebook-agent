@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"遵循后端改动的入口与质量检查要求"}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"启动失败和渠道消息路径必须保持隐私日志边界"}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"为固定版本补丁、竞态回归和多 adapter 行为设计测试"}
+{"file":".trellis/tasks/08-06-diagnose-wechat-whoami/root-cause.md","reason":"继承早期事件回复修复、126ms 启动竞态与人工验收边界"}
+{"file":".trellis/tasks/08-05-knowledge-retrieval-agent/research/langbot-identity-spike.md","reason":"保持 LangBot 4.10.6 固定版本、薄桥接、多渠道和隐私决策"}
