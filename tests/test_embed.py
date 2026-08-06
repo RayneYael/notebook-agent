@@ -13,9 +13,9 @@ def _response(data):
 def test_embed_splits_inputs_into_ordered_batches_of_64(monkeypatch):
     calls = []
 
-    def fake_urlopen(request, timeout):
+    def fake_urlopen(request, timeout, context):
         payload = json.loads(request.data)
-        calls.append((request, timeout, payload))
+        calls.append((request, timeout, context, payload))
         rows = [
             {"index": index, "embedding": [float(text.removeprefix("cue-"))]}
             for index, text in enumerate(payload["input"])
@@ -27,11 +27,12 @@ def test_embed_splits_inputs_into_ordered_batches_of_64(monkeypatch):
 
     embeddings = embedder.embed([f"cue-{index}" for index in range(130)])
 
-    assert [len(call[2]["input"]) for call in calls] == [64, 64, 2]
+    assert [len(call[3]["input"]) for call in calls] == [64, 64, 2]
     assert embeddings == [[float(index)] for index in range(130)]
     assert all(call[1] == 60 for call in calls)
-    assert all(call[2]["model"] == "embedding-3" for call in calls)
-    assert all(call[2]["dimensions"] == 1 for call in calls)
+    assert all(call[2] is None for call in calls)
+    assert all(call[3]["model"] == "embedding-3" for call in calls)
+    assert all(call[3]["dimensions"] == 1 for call in calls)
     assert all(call[0].get_header("Authorization") == "Bearer secret" for call in calls)
 
 

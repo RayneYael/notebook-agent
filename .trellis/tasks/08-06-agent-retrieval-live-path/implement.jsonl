@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Load the backend quality-check routing and active runtime contracts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Preserve PostgreSQL query and tenant-scoping conventions"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Keep provider and retrieval failures behind stable domain results"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Implement stage diagnostics without sensitive payloads"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Preserve signed bridge, fail-closed routing, and channel privacy contracts"}
+{"file": ".trellis/tasks/08-06-connect-agent-embedding/research/current-connection-audit.md", "reason": "Use the parent audit and preserve existing Agent/embedding invariants"}
+{"file": ".trellis/tasks/08-06-agent-retrieval-live-path/research/live-path-audit.md", "reason": "Use sanitized database, composition, and TLS evidence instead of guessing the failure"}

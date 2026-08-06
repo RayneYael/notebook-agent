@@ -42,6 +42,7 @@ class AgentRequest:
     thread_db_id: int
     thread_public_id: str
     message_id: str
+    request_id: str
     history: tuple[dict, ...] = ()
 
     def __post_init__(self) -> None:

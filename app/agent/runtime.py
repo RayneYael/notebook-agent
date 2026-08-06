@@ -20,6 +20,7 @@ from app.agent.services import (
 )
 from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.config import Settings
+from app.diagnostics import RequestDiagnostics
 
 
 INSTRUCTIONS = """
@@ -156,13 +157,26 @@ class KnowledgeAgent:
         self._settings = settings
         self._service_factory = service_factory
 
-    async def run(self, request: AgentRequest) -> AgentExecution:
-        deps = AgentDeps(self._service_factory(request))
+    async def run(
+        self,
+        request: AgentRequest,
+        *,
+        diagnostics: RequestDiagnostics | None = None,
+    ) -> AgentExecution:
+        diagnostics = diagnostics or RequestDiagnostics.start(
+            request.request_id, request.tenant.app_user_id
+        )
+        services = self._service_factory(request)
+        if isinstance(services, KnowledgeServices):
+            services.set_diagnostics(diagnostics)
+        deps = AgentDeps(services)
+        diagnostics.event("agent_started")
         try:
             message_history = ModelMessagesTypeAdapter.validate_python(
                 list(request.history)
             )
             async with asyncio.timeout(self._settings.agent_timeout_seconds):
+                diagnostics.event("model_started")
                 result = await self._agent.run(
                     request.question,
                     deps=deps,
@@ -174,22 +188,26 @@ class KnowledgeAgent:
                     ),
                 )
         except TimeoutError:
-            return self._failure(request, "模型响应超时，请稍后重试。", "timeout")
+            return self._failure(
+                request, "模型响应超时，请稍后重试。", "timeout", diagnostics
+            )
         except UsageLimitExceeded:
             return self._failure(
-                request, "检索步骤已达到上限，请缩小问题范围后重试。", "limit"
+                request, "检索步骤已达到上限，请缩小问题范围后重试。", "limit", diagnostics
             )
         except EmbeddingUnavailable:
             return self._failure(
                 request,
                 "查询能力暂时不可用，请稍后重试。",
                 "embedding_unavailable",
+                diagnostics,
             )
         except RetrievalUnavailable:
             return self._failure(
                 request,
                 "查询能力暂时不可用，请稍后重试。",
                 "retrieval_unavailable",
+                diagnostics,
             )
         except UnexpectedModelBehavior:
             if deps.citation_repair_search_calls is not None:
@@ -197,15 +215,16 @@ class KnowledgeAgent:
                     request,
                     "暂时无法生成可靠答案，请换个问法或稍后重试。",
                     "answer_unavailable",
+                    diagnostics,
                 )
             return self._failure(
-                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error"
+                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error", diagnostics
             )
         except KnowledgeNotFound:
-            return self._failure(request, "请求的知识片段不存在。", "not_found")
+            return self._failure(request, "请求的知识片段不存在。", "not_found", diagnostics)
         except Exception:
             return self._failure(
-                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error"
+                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error", diagnostics
             )
 
         if deps.search_calls < 1:
@@ -213,6 +232,7 @@ class KnowledgeAgent:
                 request,
                 "未完成必要的知识库检索，因此不返回无来源答案。",
                 "search_required",
+                diagnostics,
             )
         citations = [
             citation
@@ -220,6 +240,7 @@ class KnowledgeAgent:
             if segment_id in deps.final_citation_ids
         ]
         if not citations:
+            diagnostics.event("citation_validated", error_code="no_evidence")
             return AgentExecution(
                 AgentAnswer(
                     status="not_found",
@@ -232,9 +253,10 @@ class KnowledgeAgent:
         answer_text = result.output.strip()
         if not answer_text:
             return self._failure(
-                request, "模型没有生成可验证的答案。", "empty_answer"
+                request, "模型没有生成可验证的答案。", "empty_answer", diagnostics
             )
         answer_text = _append_sources(answer_text, citations)
+        diagnostics.event("citation_validated")
         return AgentExecution(
             AgentAnswer(
                 status="ok",
@@ -249,7 +271,13 @@ class KnowledgeAgent:
         )
 
     @staticmethod
-    def _failure(request: AgentRequest, text: str, code: str) -> AgentExecution:
+    def _failure(
+        request: AgentRequest,
+        text: str,
+        code: str,
+        diagnostics: RequestDiagnostics,
+    ) -> AgentExecution:
+        diagnostics.event("agent_failed", error_code=code)
         return AgentExecution(
             AgentAnswer(
                 status="failed",

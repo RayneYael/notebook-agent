@@ -9,11 +9,15 @@ from app.channels.service import ChannelService
 from app.config import Settings, get_settings
 from app.db import get_session_factory
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
+from app.tls import TrustedCA, configure_trusted_ca
 
 
-def build_embedding_provider(settings: Settings) -> EmbeddingProvider | None:
+def build_embedding_provider(
+    settings: Settings, *, trusted_ca: TrustedCA | None = None
+) -> EmbeddingProvider | None:
     """Build the only embedding configuration used by CLI and channel requests."""
 
+    trusted_ca = trusted_ca or configure_trusted_ca(settings.tls_ca_bundle)
     if settings.embedding_dimensions < 1:
         raise ValueError("embedding dimensions must be positive")
     if not settings.zhipu_api_key:
@@ -24,6 +28,7 @@ def build_embedding_provider(settings: Settings) -> EmbeddingProvider | None:
         endpoint=settings.embedding_endpoint,
         dimensions=settings.embedding_dimensions,
         batch_size=settings.embedding_batch_size,
+        ssl_context=trusted_ca.ssl_context,
     )
 
 
@@ -33,11 +38,16 @@ def build_knowledge_agent(
     session_factory=None,
 ) -> KnowledgeAgent:
     factory = session_factory or get_session_factory()
-    embedder = build_embedding_provider(settings)
+    trusted_ca = configure_trusted_ca(settings.tls_ca_bundle)
+    embedder = build_embedding_provider(settings, trusted_ca=trusted_ca)
 
     def service_factory(request):
         return KnowledgeServices(request.tenant, factory, embedder=embedder)
 
+    # ``configure_trusted_ca`` exports the resolved bundle through the standard
+    # Python TLS environment before provider construction.  Do not create a
+    # per-model httpx client here: the provider owns its default client and its
+    # lifecycle, while the embedding client receives the same context directly.
     return KnowledgeAgent(build_model(settings), settings, service_factory)
 
 

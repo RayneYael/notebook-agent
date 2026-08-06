@@ -42,6 +42,7 @@ def request():
         thread_db_id=1,
         thread_public_id="thread",
         message_id="message",
+        request_id="request-test-id",
     )
 
 

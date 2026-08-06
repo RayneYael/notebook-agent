@@ -7,13 +7,21 @@ from threading import Barrier
 from uuid import uuid4
 
 import pytest
-from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
+from pydantic_ai.messages import (
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
-from app.agent.runtime import AgentExecution
+from app.agent.runtime import AgentExecution, KnowledgeAgent
 from app.agent.services import KnowledgeNotFound, KnowledgeServices
-from app.agent.types import AgentAnswer, Citation
+from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.channels.conversations import (
     get_or_create_thread,
     load_message_history,
@@ -217,11 +225,92 @@ def test_every_read_service_is_tenant_scoped(db_factory):
     assert {value.segment_id for value in vector_hits} == {segment_a.id}
 
 
+@pytest.mark.asyncio
+async def test_agent_tool_uses_real_pgvector_and_hydrates_only_tenant_citation(db_factory):
+    """Exercise the live retrieval composition without an external model/provider.
+
+    The deterministic embedder deliberately points closest to tenant B's row.
+    The only acceptable response for tenant A is therefore its own hydrated
+    citation, proving the Agent tool reaches the tenant-scoped pgvector query.
+    """
+
+    with db_factory() as db:
+        tenant_a = resolve_or_register(db, envelope(user=uuid4().hex))
+        tenant_b = resolve_or_register(db, envelope(user=uuid4().hex))
+        item_a, segment_a = _add_item(db, tenant_a.app_user_id, "tenant-a-evidence")
+        item_b, segment_b = _add_item(db, tenant_b.app_user_id, "tenant-b-evidence")
+        segment_a.embedding = [0.01] * 1536
+        segment_b.embedding = [0.99] * 1536
+        db.commit()
+
+    class DeterministicQueryEmbedder:
+        dimensions = 1536
+
+        def __init__(self):
+            self.queries = []
+
+        def embed(self, texts):
+            self.queries.extend(texts)
+            # If vector_search ever loses the SQL tenant predicate, this is
+            # closest to tenant B's segment and the test will expose it.
+            return [[0.99] * self.dimensions for _ in texts]
+
+    embedder = DeterministicQueryEmbedder()
+
+    def model(messages, _info):
+        has_search_result = any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if not has_search_result:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "search_segments",
+                        '{"query": "other-tenant-token"}',
+                        tool_call_id="search-tenant-filter",
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart(f"grounded answer [S{segment_a.id}]")])
+
+    runtime = KnowledgeAgent(
+        FunctionModel(model),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda request: KnowledgeServices(request.tenant, db_factory, embedder=embedder),
+    )
+    request = AgentRequest(
+        question="private question",
+        tenant=tenant_a,
+        thread_db_id=1,
+        thread_public_id="integration-thread",
+        message_id="integration-message",
+        request_id="integration-request",
+    )
+
+    result = await runtime.run(request)
+
+    assert embedder.queries == ["other-tenant-token"]
+    assert result.answer.status == "ok"
+    assert [citation.segment_id for citation in result.answer.citations] == [segment_a.id]
+    assert result.answer.citations[0] == Citation(
+        item_id=item_a.id,
+        segment_id=segment_a.id,
+        title=item_a.title,
+        excerpt=segment_a.text,
+        url=f"https://youtu.be/{item_a.platform_id}?t=42",
+        start_sec=42,
+    )
+    assert segment_b.id not in {citation.segment_id for citation in result.answer.citations}
+
+
 class RecordingAgent:
     def __init__(self):
         self.histories = []
 
-    async def run(self, request):
+    async def run(self, request, *, diagnostics=None):
         self.histories.append(request.history)
         citation = Citation(
             item_id=1,
@@ -250,7 +339,7 @@ class NoEvidenceAgent:
     def __init__(self):
         self.calls = 0
 
-    async def run(self, request):
+    async def run(self, request, *, diagnostics=None):
         self.calls += 1
         return AgentExecution(
             AgentAnswer(

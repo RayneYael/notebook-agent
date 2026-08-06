@@ -70,6 +70,14 @@ REQUESTS_CA_BUNDLE=/absolute/path/to/certifi/cacert.pem
 这两个变量不是 secret；不要把机器上的绝对路径当作可移植默认值提交到仓库。Linux
 镜像若已经有正确 CA bundle，不需要强行添加它们。
 
+Notebook Agent gateway 也在启动时解析同一解释器的可信 CA：优先使用可读的
+`TLS_CA_BUNDLE`，其次是已有的 `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`，最后是该
+环境的 certifi bundle。它保持证书及主机名校验开启，并将 bundle 直接用于 query
+embedding；模型 provider 通过标准环境变量取得同一 bundle。这里覆盖的是 gateway 的
+模型和查询 embedding 路径，**不代表**独立 Celery ingestion worker 已自动继承该设置。
+显式配置了不存在或不可读的 `TLS_CA_BUNDLE` 时，修正配置后再启动，绝不要用关闭 TLS
+校验作为替代方案。
+
 ## 3. 首次安装
 
 在项目根目录执行：
@@ -88,6 +96,7 @@ cp .env.example .env
 | `POSTGRES_PASSWORD` | 是 | PostgreSQL 密码，不能保留示例值 |
 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | 是 | 原始文本对象存储凭据 |
 | `ZHIPU_API_KEY` | 生产检索需要 | query 与 segment embedding |
+| `TLS_CA_BUNDLE` | 可选 | gateway 模型与 query embedding 使用的可读 PEM bundle |
 | `AGENT_MODEL` | 是 | PydanticAI 模型名 |
 | `AGENT_API_KEY` | 视 provider | 模型凭据 |
 | `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
@@ -488,6 +497,9 @@ HMAC 或暴露未认证 endpoint 绕过。
 - 确认 `EMBEDDING_MODEL`、endpoint 和 `EMBEDDING_DIMENSIONS=1536` 与导入内容时使用的配置一致。
 - provider 的超时、响应数量/维度错误或非有限数值会被安全拒绝；不要在日志中添加问题正文、
   vector、请求 payload 或 API key 来排查。
+- gateway 的 `notebook_agent.runtime` 日志只记录内部 request ID、tenant ID、阶段、稳定
+  错误码、异常类和耗时。用 request ID 区分 `embedding_failed` 与 `retrieval_failed`；不要
+  为了排障记录问题正文、外部身份、证据内容、DSN、SQL、向量或 provider payload。
 - 如果确定性命令也不可用，则先按“plugin 回复渠道暂时不可用”排查 gateway/bridge，而不是
   把问题归因于 embedding。
 

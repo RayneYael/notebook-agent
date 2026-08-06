@@ -21,6 +21,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Logging Guidelines](./logging-guidelines.md) | Structured logging, log levels | To fill |
 | [YouTube Connector](./youtube-connector.md) | Subtitle-track selection and yt-dlp runtime contract | Active |
 | [LangBot Channel Runtime](./langbot-channel-runtime.md) | Required bridge readiness, fail-closed routing, and channel privacy | Active |
+| [Provider TLS and Request Diagnostics](./provider-tls-diagnostics.md) | Verified outbound CA composition and redacted Agent/retrieval stage diagnostics | Active |
 
 ---
 

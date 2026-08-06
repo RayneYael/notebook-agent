@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import ssl
 from typing import Protocol
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -32,6 +33,7 @@ class ZhipuEmbedder:
         endpoint: str = "https://open.bigmodel.cn/api/paas/v4/embeddings",
         dimensions: int = 1536,
         batch_size: int = MAX_BATCH_SIZE,
+        ssl_context: ssl.SSLContext | None = None,
     ) -> None:
         if not api_key:
             raise ValueError("ZHIPU_API_KEY is required for embedding")
@@ -46,6 +48,7 @@ class ZhipuEmbedder:
         self.endpoint = endpoint
         self.dimensions = dimensions
         self.batch_size = batch_size
+        self._ssl_context = ssl_context
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         if not texts:
@@ -72,7 +75,7 @@ class ZhipuEmbedder:
             },
         )
         try:
-            with urlopen(request, timeout=60) as response:
+            with urlopen(request, timeout=60, context=self._ssl_context) as response:
                 data = json.load(response)
         except (HTTPError, URLError, TimeoutError, json.JSONDecodeError) as exc:
             raise EmbeddingError("embedding request failed") from exc

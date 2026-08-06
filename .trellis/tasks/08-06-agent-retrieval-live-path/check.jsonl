@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Run the backend final quality-check routing"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review test quality and forbidden implementation shortcuts"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify tenant isolation and safe PostgreSQL behavior"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify diagnostic redaction and stable fields"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify the gateway remains signed, fail closed, and channel-safe"}
+{"file": ".trellis/tasks/08-06-agent-retrieval-live-path/research/live-path-audit.md", "reason": "Check implementation claims against observed sanitized runtime facts"}

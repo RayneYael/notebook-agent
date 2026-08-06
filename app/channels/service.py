@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import timedelta
+from uuid import uuid4
 
 from sqlalchemy.orm import Session
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -27,6 +29,7 @@ from app.channels.identity import (
 )
 from app.channels.types import ChannelEnvelope
 from app.config import Settings
+from app.diagnostics import RequestDiagnostics
 from app.models import ConversationThread
 
 
@@ -45,6 +48,11 @@ class ChannelService:
         self._locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
 
     async def handle(self, envelope: ChannelEnvelope) -> AgentAnswer:
+        # Every in-process entry point gets an internal correlation ID. The
+        # HTTP gateway overwrites its untrusted envelope field before this
+        # point; other adapters and CLI receive a locally generated one.
+        if envelope.request_id is None:
+            envelope = replace(envelope, request_id=uuid4().hex)
         key = (
             envelope.channel,
             envelope.account_id,
@@ -69,27 +77,40 @@ class ChannelService:
 
         with self._session_factory() as db:
             tenant = resolve_or_register(db, envelope)
+            diagnostics = RequestDiagnostics.start(
+                envelope.request_id, tenant.app_user_id
+            )
+            diagnostics.event("accepted")
             if command == "start":
                 db.commit()
-                return AgentAnswer(
-                    status="ok",
-                    text=(
-                        "账户已就绪。你的知识库与其他用户完全隔离。\n"
-                        f"内部用户编号：{tenant.app_user_id}"
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="ok",
+                        text=(
+                            "账户已就绪。你的知识库与其他用户完全隔离。\n"
+                            f"内部用户编号：{tenant.app_user_id}"
+                        ),
                     ),
                 )
             if command == "whoami":
                 db.commit()
-                return AgentAnswer(
-                    status="ok", text=f"内部用户编号：{tenant.app_user_id}"
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="ok", text=f"内部用户编号：{tenant.app_user_id}"
+                    ),
                 )
             if command == "new":
                 thread = reset_thread(db, tenant, envelope)
                 db.commit()
-                return AgentAnswer(
-                    status="ok",
-                    text="已开启新会话，旧上下文不会继续带入。",
-                    thread_id=thread.public_id,
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="ok",
+                        text="已开启新会话，旧上下文不会继续带入。",
+                        thread_id=thread.public_id,
+                    ),
                 )
 
             thread = get_or_create_thread(db, tenant, envelope)
@@ -97,7 +118,7 @@ class ChannelService:
             if duplicate is not None:
                 answer = _answer_from_turn(duplicate, thread.public_id)
                 db.commit()
-                return answer
+                return self._response_ready(diagnostics, answer)
             history = load_message_history(
                 db,
                 thread.id,
@@ -110,27 +131,33 @@ class ChannelService:
                 thread_db_id=thread.id,
                 thread_public_id=thread.public_id,
                 message_id=envelope.message_id,
+                request_id=envelope.request_id,
                 history=tuple(
                     ModelMessagesTypeAdapter.dump_python(history, mode="json")
                 ),
             )
             db.commit()
 
-        execution = await self._agent.run(request)
+        execution = await self._agent.run(request, diagnostics=diagnostics)
         if execution.answer.status == "failed":
-            return execution.answer
+            return self._response_ready(diagnostics, execution.answer)
 
         with self._session_factory() as db:
             thread = db.get(ConversationThread, request.thread_db_id)
             if thread is None or thread.app_user_id != request.tenant.app_user_id:
-                return AgentAnswer(
-                    status="failed",
-                    text="会话已失效，请重新发送消息。",
-                    error_code="thread_missing",
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="failed",
+                        text="会话已失效，请重新发送消息。",
+                        error_code="thread_missing",
+                    ),
                 )
             duplicate = find_turn(db, thread.id, envelope.message_id)
             if duplicate is not None:
-                return _answer_from_turn(duplicate, thread.public_id)
+                return self._response_ready(
+                    diagnostics, _answer_from_turn(duplicate, thread.public_id)
+                )
             save_completed_turn(
                 db,
                 thread=thread,
@@ -140,7 +167,14 @@ class ChannelService:
                 model_messages=execution.new_messages,
             )
             db.commit()
-        return execution.answer
+        return self._response_ready(diagnostics, execution.answer)
+
+    @staticmethod
+    def _response_ready(
+        diagnostics: RequestDiagnostics, answer: AgentAnswer
+    ) -> AgentAnswer:
+        diagnostics.event("gateway_response_ready", error_code=answer.error_code)
+        return answer
 
     def _handle_link(self, envelope: ChannelEnvelope, argument: str | None) -> AgentAnswer:
         if not argument:

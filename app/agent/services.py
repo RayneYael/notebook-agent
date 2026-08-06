@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 
 from app.agent.types import Citation
 from app.channels.types import TenantContext
+from app.diagnostics import RequestDiagnostics
 from app.ingest.embed import EmbeddingError, EmbeddingProvider
 from app.models import ContentItem, Segment
 from app.retrieval.search import bm25_search, vector_search
@@ -77,6 +78,12 @@ class KnowledgeServices:
         self._session_factory = session_factory
         self._embedder = embedder
         self._max_results = max_results
+        self._diagnostics: RequestDiagnostics | None = None
+
+    def set_diagnostics(self, diagnostics: RequestDiagnostics) -> None:
+        """Attach the request-scoped, redacted diagnostic sink."""
+
+        self._diagnostics = diagnostics
 
     def search_segments(self, query: str, *, limit: int = 6) -> list[Citation]:
         """Hybrid lexical/vector search, merged without exposing tenant arguments."""
@@ -86,6 +93,7 @@ class KnowledgeServices:
             return []
         limit = max(1, min(limit, self._max_results))
         vector = self._embed_query(query)
+        self._event("retrieval_started")
         try:
             with self._session_factory() as db:
                 hits = bm25_search(
@@ -107,6 +115,7 @@ class KnowledgeServices:
                     if len(segment_ids) >= limit:
                         break
                 if not segment_ids:
+                    self._event("retrieval_completed", error_code="no_evidence")
                     return []
                 rows = db.execute(
                     select(Segment, ContentItem)
@@ -119,16 +128,20 @@ class KnowledgeServices:
                 by_id = {
                     segment.id: _citation(item, segment) for segment, item in rows
                 }
-                return [by_id[value] for value in segment_ids if value in by_id]
-        except EmbeddingUnavailable:
-            raise
+                citations = [by_id[value] for value in segment_ids if value in by_id]
+                self._event("retrieval_completed")
+                return citations
         except Exception as exc:
+            self._event(
+                "retrieval_failed", error_code="retrieval_unavailable", exception=exc
+            )
             raise RetrievalUnavailable("retrieval unavailable") from exc
 
     def _embed_query(self, query: str) -> list[float]:
-        if self._embedder is None:
-            raise EmbeddingUnavailable("embedding provider is not configured")
+        self._event("embedding_started")
         try:
+            if self._embedder is None:
+                raise EmbeddingUnavailable("embedding provider is not configured")
             vectors = self._embedder.embed([query])
             if len(vectors) != 1:
                 raise ValueError("query embedding count mismatch")
@@ -137,9 +150,27 @@ class KnowledgeServices:
                 raise ValueError("query embedding dimension mismatch")
             if any(not math.isfinite(value) for value in vector):
                 raise ValueError("query embedding contains invalid values")
+            self._event("embedding_completed")
             return vector
         except Exception as exc:
+            self._event(
+                "embedding_failed", error_code="embedding_unavailable", exception=exc
+            )
+            if isinstance(exc, EmbeddingUnavailable):
+                raise
             raise EmbeddingUnavailable("query embedding unavailable") from exc
+
+    def _event(
+        self,
+        stage: str,
+        *,
+        error_code: str | None = None,
+        exception: BaseException | None = None,
+    ) -> None:
+        if self._diagnostics is not None:
+            self._diagnostics.event(
+                stage, error_code=error_code, exception=exception
+            )
 
     def get_neighbors(self, segment_id: int, *, radius: int = 1) -> list[Citation]:
         """Return adjacent segments only when the anchor belongs to this tenant."""

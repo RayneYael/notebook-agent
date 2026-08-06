@@ -8,9 +8,11 @@ import hmac
 import json
 import threading
 import time
+from dataclasses import replace
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Callable
+from uuid import uuid4
 
 from app.agent.types import AgentAnswer
 from app.bootstrap import build_channel_service
@@ -93,7 +95,12 @@ def _handler(
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             try:
-                envelope = ChannelEnvelope(**json.loads(body))
+                # HMAC authenticates the bridge, but its payload remains input.
+                # Correlation IDs are generated at this application boundary so
+                # a channel cannot choose or collide with diagnostic IDs.
+                envelope = replace(
+                    ChannelEnvelope(**json.loads(body)), request_id=uuid4().hex
+                )
                 answer = dispatch(envelope)
             except (TypeError, ValueError, json.JSONDecodeError):
                 self._json(HTTPStatus.BAD_REQUEST, {"error": "invalid_envelope"})

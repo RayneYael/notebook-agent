@@ -27,4 +27,3 @@ def build_model(settings: Settings) -> Model | str:
             provider=OpenAIProvider(api_key=settings.agent_api_key),
         )
     return settings.agent_model
-

@@ -42,6 +42,11 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
+    # --- Outbound TLS ---
+    # Optional explicit CA bundle.  If unset, application composition uses
+    # SSL_CERT_FILE/REQUESTS_CA_BUNDLE or certifi for the current interpreter.
+    tls_ca_bundle: str | None = field(default_factory=lambda: _env("TLS_CA_BUNDLE"))
+
     # --- Zhipu Embedding-3 ---
     zhipu_api_key: str | None = field(default_factory=lambda: _env("ZHIPU_API_KEY"))
     embedding_model: str = field(
