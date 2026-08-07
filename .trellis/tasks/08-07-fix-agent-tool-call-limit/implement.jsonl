@@ -6,3 +6,4 @@
 {"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Changing a shared configuration default requires a single source of truth and a search for every documented consumer."}
 {"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The convergence budget spans Agent state, runtime configuration, documentation, and multi-source answer rendering."}
 {"file":".trellis/tasks/08-07-fix-agent-tool-call-limit/research/root-cause.md","reason":"Observed tool-call sequence, PydanticAI projected-usage semantics, and selected convergence mechanism."}
+{"file":".trellis/tasks/08-07-fix-agent-tool-call-limit/research/second-live-failure.md","reason":"Implement against the real provider batch, cumulative output-token, citation retry, and single-item crowding failure."}

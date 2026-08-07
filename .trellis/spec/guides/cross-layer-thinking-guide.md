@@ -71,6 +71,22 @@ For each boundary:
 
 **Good**: Each layer only knows its neighbors
 
+### Mistake 3.1: Over-redacting the error discriminator
+
+**Bad**: Collapse every provider failure to an exception class. This protects
+content but makes 400/422 contract errors indistinguishable from 429 throttling
+and 500/503 provider incidents.
+
+**Good**: Define one diagnostics owner with an explicit environment contract.
+Production projects only the minimum safe discriminator, such as an integer
+HTTP status in 100–599. Local development may preserve the provider exception
+message/model/response body needed to diagnose a rejected request, while not
+explicitly serializing authorization headers or API keys.
+
+**Check**: A production retry or fallback decision must be explainable from
+safe fields. Raw provider errors are development-only and must be covered by a
+test that proves the same sentinel remains absent in production.
+
 ### Mistake 4: Every Consumer Parses The Same Payload
 
 **Bad**: A command reads JSONL events and casts fields inline:

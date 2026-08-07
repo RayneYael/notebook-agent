@@ -28,6 +28,7 @@ class RequestDiagnostics:
         *,
         error_code: str | None = None,
         exception: BaseException | None = None,
+        http_status: int | None = None,
     ) -> None: ...
 ```
 
@@ -53,9 +54,10 @@ REQUESTS_CA_BUNDLE     standard requests/provider fallback
 - One internally generated request ID flows from the authenticated HTTP
   boundary through `ChannelService`, `AgentRequest`, `KnowledgeAgent`, and
   `KnowledgeServices`. HTTP payload values never choose this ID.
-- Diagnostic records contain only stage, internal request/tenant identifiers,
-  stable error code, exception class, and duration. They never interpolate an
-  exception message.
+- Production diagnostic records contain only stage, internal request/tenant
+  identifiers, stable error code, exception class, optional validated HTTP
+  status, and duration. Explicit development diagnostics additionally record a
+  provider HTTP exception's complete message, model and response body.
 - `not_found/no_evidence`, `embedding_unavailable`,
   `retrieval_unavailable`, and `search_required` remain distinct outcomes.
   Provider/database failure never becomes a lexical-only success.
@@ -67,6 +69,8 @@ REQUESTS_CA_BUNDLE     standard requests/provider fallback
 | explicit CA missing/unreadable | fail static composition with `TLSConfigurationError` |
 | CA cannot be loaded | fail composition; never create an unverified context |
 | provider TLS/HTTP/vector validation fails | `failed/embedding_unavailable` |
+| model/provider returns `ModelHTTPError` in production | record only phase, class and integer status 100–599; never its body/message |
+| model/provider returns `ModelHTTPError` in development | also record complete exception message, model and response body |
 | PostgreSQL/pgvector execution fails | `failed/retrieval_unavailable` |
 | embedding + retrieval succeed with zero tenant hits | `not_found/no_evidence` |
 | required search was not called | `failed/search_required` |
@@ -90,7 +94,8 @@ REQUESTS_CA_BUNDLE     standard requests/provider fallback
   hostname checks enabled.
 - `ZhipuEmbedder.urlopen` receives the resolved SSL context.
 - the authenticated gateway overwrites an input request ID;
-- diagnostics include only allowed fields and exclude private exception text;
+- production diagnostics include only allowed fields and project valid provider
+  HTTP status; development diagnostics preserve provider exception text/body;
 - Agent/service tests distinguish zero hits, embedding failure, retrieval
   failure, and missing search;
 - PostgreSQL integration crosses Agent tool invocation, deterministic query
@@ -116,5 +121,6 @@ diagnostics.event(
     "embedding_failed",
     error_code="embedding_unavailable",
     exception=exc,  # only type(exc).__name__ is logged
+    http_status=getattr(exc, "status_code", None),  # validated before serialization
 )
 ```

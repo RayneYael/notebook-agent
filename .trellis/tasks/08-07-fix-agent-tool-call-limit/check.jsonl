@@ -4,3 +4,4 @@
 {"file":".trellis/spec/backend/quality-guidelines.md","reason":"Review test coverage and forbidden regressions."}
 {"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Verify runtime, config, docs, tests, and final multi-source answer contract remain consistent."}
 {"file":".trellis/tasks/08-07-fix-agent-tool-call-limit/research/root-cause.md","reason":"Check the implementation against the real parallel fan-out trace and rejected alternatives."}
+{"file":".trellis/tasks/08-07-fix-agent-tool-call-limit/research/second-live-failure.md","reason":"Verify the second live provider batch, cumulative output-token, citation retry, and candidate-diversity gaps are covered."}
