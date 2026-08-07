@@ -35,3 +35,25 @@
 ### Next Steps
 
 - None - task complete
+
+
+## Session 2: 日志初步搭建
+
+**Date**: 2026-08-07
+**Task**: 日志初步搭建
+**Branch**: `main`
+
+### Summary
+
+完成 LangBot bridge 与 Notebook Agent 的结构化诊断日志：Notebook Agent 双写 stdout/每日文件，bridge 仅写 plugin stderr；使用 trace/request ID 联查，生产默认脱敏，本地 development+显式开关可记录受限检索详情。修复日志初始化幂等、权限失败关闭流和保留清理 fallback，Terra 定向与全量回归通过，并补充部署与排障文档。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c55688c` | (see git log) |
+| `128f15f` | (see git log) |
+
+### Status
+
+[OK] **Completed**
