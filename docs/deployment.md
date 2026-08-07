@@ -482,23 +482,87 @@ systemd 日志中不应出现问题正文、证据全文、平台 token 或外�
 
 ## 9.1 安全诊断日志
 
-Notebook Agent gateway 和 CLI 都会把严格结构化的 INFO 事件双写到 stdout 与日志文件。本地默认
-位置为 `.runtime/logs/notebook-agent-YYYY-MM-DD.log`；上面的 systemd 配置通过
-`LogsDirectory=notebook-agent` 在不放宽 `ProtectSystem=strict` 的前提下创建
-`/var/log/notebook-agent/`，服务器文件同样命名为 `notebook-agent-YYYY-MM-DD.log`。使用
-`journalctl -u notebook-agent-gateway` 查看 stdout/journal。文件按日期和 10 MiB 大小轮转，默认
-保留 5 个备份；文件目录暂时不可写时，启动仍会继续并在 stdout/journal 写入
-`file_logging_unavailable`。
+### 路径与所有权
 
-LangBot core 保持自己的 stdout 与 `data/logs/langbot-YYYY-MM-DD.log`。bridge 是独立 plugin
-子进程，只向 LangBot plugin runtime 的有界 stderr 日志写极少量事件，**不会创建 bridge 日志文件**。
-bridge 首次转发产生随机 32 位 `trace_id`，gateway 创建独立 `request_id`；可以用二者在 plugin
-日志页、Notebook Agent 文件和 journal 联查。trace ID 不是身份、授权、幂等或消息去重字段。
+三个进程各自管理日志，不共同写一个文件：
 
-日志仅包含阶段、内部 request/tenant ID、trace ID、固定 route/tool/limit/error 枚举、计数和耗时。
-永远禁止问题和历史正文、检索词、prompt、模型输出、工具参数/结果、证据及 citation ID、URL、向量、
-外部身份、provider payload、token、DSN、secret 以及异常消息。没有环境变量或 debug 开关可以改变
-该规则。
+| 组件 | 本地路径或入口 | Linux 服务器路径或入口 | 说明 |
+| --- | --- | --- | --- |
+| LangBot core | `<LangBot data>/logs/langbot-YYYY-MM-DD.log` 与启动终端 | `data/logs/langbot-YYYY-MM-DD.log` 与 LangBot 自身 stdout | 由 LangBot 自己写入和轮转；Notebook Agent 不写这个文件。当前仓库的本地运行目录通常是 `.runtime/langbot/data/logs/`。 |
+| Notebook Agent gateway / CLI | `.runtime/logs/notebook-agent-YYYY-MM-DD.log` 与启动终端 | `/var/log/notebook-agent/notebook-agent-YYYY-MM-DD.log` 与 systemd journal | 同一条结构化 INFO 事件同时写 stdout 和每日文件。`NOTEBOOK_AGENT_LOG_DIR` 只控制 Notebook Agent 文件目录。 |
+| LangBot bridge plugin | LangBot plugin 详情页中的有界 stderr 日志 | 同左 | bridge 是独立子进程，**没有 bridge 日志文件**，也不把事件复制进 LangBot core 每日文件。 |
+
+Notebook Agent 文件目录权限为 `0750`，文件权限为 `0640`。文件按日期和大小轮转，默认单文件上限
+10 MiB、保留 5 个备份，可通过 `NOTEBOOK_AGENT_LOG_MAX_BYTES` 与
+`NOTEBOOK_AGENT_LOG_BACKUP_COUNT` 调整。文件初始化或后续写入失败时，gateway 继续运行，并在
+stdout/journal 输出一次 `file_logging_unavailable`；成功启用时可看到 `runtime_logging_enabled`。
+
+### 启动模式
+
+生产和普通本地运行使用安全默认值：
+
+```dotenv
+NOTEBOOK_AGENT_ENV=production
+NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
+```
+
+只有本地排查检索链路时，才同时显式设置下面两个值并重启 gateway：
+
+```bash
+NOTEBOOK_AGENT_ENV=development \
+NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=true \
+.venv/bin/python -m app.cli gateway-server
+```
+
+不能根据日志目录、TTY、hostname 或是否在服务器上自动推断开发环境。`production + true` 或未知的
+`NOTEBOOK_AGENT_ENV` 会在启动配置校验时失败，而不是静默开启或降级。排查完成后恢复
+`production + false` 并重启；systemd 示例必须始终保持生产配置。
+
+开发开关只豁免 Notebook Agent 的检索详情，包括 query、limit/radius、item/segment ID、标题、
+作者/描述、URL、score、excerpt 与 start/anchor。历史、完整 prompt、模型输出、action/save payload、
+embedding 向量、外部身份、provider payload、token/DSN/secret 和异常消息在开发模式中仍然禁止。
+开发检索详情只进入 Notebook Agent 的 stdout 与 `.runtime/logs/`，不会发送给 bridge、LangBot core、
+模型 provider、`AgentAnswer` 或 conversation store。
+
+### 查看日志
+
+本地跟踪 Notebook Agent 当日日志：
+
+```bash
+tail -f ".runtime/logs/notebook-agent-$(date +%F).log"
+```
+
+服务器同时查看 journal 与文件：
+
+```bash
+journalctl -u notebook-agent-gateway -f
+sudo tail -f "/var/log/notebook-agent/notebook-agent-$(date +%F).log"
+```
+
+LangBot core 使用自己的日志文件；bridge 事件在管理界面的 plugin 详情/日志页查看：
+
+```bash
+tail -f "<LangBot data>/logs/langbot-$(date +%F).log"
+```
+
+不要为 bridge 创建 `bridge-*.log`，也不要让 Notebook Agent 写入 LangBot 的 `data/logs/`。
+
+### 按请求联查
+
+bridge 首次转发会生成随机 32 位 `trace_id`，gateway 再生成独立的 `request_id`。先在 bridge plugin
+stderr 找到 `trace_id`，再用它查询 Notebook Agent；进入 gateway 后也可用 `request_id` 聚合该请求的
+model、tool、embedding、retrieval、validation 与最终响应阶段：
+
+```bash
+rg '"trace_id":"<32位 trace ID>"' .runtime/logs/notebook-agent-*.log*
+rg '"request_id":"<32位 request ID>"' .runtime/logs/notebook-agent-*.log*
+
+journalctl -u notebook-agent-gateway | rg '"trace_id":"<32位 trace ID>"'
+```
+
+`trace_id` 只用于日志关联，不参与身份、tenant、授权、幂等或消息去重。日志中的普通安全事件仅包含
+阶段、内部 request/tenant ID、trace ID、固定 route/tool/limit/error 枚举、计数、异常类和耗时；
+生产日志不包含问题正文、检索词、证据、内部内容 ID 或 URL。
 
 ## 10. 首次启动 smoke
 
