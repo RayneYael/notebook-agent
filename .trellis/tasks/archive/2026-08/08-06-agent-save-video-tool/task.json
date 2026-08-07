@@ -23,6 +23,6 @@
   ],
   "parent": "08-05-knowledge-retrieval-agent",
   "relatedFiles": [],
-  "notes": "Automated save-action E2E, isolated migration roundtrip, PostgreSQL idempotency, worker dispatch, bounded standalone broker publish, and full regression checks passed at migration head c7e8a91b2d34 (118 passed, 1 existing external-wheel skip). Independent Trellis check has no open P1/P2. Telegram/WeChat human acceptance has not started and remains required.",
+  "notes": "Automated save-action E2E, isolated migration roundtrip, PostgreSQL idempotency, worker dispatch, bounded standalone broker publish, and full regression checks passed at migration head c7e8a91b2d34 (118 passed, 1 existing external-wheel skip). Independent Trellis check has no open P1/P2. User confirmed human acceptance on 2026-08-07.",
   "meta": {}
 }
