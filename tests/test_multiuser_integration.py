@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import json
+import re
+import time
 from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -19,6 +22,7 @@ from pydantic_ai.models.function import FunctionModel
 from sqlalchemy import select, text
 from sqlalchemy.orm import sessionmaker
 
+from app.agent.actions import AgentActionServices
 from app.agent.runtime import AgentExecution, KnowledgeAgent
 from app.agent.services import KnowledgeNotFound, KnowledgeServices
 from app.agent.types import AgentAnswer, AgentRequest, Citation
@@ -39,11 +43,22 @@ from app.channels.identity import (
     resolve_identity,
     resolve_or_register,
 )
+from app.channels.http_gateway import RequestVerifier, signature
+from app.channels.pending_actions import PendingConfirmationService
 from app.channels.service import ChannelService
 from app.channels.types import ChannelEnvelope
 from app.config import Settings
 from app.db import get_engine, get_session_factory
-from app.models import AppUser, ChannelIdentity, ContentItem, Segment
+from app.ingest.submission import IngestSubmissionService
+from app.models import (
+    AppUser,
+    ChannelIdentity,
+    ContentItem,
+    ConversationThread,
+    IngestDispatch,
+    PendingChannelAction,
+    Segment,
+)
 from app.retrieval.search import vector_search
 
 
@@ -88,6 +103,400 @@ def envelope(channel="telegram", user=None, message=None, conversation="chat"):
         message_id=message or uuid4().hex,
         text="question",
     )
+
+
+def _save_action_model(messages, info):
+    last_request = next(
+        message
+        for message in reversed(messages)
+        if isinstance(message, ModelRequest)
+    )
+    if any(isinstance(part, ToolReturnPart) for part in last_request.parts):
+        return ModelResponse(parts=[TextPart("discarded model action draft")])
+    prompt = next(
+        str(part.content)
+        for part in last_request.parts
+        if isinstance(part, UserPromptPart)
+    )
+    urls = re.findall(r"https?://[^\s<>]+", prompt)
+    if prompt.strip() == "需要":
+        assert "可信服务器状态：当前 conversation 有" in info.instructions
+        tool_name, arguments = "confirm_video_save", {}
+    elif prompt.strip() == "确认":
+        tool_name, arguments = "confirm_video_save", {}
+    elif prompt.strip() == "取消":
+        tool_name, arguments = "cancel_video_save", {}
+    elif len(urls) == 1 and prompt.strip() == urls[0]:
+        tool_name = "request_save_confirmation"
+        arguments = {"urls": urls}
+    else:
+        tool_name = "save_videos"
+        arguments = {"urls": urls, "why_saved": None}
+    return ModelResponse(
+        parts=[
+            ToolCallPart(
+                tool_name,
+                json.dumps(arguments, ensure_ascii=False),
+                tool_call_id=f"{tool_name}-call",
+            )
+        ]
+    )
+
+
+async def _signed_channel_handle(service, verifier, channel_envelope):
+    payload = {
+        "channel": channel_envelope.channel,
+        "account_id": channel_envelope.account_id,
+        "external_user_id": channel_envelope.external_user_id,
+        "conversation_id": channel_envelope.conversation_id,
+        "message_id": channel_envelope.message_id,
+        "text": channel_envelope.text,
+    }
+    body = json.dumps(payload, ensure_ascii=False).encode()
+    timestamp = str(int(time.time()))
+    nonce = uuid4().hex
+    assert verifier.verify(
+        body,
+        timestamp,
+        nonce,
+        signature("s" * 32, body, timestamp, nonce),
+    )
+    return await service.handle(ChannelEnvelope(**json.loads(body)))
+
+
+@pytest.mark.asyncio
+async def test_signed_save_actions_are_durable_and_exactly_once(db_factory):
+    with db_factory() as db:
+        item_ids_before = set(db.scalars(select(ContentItem.id)))
+
+    published = []
+    model_calls = []
+    action_services = AgentActionServices(
+        submission=IngestSubmissionService(
+            db_factory,
+            lambda dispatch_id: published.append(dispatch_id)
+            or f"task-{dispatch_id}",
+        ),
+        pending=PendingConfirmationService(db_factory),
+    )
+
+    def model(messages, info):
+        model_calls.append(1)
+        return _save_action_model(messages, info)
+
+    settings = replace(
+        Settings(),
+        agent_save_enabled=True,
+        agent_timeout_seconds=2,
+    )
+    agent = KnowledgeAgent(
+        FunctionModel(model),
+        settings,
+        lambda _request: object(),
+        action_factory=lambda _request: action_services,
+    )
+    service = ChannelService(db_factory, agent, settings)
+    verifier = RequestVerifier("s" * 32)
+    external_user = f"save-user-{uuid4().hex}"
+
+    def message(message_id, text_value):
+        return ChannelEnvelope(
+            channel="telegram",
+            account_id="save-account",
+            external_user_id=external_user,
+            conversation_id="save-chat",
+            message_id=message_id,
+            text=text_value,
+        )
+
+    explicit_envelope = message(
+        "m-explicit",
+        "帮我保存 https://youtu.be/dQw4w9WgXcQ",
+    )
+    explicit = await _signed_channel_handle(
+        service, verifier, explicit_envelope
+    )
+    assert explicit.status == "ok"
+    assert explicit.error_code == "save_accepted"
+    assert [row["status"] for row in explicit.action_results] == ["queued"]
+    assert len(published) == 1
+    calls_after_explicit = len(model_calls)
+
+    explicit_replay = await _signed_channel_handle(
+        service, verifier, explicit_envelope
+    )
+    assert explicit_replay.model_dump() == explicit.model_dump()
+    assert len(published) == 1
+    assert len(model_calls) == calls_after_explicit
+
+    bare = await _signed_channel_handle(
+        service,
+        verifier,
+        message("m-bare", "https://youtu.be/9bZkp7q19f0"),
+    )
+    assert bare.status == "ok"
+    assert bare.error_code == "save_confirmation_required"
+    assert len(published) == 1
+
+    confirmed = await _signed_channel_handle(
+        service, verifier, message("m-confirm", "需要")
+    )
+    assert confirmed.status == "ok"
+    assert confirmed.error_code == "save_accepted"
+    assert len(published) == 2
+
+    await _signed_channel_handle(
+        service,
+        verifier,
+        message("m-cancel-bare", "https://youtu.be/M7lc1UVf-VE"),
+    )
+    cancelled = await _signed_channel_handle(
+        service, verifier, message("m-cancel", "取消")
+    )
+    assert cancelled.status == "ok"
+    assert cancelled.error_code == "save_cancelled"
+    assert len(published) == 2
+
+    await _signed_channel_handle(
+        service,
+        verifier,
+        message("m-expired-bare", "https://youtu.be/aqz-KE-bpKQ"),
+    )
+    with db_factory() as db:
+        pending = db.scalar(
+            select(PendingChannelAction)
+            .where(
+                PendingChannelAction.consumed_at.is_(None),
+                PendingChannelAction.cancelled_at.is_(None),
+            )
+            .order_by(PendingChannelAction.id.desc())
+            .limit(1)
+        )
+        assert pending is not None
+        pending.expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        db.commit()
+    expired_envelope = message("m-expired", "确认")
+    expired = await _signed_channel_handle(
+        service, verifier, expired_envelope
+    )
+    assert expired.status == "failed"
+    assert expired.error_code == "confirmation_expired"
+    expired_model_calls = len(model_calls)
+    expired_replay = await _signed_channel_handle(
+        service, verifier, expired_envelope
+    )
+    assert expired_replay.model_dump() == expired.model_dump()
+    assert len(model_calls) == expired_model_calls
+    assert len(published) == 2
+
+    partial = await _signed_channel_handle(
+        service,
+        verifier,
+        message(
+            "m-partial",
+            "保存 https://youtu.be/ScMzIvxBSi4 "
+            "https://example.test/video",
+        ),
+    )
+    assert partial.status == "ok"
+    assert partial.error_code == "save_partial"
+    assert [row["status"] for row in partial.action_results] == [
+        "queued",
+        "unsupported_url",
+    ]
+    assert len(published) == 3
+
+    with db_factory() as db:
+        counts_before = (
+            len(list(db.scalars(select(ContentItem)))),
+            len(list(db.scalars(select(IngestDispatch)))),
+        )
+    urls = [
+        f"https://youtu.be/video{index:06d}" for index in range(11)
+    ]
+    too_large_envelope = message(
+        "m-too-large", f"保存 {' '.join(urls)}"
+    )
+    too_large = await _signed_channel_handle(
+        service, verifier, too_large_envelope
+    )
+    assert too_large.status == "failed"
+    assert too_large.error_code == "batch_too_large"
+    too_large_model_calls = len(model_calls)
+    too_large_replay = await _signed_channel_handle(
+        service, verifier, too_large_envelope
+    )
+    assert too_large_replay.model_dump() == too_large.model_dump()
+    assert len(model_calls) == too_large_model_calls
+    assert len(published) == 3
+
+    with db_factory() as db:
+        counts_after = (
+            len(list(db.scalars(select(ContentItem)))),
+            len(list(db.scalars(select(IngestDispatch)))),
+        )
+        identity = db.scalar(
+            select(ChannelIdentity).where(
+                ChannelIdentity.channel == "telegram",
+                ChannelIdentity.account_id == "save-account",
+                ChannelIdentity.external_user_id == external_user,
+            )
+        )
+        assert identity is not None
+        owners = set(
+            db.scalars(
+                select(ContentItem.user_id).where(
+                    ContentItem.id.not_in(item_ids_before)
+                )
+            )
+        )
+    assert counts_after == counts_before
+    assert owners == {identity.app_user_id}
+
+
+@pytest.mark.asyncio
+async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory):
+    """A durable pending batch must not turn a knowledge question into an action."""
+
+    citation = Citation(
+        item_id=901,
+        segment_id=902,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test/source",
+    )
+
+    class TrackingKnowledge:
+        def __init__(self):
+            self.calls = []
+
+        def search_segments(self, query, *, limit=6):
+            self.calls.append((query, limit))
+            return [citation]
+
+    knowledge = TrackingKnowledge()
+    published = []
+    action_services = AgentActionServices(
+        submission=IngestSubmissionService(
+            db_factory,
+            lambda dispatch_id: published.append(dispatch_id)
+            or f"task-{dispatch_id}",
+        ),
+        pending=PendingConfirmationService(db_factory),
+    )
+    observed_instructions = []
+    bare_url = "https://youtu.be/dQw4w9WgXcQ"
+    unrelated_question = "知识库里有什么？"
+
+    def model(messages, info):
+        last_request = next(
+            message
+            for message in reversed(messages)
+            if isinstance(message, ModelRequest)
+        )
+        tool_return = next(
+            (
+                part
+                for part in last_request.parts
+                if isinstance(part, ToolReturnPart)
+            ),
+            None,
+        )
+        if tool_return is not None:
+            if tool_return.tool_name == "request_save_confirmation":
+                return ModelResponse(
+                    parts=[TextPart("discarded action draft")]
+                )
+            assert tool_return.tool_name == "search_segments"
+            return ModelResponse(
+                parts=[TextPart(f"grounded answer [S{citation.segment_id}]")]
+            )
+        prompt = next(
+            str(part.content)
+            for part in last_request.parts
+            if isinstance(part, UserPromptPart)
+        )
+        if prompt == bare_url:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        "request_save_confirmation",
+                        json.dumps({"urls": [bare_url]}),
+                        tool_call_id="request-confirmation",
+                    )
+                ]
+            )
+        assert prompt == unrelated_question
+        observed_instructions.append(info.instructions)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "search_segments",
+                    json.dumps({"query": unrelated_question}),
+                    tool_call_id="knowledge-search",
+                )
+            ]
+        )
+
+    settings = replace(
+        Settings(), agent_save_enabled=True, agent_timeout_seconds=2
+    )
+    agent = KnowledgeAgent(
+        FunctionModel(model),
+        settings,
+        lambda _request: knowledge,
+        action_factory=lambda _request: action_services,
+    )
+    service = ChannelService(db_factory, agent, settings)
+    external_user = f"pending-knowledge-{uuid4().hex}"
+
+    def message(message_id, text_value):
+        return ChannelEnvelope(
+            channel="telegram",
+            account_id="pending-knowledge-account",
+            external_user_id=external_user,
+            conversation_id="pending-knowledge-chat",
+            message_id=message_id,
+            text=text_value,
+        )
+
+    pending_answer = await service.handle(message("pending-url", bare_url))
+    assert pending_answer.error_code == "save_confirmation_required"
+    with db_factory() as db:
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id
+                == "pending-knowledge-chat",
+                ConversationThread.closed_at.is_(None),
+            )
+        )
+        assert thread is not None
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert action is not None
+        action_id = action.id
+        before = (action.consumed_at, action.cancelled_at, action.expires_at)
+
+    answer = await service.handle(message("unrelated-question", unrelated_question))
+
+    assert answer.status == "ok"
+    assert answer.citations == [citation]
+    assert knowledge.calls == [(unrelated_question, 6)]
+    assert len(observed_instructions) == 1
+    assert "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in observed_instructions[0]
+    assert published == []
+    with db_factory() as db:
+        action = db.get(PendingChannelAction, action_id)
+        assert action is not None
+        assert action.consumed_at is None
+        assert action.cancelled_at is None
+        assert (action.consumed_at, action.cancelled_at, action.expires_at) == before
 
 
 def test_registration_linking_expiry_replay_and_disable_fail_closed(db_factory):

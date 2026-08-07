@@ -29,6 +29,7 @@ class AgentAnswer(BaseModel):
     status: Literal["ok", "not_found", "failed"]
     text: str
     citations: list[Citation] = Field(default_factory=list)
+    action_results: list[dict] = Field(default_factory=list)
     thread_id: str | None = None
     error_code: str | None = None
 

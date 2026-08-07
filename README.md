@@ -11,7 +11,8 @@
 - 第二渠道通过短期、单次绑定码接入同一私有知识库。
 - Telegram、微信等已启用渠道可以同时运行；单个 adapter 故障不改变 Agent 核心。
 - 会话最近几轮保存在 PostgreSQL，服务重启后可以恢复；不同渠道默认不混合历史。
-- Agent 只有 `search_segments`、`get_neighbors`、`get_item`、`open_at` 四个只读工具。
+- Agent 提供四个 tenant-scoped 知识检索工具，并可在 feature flag 开启后根据自然语言调用
+  tenant-bound 视频保存 action；模型工具 schema 不接收 `user_id`。
 - 普通知识问答必须使用 query embedding + pgvector；没有 provider 时会明确 fail closed，
   不会伪装成纯词法检索。`/start`、`/whoami`、`/link`、`/new` 不受此影响。
 - 无证据与查询不可用会给出不同提示；伪造引用编号的草稿会在同一轮中强制重新检索，
@@ -28,6 +29,10 @@ cp .env.example .env
 python -m pip install -e '.[dev]'
 docker compose up -d
 alembic upgrade head
+# 保持 .env 中 AGENT_SAVE_ENABLED=false，先启动兼容 worker
+.venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest
+# worker ready 后再开启 flag 并启动/重启 gateway
+.venv/bin/python -m app.cli gateway-server
 ```
 
 模型可使用 PydanticAI 支持的直接 provider；OpenAI-compatible 网关只需同时配置：
@@ -67,6 +72,10 @@ python -m app.cli users rebind-identity --identity-id 34 --user-id 12
 渠道内 `/new` 开启新会话，不再加载旧上下文。不同 Telegram/微信会话即使绑定
 同一个用户，也默认分别恢复自己的历史。
 
+开启保存功能后，用户可直接发送“帮我保存 <URL>”；1–10 个明确保存 URL 会异步入队，
+不会在渠道请求内等待 metadata、字幕或 embedding。只发送裸 URL 时系统会先询问是否保存；
+确认状态绑定当前 tenant/thread、十分钟过期。内容只有到 `ready` 后才能被知识检索引用。
+
 ## 绑定第二渠道
 
 在已登录渠道发送 `/link wechat`（或 `/link telegram`），然后在目标渠道发送
@@ -94,11 +103,15 @@ Slack 后续只需增加并配置一个 `channel="slack"` adapter，不修改 Ag
 
 ```bash
 pytest -q
-alembic downgrade -1
-alembic upgrade head
+alembic current
+alembic check
 python -m app.cli ask --help
 python -m app.cli users --help
 ```
+
+Migration downgrade mechanics are exercised only against a disposable,
+randomly named PostgreSQL database in the automated migration test. Do not run
+destructive downgrade checks against a normal local or production database.
 
 真实 Telegram、微信和真实模型不会进入自动测试。完整人工步骤见
 `.trellis/tasks/08-05-knowledge-retrieval-agent/manual-acceptance.md`。

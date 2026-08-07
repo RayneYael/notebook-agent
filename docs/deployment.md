@@ -16,11 +16,15 @@ WeChat ----------/             |
                     HTTP + HMAC over loopback
                                 |
                   Notebook Agent gateway-server
-                    |          |           |
-                 Agent      embedding   PostgreSQL
-                  model       API       + pgvector
-                                           |
-                                      Redis / MinIO
+                    |          |              |
+                 Agent      query embedding  PostgreSQL
+                  model          API          + pgvector
+                                                  |
+                                    durable ingest dispatch
+                                                  |
+                             Redis queue -> Celery worker
+                                                  |
+                                 MinIO + embedding API
 ```
 
 安全边界有一个重要限制：`gateway-server` 只允许绑定 `127.0.0.1`、`::1` 或
@@ -43,6 +47,7 @@ loopback 检查。
 
 - Python 3.11。
 - Docker + Docker Compose，用于项目自带的 PostgreSQL 17/pgvector、Redis、MinIO。
+- 一个监听 `ingest` queue 的兼容 Celery worker；保存功能不得由 gateway 同步抓取。
 - LangBot 4.10.6 与 `langbot-plugin` 0.4.13。
 - 一个 embedding provider；当前 segment 维度固定为 1536。
 - 一个 PydanticAI 支持的模型 provider，或 OpenAI-compatible gateway。
@@ -70,11 +75,11 @@ REQUESTS_CA_BUNDLE=/absolute/path/to/certifi/cacert.pem
 这两个变量不是 secret；不要把机器上的绝对路径当作可移植默认值提交到仓库。Linux
 镜像若已经有正确 CA bundle，不需要强行添加它们。
 
-Notebook Agent gateway 也在启动时解析同一解释器的可信 CA：优先使用可读的
+Notebook Agent gateway 与独立 Celery worker 都会在各自进程中解析可信 CA：优先使用可读的
 `TLS_CA_BUNDLE`，其次是已有的 `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`，最后是该
-环境的 certifi bundle。它保持证书及主机名校验开启，并将 bundle 直接用于 query
-embedding；模型 provider 通过标准环境变量取得同一 bundle。这里覆盖的是 gateway 的
-模型和查询 embedding 路径，**不代表**独立 Celery ingestion worker 已自动继承该设置。
+环境的 certifi bundle。gateway 将它用于 query embedding，worker 将它用于 ingestion
+embedding；模型 provider 通过标准环境变量取得同一 bundle。两个进程必须显式获得一致配置，
+不能因为 gateway 正常就假设 worker 自动继承其进程环境。
 显式配置了不存在或不可读的 `TLS_CA_BUNDLE` 时，修正配置后再启动，绝不要用关闭 TLS
 校验作为替代方案。
 
@@ -96,10 +101,14 @@ cp .env.example .env
 | `POSTGRES_PASSWORD` | 是 | PostgreSQL 密码，不能保留示例值 |
 | `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | 是 | 原始文本对象存储凭据 |
 | `ZHIPU_API_KEY` | 生产检索需要 | query 与 segment embedding |
-| `TLS_CA_BUNDLE` | 可选 | gateway 模型与 query embedding 使用的可读 PEM bundle |
+| `TLS_CA_BUNDLE` | 可选 | gateway 与 Celery worker embedding 共用的可读 PEM bundle；保持证书/hostname 校验 |
 | `AGENT_MODEL` | 是 | PydanticAI 模型名 |
 | `AGENT_API_KEY` | 视 provider | 模型凭据 |
 | `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
+| `AGENT_TOOL_TIMEOUT_SECONDS` | 是 | 单次 Agent tool 上限；必须小于外层 `AGENT_TIMEOUT_SECONDS` |
+| `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
+| `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
+| `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true` |
 | `CHANNEL_GATEWAY_SECRET` | 是 | 至少 32 字符的随机共享密钥 |
 
 生成共享密钥时可使用系统密码管理器或：
@@ -128,7 +137,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `9a6b2c4d8e10`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `c7e8a91b2d34`，`alembic check` 应显示没有新的 upgrade operation。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -161,7 +170,42 @@ EMBEDDING_BATCH_SIZE=64
 不调用模型或 embedding，因此仍可用。成功但没有 tenant-owned 证据时，回复会说明知识库
 没有足够证据；这与“查询能力暂时不可用”是两种不同状态，排障时不要混淆。
 
-## 6. 启动 Notebook Agent gateway
+## 6. 启动 ingestion worker 与 Notebook Agent gateway
+
+### 6.1 readiness 与 Celery worker
+
+保持 `AGENT_SAVE_ENABLED=false`。先确认三个依赖均 ready：
+
+```bash
+docker compose ps
+docker compose exec -T redis redis-cli ping
+curl --fail http://127.0.0.1:9000/minio/health/ready
+.venv/bin/alembic current
+```
+
+通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG`、MinIO ready endpoint
+返回成功、schema 为 `c7e8a91b2d34 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
+
+在独立终端或受管理服务中启动只消费 `ingest` queue 的 worker：
+
+```bash
+.venv/bin/celery -A app.ingest.tasks.celery_app worker \
+  --loglevel=INFO --queues=ingest
+```
+
+从同一环境检查 worker：
+
+```bash
+.venv/bin/celery -A app.ingest.tasks.celery_app inspect ping
+.venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
+```
+
+至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest`。worker 必须拥有
+PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gateway 请求进程内同步
+执行 metadata、字幕、MinIO、chunk 或 embedding。worker 的任务参数只应是内部 dispatch ID。
+
+### 6.2 gateway
 
 前台启动，适合首次排错：
 
@@ -177,6 +221,15 @@ curl --fail http://127.0.0.1:8765/health
 
 预期返回 `{"status": "ok"}`。该 endpoint 是进程存活检查，不会主动调用模型或
 数据库；数据库检查使用 `alembic current`，真实模型/检索检查使用后面的 CLI smoke。
+
+只有 migration、worker、Redis、MinIO 和 gateway 均 ready 后，才把 gateway 私有环境中的
+feature flag 改为：
+
+```dotenv
+AGENT_SAVE_ENABLED=true
+```
+
+然后只重启 gateway 使配置生效；不要重置 LangBot channel identity、微信登录或已有 content。
 
 生产环境不要把 8765 端口映射到公网。保持：
 
@@ -301,17 +354,19 @@ bridge pipeline 必须关闭“启用全部插件”，并显式只绑定
 
 ## 8. 完整启动与停止顺序
 
-日常启动：
+首次开启自然语言保存或升级：
 
 1. PostgreSQL、Redis、MinIO。
-2. `alembic upgrade head`。
-3. Notebook Agent `gateway-server`。
-4. 检查 gateway health；若使用 macOS CA workaround，同时向 LangBot 进程注入
+2. 保持 `AGENT_SAVE_ENABLED=false`，备份后执行 `alembic upgrade head` 并确认 current/check。
+3. 部署并启动兼容 Celery worker，确认它监听 `ingest`，CA/Redis/MinIO 均 ready。
+4. 部署并启动 Notebook Agent `gateway-server`，检查 loopback health 与只读检索 smoke。
+5. 设置 `AGENT_SAVE_ENABLED=true` 并重启 gateway；不得重置 channel login、identity 或 content。
+6. 若使用 macOS CA workaround，同时向 LangBot 进程注入
    `SSL_CERT_FILE` 与 `REQUESTS_CA_BUNDLE`。
-5. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
-6. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
+7. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
+8. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
    `initialized`，**之后**才启动每个 enabled adapter；不要手工改变这个顺序。
-7. 检查 readiness，再做 Telegram `/whoami` 和微信私聊 smoke。
+9. 检查 readiness；自动化验证通过后，Telegram 完整 E2E 与微信保存 smoke 仍由人工执行。
 
 readiness 检查不使用“等待 N 秒”。在 LangBot 进程日志中确认
 `Required plugins initialized; message adapters may start.`，再确认：
@@ -329,8 +384,9 @@ HTTP `healthz` 只有在 application 已通过启动 gate 并创建 HTTP task �
 
 1. 停 LangBot adapters/core，停止接收新消息。
 2. 停 plugin runtime。
-3. 停 Notebook Agent gateway。
-4. 确认没有 ingestion 工作后，再按需停止数据服务。
+3. 关闭 `AGENT_SAVE_ENABLED` 并重启/停止 Notebook Agent gateway，阻止新 submission。
+4. 让 active ingestion 完成；需要立即止损时再停止 Celery worker。
+5. 确认没有 ingestion 工作后，再按需停止 Redis、MinIO 与 PostgreSQL。
 
 不要在消息处理中直接执行 migration downgrade。
 
@@ -394,6 +450,9 @@ systemd 日志中不应出现问题正文、证据全文、平台 token 或外�
 | 基础服务 | `docker compose ps` | postgres/redis/minio healthy |
 | schema | `.venv/bin/alembic current` | 当前 revision 为 head |
 | migration drift | `.venv/bin/alembic check` | 无新 upgrade operation |
+| Redis | `redis-cli ping` | `PONG` |
+| MinIO | `GET /minio/health/ready` | HTTP 200 |
+| ingestion worker | Celery `inspect ping` + `active_queues` | worker pong 且监听 `ingest` |
 | Agent 进程 | `GET http://127.0.0.1:8765/health` | HTTP 200、status ok |
 | LangBot readiness | 日志 marker + `GET /healthz` | required bridge 为 `initialized` 后 API 才可用 |
 | bridge runtime | LangBot plugin detail | `notebook-agent/notebook-knowledge-agent` 为 `initialized` |
@@ -428,15 +487,21 @@ docker compose exec -T postgres pg_dump -U postgres -Fc kb > kb-YYYYMMDD.dump
 
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
-3. 安装新的 Python 依赖。
-4. 执行 `alembic upgrade head`。
-5. 启动 gateway，检查 health、schema 和 CLI ask。
-6. 启动 plugin/LangBot，再做双渠道 smoke。
+3. 设置 `AGENT_SAVE_ENABLED=false` 并安装新的 Python 依赖。
+4. 执行 `alembic upgrade head`，确认 revision `c7e8a91b2d34`。
+5. 先启动 compatible worker，确认 ingest queue、CA、Redis 与 MinIO readiness。
+6. 再启动 gateway 并检查 health、schema 与 CLI ask。
+7. 最后开启 `AGENT_SAVE_ENABLED`、重启 gateway，再启动 plugin/LangBot。
 
-代码回滚时，优先保持数据库向前兼容。只有确认旧代码不认识新 schema 且已有备份，
-才执行指定 revision 的 downgrade。本任务 migration 的 downgrade 会删除渠道身份、
-绑定 token 和 conversation 表，虽然不删除 content/segment/embedding，但会丢失渠道
-绑定和恢复上下文；生产环境不得把它当作普通重启步骤。
+保存路径异常时先把 `AGENT_SAVE_ENABLED=false` 并重启 gateway。这会保留只读检索，同时
+阻止新的 pending action、ContentItem 和 dispatch；不要删除或重绑用户数据。已在运行的 worker
+任务可以安全完成；若出现 tenant mismatch 或无界重复 enqueue，再停止 worker intake，并保留
+`ingest_dispatch` / `pending_channel_action` rows 供审计。
+
+代码回滚时优先保持数据库向前兼容：回滚 gateway/worker binary，但保留新增列与表。只有在
+隔离恢复演练中确认安全且已有备份时才执行指定 revision downgrade；生产回滚不得用 destructive
+downgrade 删除 action/dispatch audit。回滚与重启都不得重置 Telegram/微信身份、微信扫码登录、
+conversation history、已有 content 或 MinIO 对象。
 
 LangBot 版本升级必须重新验证：sender ID、bot UUID、conversation ID、平台 message
 ID、plugin event 顺序、monitoring 隐私补丁和两个 adapter 并发。不能假设 4.10.6
@@ -502,6 +567,18 @@ HMAC 或暴露未认证 endpoint 绕过。
   为了排障记录问题正文、外部身份、证据内容、DSN、SQL、向量或 provider payload。
 - 如果确定性命令也不可用，则先按“plugin 回复渠道暂时不可用”排查 gateway/bridge，而不是
   把问题归因于 embedding。
+
+### 保存已入队但内容没有 ready
+
+- 先确认 `AGENT_SAVE_ENABLED`、worker `inspect ping/active_queues`、Redis、MinIO 和 schema head；
+  不要让用户反复发送同一 URL 作为重试机制。
+- 用内部 request、tenant、item、dispatch ID 关联 gateway 与 worker，只记录 stage、duration 和
+  `queue_unavailable`、`transient_fetch_failed`、`ingestion_failed` 等稳定错误码。
+- 不得记录或返回消息正文、URL、`why_saved`、外部身份、DSN、secret、字幕、vector、Celery
+  backend payload、provider payload、exception message 或 traceback。
+- `pending/enqueued/running/completed/failed` 是 dispatch 状态；`ContentItem.ready` 才表示可检索。
+  “数据库没有搜索结果”与 ingestion/queue/provider 失败必须保持不同用户提示。
+- worker TLS 失败时修复 CA 并按新 request 的有界 retry 流程恢复；不得关闭证书或 hostname 校验。
 
 ### 重启后追问丢失
 

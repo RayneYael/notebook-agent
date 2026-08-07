@@ -12,6 +12,11 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UsageLim
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
 from pydantic_ai.models import Model
 
+from app.agent.actions import (
+    ActionInputMismatch,
+    AgentActionRuntime,
+    AgentActionServices,
+)
 from app.agent.services import (
     EmbeddingUnavailable,
     KnowledgeNotFound,
@@ -32,12 +37,18 @@ INSTRUCTIONS = """
 3. 不得依据模型记忆补写。没有结果或证据不足时，明确说“知识库中未找到足够证据”。
 4. 回答中的结论应标注对应的 [S片段编号]。不要编造片段编号、标题、原文或链接。
 5. 工具没有 user_id 参数；不要询问、猜测或尝试改变当前用户。
+6. 明确要求保存且消息中有视频 URL 时调用 save_videos；只有裸 URL
+   时调用 request_save_confirmation。
+7. 用户确认或取消待保存视频时分别调用 confirm_video_save 或
+   cancel_video_save；不要从历史文本重建 URL。
+8. 询问链接内容不代表保存意图，仍按知识检索规则处理。
 """.strip()
 
 
 @dataclass
 class AgentDeps:
     services: KnowledgeServices
+    actions: AgentActionRuntime
     search_calls: int = 0
     tool_calls: int = 0
     citations: dict[int, Citation] = field(default_factory=dict)
@@ -60,15 +71,36 @@ class AgentExecution:
     new_messages: list[ModelMessage]
 
 
-def build_agent(model: Model | str) -> Agent[AgentDeps, str]:
+def build_agent(
+    model: Model | str,
+    *,
+    tool_timeout: float = 15.0,
+) -> Agent[AgentDeps, str]:
     agent = Agent(
         model,
         deps_type=AgentDeps,
         output_type=str,
         instructions=INSTRUCTIONS,
         retries={"tools": 1, "output": 1},
-        tool_timeout=15.0,
+        tool_timeout=tool_timeout,
     )
+
+    @agent.instructions
+    def pending_save_instruction(ctx: RunContext[AgentDeps]) -> str:
+        """Inject only the current run's server-verified confirmation state."""
+
+        snapshot = ctx.deps.actions.pending_save_snapshot()
+        if not snapshot.active:
+            return ""
+        return (
+            "可信服务器状态：当前 conversation 有 "
+            f"{snapshot.count} 个视频等待保存确认。\n"
+            "把本条短回复作为确认语义判断：明确肯定（包括“需要”）调用 "
+            "confirm_video_save；明确否定调用 cancel_video_save；含糊则调用 "
+            "clarify_save_confirmation；"
+            "明显无关的新问题按正常知识流程处理并保留待确认状态。"
+            "不要为确认回复调用知识检索。"
+        )
 
     @agent.tool
     def search_segments(
@@ -112,10 +144,73 @@ def build_agent(model: Model | str) -> Agent[AgentDeps, str]:
         ctx.deps.record(citation)
         return citation.model_dump()
 
+    @agent.tool
+    def request_save_confirmation(
+        ctx: RunContext[AgentDeps], urls: list[str]
+    ) -> dict:
+        """Persist a bounded bare-URL batch for explicit confirmation."""
+
+        ctx.deps.tool_calls += 1
+        try:
+            outcome = ctx.deps.actions.request_confirmation(urls)
+        except ActionInputMismatch:
+            raise ModelRetry(
+                "Include every URL from the current user message exactly once "
+                "per occurrence and in the original order; do not add URLs."
+            ) from None
+        return outcome.tool_payload()
+
+    @agent.tool
+    def save_videos(
+        ctx: RunContext[AgentDeps],
+        urls: list[str],
+        why_saved: str | None = None,
+    ) -> dict:
+        """Queue current-message video URLs for the private tenant."""
+
+        ctx.deps.tool_calls += 1
+        try:
+            outcome = ctx.deps.actions.save_videos(
+                urls, why_saved=why_saved
+            )
+        except ActionInputMismatch:
+            raise ModelRetry(
+                "Include every URL from the current user message exactly once "
+                "per occurrence and in the original order; do not add URLs."
+            ) from None
+        return outcome.tool_payload()
+
+    @agent.tool
+    def confirm_video_save(ctx: RunContext[AgentDeps]) -> dict:
+        """Consume the current conversation's persisted pending batch."""
+
+        ctx.deps.tool_calls += 1
+        return ctx.deps.actions.confirm().tool_payload()
+
+    @agent.tool
+    def clarify_save_confirmation(ctx: RunContext[AgentDeps]) -> dict:
+        """Ask for a clear decision without consuming the pending batch."""
+
+        ctx.deps.tool_calls += 1
+        return ctx.deps.actions.clarify_confirmation().tool_payload()
+
+    @agent.tool
+    def cancel_video_save(ctx: RunContext[AgentDeps]) -> dict:
+        """Cancel the current conversation's persisted pending batch."""
+
+        ctx.deps.tool_calls += 1
+        return ctx.deps.actions.cancel().tool_payload()
+
     @agent.output_validator
     def validate_evidence(ctx: RunContext[AgentDeps], output: str) -> str:
         """Reject fabricated markers before the draft becomes an Agent result."""
 
+        # Action text is discarded in favor of the canonical application
+        # summary derived from the real tool result. A mixed search→save run
+        # therefore must not enter the [S<n>] repair path after a terminal
+        # action has succeeded or failed.
+        if ctx.deps.actions.outcome is not None:
+            return output
         citations = ctx.deps.citations
         if not citations:
             return output
@@ -152,10 +247,17 @@ class KnowledgeAgent:
         model: Model | str,
         settings: Settings,
         service_factory: Callable[[AgentRequest], KnowledgeServices],
+        action_factory: (
+            Callable[[AgentRequest], AgentActionServices] | None
+        ) = None,
     ) -> None:
-        self._agent = build_agent(model)
+        self._agent = build_agent(
+            model,
+            tool_timeout=settings.agent_tool_timeout_seconds,
+        )
         self._settings = settings
         self._service_factory = service_factory
+        self._action_factory = action_factory
 
     async def run(
         self,
@@ -169,7 +271,18 @@ class KnowledgeAgent:
         services = self._service_factory(request)
         if isinstance(services, KnowledgeServices):
             services.set_diagnostics(diagnostics)
-        deps = AgentDeps(services)
+        action_services = (
+            self._action_factory(request)
+            if self._settings.agent_save_enabled
+            and self._action_factory is not None
+            else None
+        )
+        actions = AgentActionRuntime(
+            request,
+            action_services,
+            enabled=self._settings.agent_save_enabled,
+        )
+        deps = AgentDeps(services, actions)
         diagnostics.event("agent_started")
         try:
             message_history = ModelMessagesTypeAdapter.validate_python(
@@ -210,6 +323,21 @@ class KnowledgeAgent:
                 diagnostics,
             )
         except UnexpectedModelBehavior:
+            if deps.actions.input_mismatch:
+                outcome = deps.actions.finalize_input_mismatch()
+                diagnostics.event(
+                    "action_validated", error_code=outcome.error_code
+                )
+                return AgentExecution(
+                    AgentAnswer(
+                        status=outcome.status,
+                        text=outcome.text,
+                        action_results=list(outcome.results),
+                        thread_id=request.thread_public_id,
+                        error_code=outcome.error_code,
+                    ),
+                    [],
+                )
             if deps.citation_repair_search_calls is not None:
                 return self._failure(
                     request,
@@ -225,6 +353,26 @@ class KnowledgeAgent:
         except Exception:
             return self._failure(
                 request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error", diagnostics
+            )
+
+        if deps.actions.outcome is not None:
+            outcome = deps.actions.outcome
+            diagnostics.event(
+                "action_validated", error_code=outcome.error_code
+            )
+            return AgentExecution(
+                AgentAnswer(
+                    status=outcome.status,
+                    text=outcome.text,
+                    action_results=list(outcome.results),
+                    thread_id=request.thread_public_id,
+                    error_code=outcome.error_code,
+                ),
+                # The model's action prose is not trusted or needed for
+                # recovery. Persist only the canonical ActionOutcome on the
+                # conversation turn; pending confirmation is separately
+                # durable and tenant/thread-bound.
+                [],
             )
 
         if deps.search_calls < 1:

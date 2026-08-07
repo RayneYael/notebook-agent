@@ -175,6 +175,13 @@ class ConversationTurn(Base):
     assistant_text: Mapped[str] = mapped_column(Text, nullable=False)
     sources: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
     model_messages: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
+    answer_status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="legacy"
+    )
+    error_code: Mapped[str | None] = mapped_column(Text)
+    action_results: Mapped[list | dict] = mapped_column(
+        JSONB, nullable=False, server_default=text("'[]'::jsonb")
+    )
     status: Mapped[str] = mapped_column(Text, nullable=False, server_default="completed")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
@@ -183,6 +190,41 @@ class ConversationTurn(Base):
     __table_args__ = (
         UniqueConstraint("thread_id", "message_id", name="uq_conversation_turn_message"),
         Index("ix_conversation_turn_thread_created", "thread_id", created_at.desc()),
+    )
+
+
+class PendingChannelAction(Base):
+    """Versioned, expiring action state bound to one trusted conversation."""
+
+    __tablename__ = "pending_channel_action"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    thread_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("conversation_thread.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    payload: Mapped[list | dict] = mapped_column(JSONB, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_message_id: Mapped[str | None] = mapped_column(Text)
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index(
+            "uq_pending_channel_action_thread_active",
+            "thread_id",
+            unique=True,
+            postgresql_where=text(
+                "consumed_at IS NULL AND cancelled_at IS NULL"
+            ),
+        ),
     )
 
 
@@ -237,6 +279,51 @@ class ContentItem(Base):
             "ix_content_item_content_hash",
             "content_hash",
             postgresql_where=content_hash.isnot(None),
+        ),
+    )
+
+
+class IngestDispatch(Base):
+    """Durable, idempotent claim for one asynchronous item ingestion."""
+
+    __tablename__ = "ingest_dispatch"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("content_item.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    request_key: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="1"
+    )
+    state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="pending"
+    )
+    task_id: Mapped[str | None] = mapped_column(Text)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "request_key",
+            "item_id",
+            name="uq_ingest_dispatch_request_item",
+        ),
+        Index(
+            "uq_ingest_dispatch_item_active",
+            "item_id",
+            unique=True,
+            postgresql_where=text(
+                "state IN ('pending', 'enqueued', 'running')"
+            ),
         ),
     )
 

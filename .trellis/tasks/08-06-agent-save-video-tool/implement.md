@@ -24,7 +24,7 @@
   约束同 item 最多一个 active dispatch。
 - [ ] 为 `ConversationTurn` 增加 `answer_status`、`error_code`、`action_results`，对现有 rows 做无损
   backfill；旧 knowledge turn 仍可恢复。
-- [ ] migration upgrade/downgrade 在隔离数据库验证；downgrade 仅验证 schema mechanics，生产 rollback
+- [x] migration upgrade/downgrade 在随机临时 PostgreSQL 数据库验证；downgrade 仅验证 schema mechanics，生产 rollback
   不自动删除 action/dispatch 数据。
 
 ## 3. Item normalization and submission service
@@ -35,14 +35,14 @@
 - [ ] 使用 per-item savepoint + unique constraint/row lock 收敛并发；逐项返回 ordered safe result。
 - [ ] 新 item 写 minimal `pending` ContentItem + durable dispatch；active/ready item 返回
   `already_exists`，不 enqueue。
-- [ ] broker publish 使用 bounded timeout；成功 conditional transition，失败记录
+- [x] broker publish 使用 bounded timeout；成功 conditional transition，失败记录
   `queue_unavailable`，不把 exception message 返回 Agent/日志。
 - [ ] 相同 request key、重复 tool call、bridge redelivery 和并发 submit 返回相同 result，最多一个
   active dispatch。
 
 ## 4. Worker refactor
 
-- [ ] 把 `fetch_meta()` 从 `create_item()`/channel submission 移入 worker，worker 更新 item metadata
+- [x] 把 `fetch_meta()` 从 `create_item()`/channel submission 移入 worker，worker 更新 item metadata
   后继续复用 transcript/MinIO/chunk/embed/Segment pipeline。
 - [ ] worker 原子 claim dispatch；重复 Celery delivery 对 running/completed no-op，不能重复删除/写入
   segments 或重复推进状态。
@@ -67,8 +67,9 @@
 - [ ] 将 trusted request context 和 submission/pending services 放入 AgentDeps；核对 `save_videos`
   URLs 必须来自当前 user message，confirm 只读 server pending payload。
 - [ ] 增加 action outcome branch：confirmation/accepted/partial/failed/too-large/cancelled/missing/expired。
-- [ ] action summary 要求 `[A<n>]` allow-list 且覆盖全部 tool results；应用追加 canonical ordered result
-  list。marker mismatch 内部 retry，不重复执行副作用。
+- [x] 丢弃模型 action draft；应用只从真实 tool result 生成 canonical ordered summary，分别统计
+  queued/already-exists/failed，并为失败项给出安全、可执行原因。action 分支不实现 `[A<n>]`
+  output validator/repair。
 - [ ] 保持知识分支 `[S<n>]` citation、fresh-search repair 和 `search_required`；无 action evidence 的
   无来源知识草稿仍 fail closed。
 - [ ] 混合“保存并总结未入库视频”只报告 submission，并提示 ready 后查询；不使用模型记忆补答。
@@ -109,7 +110,7 @@ python3 ./.trellis/scripts/task.py validate 08-06-agent-save-video-tool
 
 ## 9. Deployment and human acceptance
 
-- [ ] 更新 `.env.example`/部署文档：`AGENT_SAVE_ENABLED`、migration、worker CA、Redis/MinIO readiness、
+- [x] 更新 `.env.example`/部署文档：`AGENT_SAVE_ENABLED`、migration、worker CA、Redis/MinIO readiness、
   pending/action diagnostics、safe rollback。
 - [ ] migration 后先部署/启动 compatible Celery worker，验证 ingest queue，再重启 gateway；最后开启
   feature flag。不得重置 channel login、identity 或已有 content。

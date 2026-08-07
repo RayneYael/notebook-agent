@@ -33,6 +33,18 @@ def _env_float(name: str, default: float) -> float:
     return float(value) if value is not None else default
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean")
+
+
 def _require(name: str) -> str:
     value = os.environ.get(name)
     if not value:
@@ -72,6 +84,15 @@ class Settings:
 
     # --- Redis (Celery broker + result backend) ---
     redis_url: str = field(default_factory=lambda: _build_redis_url())
+    # The channel/Agent request must never wait indefinitely for the broker.
+    # This is a total publish budget; the ingestion worker's retry policy is
+    # intentionally separate and is not controlled by these values.
+    broker_publish_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("BROKER_PUBLISH_TIMEOUT_SECONDS", 5.0)
+    )
+    broker_publish_max_retries: int = field(
+        default_factory=lambda: _env_int("BROKER_PUBLISH_MAX_RETRIES", 1)
+    )
 
     # --- MinIO (S3-compatible object storage) ---
     minio_endpoint_url: str = field(default_factory=lambda: _env("MINIO_ENDPOINT_URL", "http://localhost:9000"))
@@ -89,6 +110,11 @@ class Settings:
     agent_timeout_seconds: float = field(
         default_factory=lambda: _env_float("AGENT_TIMEOUT_SECONDS", 45.0)
     )
+    agent_tool_timeout_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "AGENT_TOOL_TIMEOUT_SECONDS", 15.0
+        )
+    )
     agent_request_limit: int = field(
         default_factory=lambda: _env_int("AGENT_REQUEST_LIMIT", 6)
     )
@@ -97,6 +123,9 @@ class Settings:
     )
     agent_output_token_limit: int = field(
         default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
+    )
+    agent_save_enabled: bool = field(
+        default_factory=lambda: _env_bool("AGENT_SAVE_ENABLED", False)
     )
     context_max_turns: int = field(
         default_factory=lambda: _env_int("CONTEXT_MAX_TURNS", 8)

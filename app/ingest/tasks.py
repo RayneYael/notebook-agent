@@ -7,25 +7,88 @@ import json
 import os
 import time
 from collections.abc import Callable
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
 from botocore.exceptions import ClientError
 from celery import Celery, Task
+from kombu import Producer
 from sqlalchemy import delete, func, select
 
-from app.config import get_settings
+from app.config import Settings, get_settings
 from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientFetchError
 from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import guard_transcript
-from app.models import AppUser, ContentItem, Segment
+from app.models import AppUser, ContentItem, IngestDispatch, Segment
+from app.tls import configure_trusted_ca
 
 
 celery_app = Celery("kb", broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"), backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
 celery_app.conf.task_routes = {"app.ingest.tasks.fetch_text_task": {"queue": "ingest"}}
+
+
+def _bounded_publish_options(
+    settings: Settings,
+    *,
+    budget_seconds: float | None = None,
+) -> dict[str, Any]:
+    """Build native Celery/Kombu publish bounds below the Agent deadline.
+
+    Kombu applies ``max_retries`` both while publishing and while re-opening a
+    lost connection.  We therefore reserve a small, fixed retry interval and
+    divide the remaining budget across a conservative upper bound for those
+    operations.  No thread or watchdog is needed (or left running) when the
+    broker is unavailable.
+    """
+
+    budget = float(settings.broker_publish_timeout_seconds)
+    agent_timeout = min(
+        float(settings.agent_timeout_seconds),
+        float(settings.agent_tool_timeout_seconds),
+    )
+    retries = int(settings.broker_publish_max_retries)
+    if budget <= 0 or agent_timeout <= 0:
+        raise ValueError("broker and Agent tool timeouts must be positive")
+    if retries < 0:
+        raise ValueError("BROKER_PUBLISH_MAX_RETRIES must be non-negative")
+
+    # Reserve time for the surrounding Agent/channel request.  A
+    # misconfigured larger value is clamped rather than allowing a broker call
+    # to consume the whole model deadline, including for very small test
+    # deadlines.
+    agent_margin = min(1.0, agent_timeout / 2)
+    budget = min(budget, agent_timeout - agent_margin)
+    if budget_seconds is not None:
+        budget = min(budget, float(budget_seconds))
+    if budget <= 0:
+        raise TimeoutError("broker_publish_timeout")
+    attempts = retries + 1
+    # One initial connection plus Kombu's bounded reconnect attempts for each
+    # failed publish.  The multiplier leaves room for queue/exchange declare
+    # and the Redis/AMQP socket operation on each attempt.
+    operation_count = max(1, (attempts * (retries + 4)) // 2)
+    sleep_count = retries * (retries + 3) // 2
+    interval = min(0.1, budget / (4 * max(sleep_count, 1)))
+    operation_budget = (budget - interval * sleep_count) / (4 * operation_count)
+
+    return {
+        "retry": True,
+        "retry_policy": {
+            "max_retries": retries,
+            "interval_start": interval,
+            "interval_step": 0,
+            "interval_max": interval,
+        },
+        # Supported by Kombu Producer.publish (and by AMQP transports).
+        "timeout": operation_budget,
+        "_connect_timeout": operation_budget,
+        "_socket_timeout": operation_budget,
+        "_total_timeout": budget,
+    }
 
 
 class RawObjectStore:
@@ -54,7 +117,6 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
     platform_id = connector.match(url)
     if not platform_id:
         raise ValueError(f"connector does not match URL: {url}")
-    meta = connector.fetch_meta(platform_id)
     factory = session_factory or get_session_factory()
     with factory() as db:
         if db.get(AppUser, user_id) is None:
@@ -62,7 +124,15 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
         existing = db.scalar(select(ContentItem).where(ContentItem.user_id == user_id, ContentItem.platform == connector.platform, ContentItem.platform_id == platform_id))
         if existing:
             return existing.id
-        item = ContentItem(user_id=user_id, platform=connector.platform, platform_id=platform_id, kind="video", url=meta.url, title=meta.title, author=meta.author, published_at=meta.published_at, duration_sec=meta.duration_sec, lang=meta.lang, description=meta.description, tags=meta.tags, chapters=meta.chapters, cover_url=meta.cover_url, why_saved=why_saved, state="fetching")
+        item = ContentItem(
+            user_id=user_id,
+            platform=connector.platform,
+            platform_id=platform_id,
+            kind="video",
+            url=url,
+            why_saved=why_saved,
+            state="pending",
+        )
         db.add(item)
         db.commit()
         return item.id
@@ -75,7 +145,20 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if item is None:
             raise LookupError(f"content item {item_id} not found")
         connector = connector or _connector(item.url)
-        connector.fetch_meta(item.platform_id)
+        meta = connector.fetch_meta(item.platform_id)
+        if meta is not None:
+            item.url = meta.url
+            item.title = meta.title
+            item.author = meta.author
+            item.published_at = meta.published_at
+            item.duration_sec = meta.duration_sec
+            item.lang = meta.lang
+            item.description = meta.description
+            item.tags = meta.tags
+            item.chapters = meta.chapters
+            item.cover_url = meta.cover_url
+        item.state = "fetching"
+        db.commit()
         result = connector.fetch_text(item.platform_id)
         if isinstance(result, NeedsExtension):
             item.state = "needs_extension"
@@ -97,14 +180,7 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         item.state = "chunking"
         db.flush()
         if embedder is None:
-            settings = get_settings()
-            embedder = ZhipuEmbedder(
-                settings.zhipu_api_key or "",
-                model=settings.embedding_model,
-                endpoint=settings.embedding_endpoint,
-                dimensions=settings.embedding_dimensions,
-                batch_size=settings.embedding_batch_size,
-            )
+            embedder = build_worker_embedder()
         semantic = lambda texts: embedder.embed(texts)
         chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
         vectors = embedder.embed([part.text for part in chunks])
@@ -126,12 +202,234 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
 class IngestTask(Task):
     def on_failure(self, exc, task_id, args, kwargs, einfo):
         if args:
-            _mark_failed(args[0], exc)
+            _mark_dispatch_failed(args[0], exc, task_id=task_id)
 
 
 @celery_app.task(bind=True, base=IngestTask, autoretry_for=(TransientFetchError,), max_retries=5, retry_backoff=8, retry_backoff_max=600, retry_jitter=True)
-def fetch_text_task(self, item_id: int) -> str:
-    return process_item(item_id)
+def fetch_text_task(self, dispatch_id: int) -> str:
+    return process_dispatch(
+        dispatch_id,
+        task_id=self.request.id,
+    )
+
+
+def publish_ingest_dispatch(dispatch_id: int) -> str:
+    """Publish only the durable internal dispatch identifier."""
+
+    settings = get_settings()
+    options = _bounded_publish_options(settings)
+    # These are read by Celery when it acquires the producer connection.  Keep
+    # transport options scoped to the broker publish path; worker task retry /
+    # backoff settings above remain unchanged.
+    connect_timeout = options.pop("_connect_timeout")
+    socket_timeout = options.pop("_socket_timeout")
+    celery_app.conf.broker_connection_timeout = connect_timeout
+    transport_options = dict(celery_app.conf.broker_transport_options or {})
+    transport_options.update(
+        socket_timeout=socket_timeout,
+        socket_connect_timeout=connect_timeout,
+    )
+    celery_app.conf.broker_transport_options = transport_options
+    options.pop("_total_timeout")
+    # Celery's shared ProducerPool has a bounded outer acquire but performs a
+    # nested ConnectionPool.acquire(block=True) without forwarding that
+    # timeout. Use a request-local bounded connection instead, so neither pool
+    # can make an Agent tool thread wait indefinitely.
+    with celery_app.connection_for_write(
+        connect_timeout=connect_timeout,
+        transport_options=transport_options,
+    ) as connection:
+        producer = Producer(connection)
+        result = fetch_text_task.apply_async(
+            args=[dispatch_id],
+            producer=producer,
+            **options,
+        )
+        return str(result.id)
+
+
+def build_worker_embedder(
+    settings: Settings | None = None,
+) -> EmbeddingProvider:
+    """Build worker HTTPS embedding with the verified shared CA contract."""
+
+    settings = settings or get_settings()
+    trusted_ca = configure_trusted_ca(settings.tls_ca_bundle)
+    return ZhipuEmbedder(
+        settings.zhipu_api_key or "",
+        model=settings.embedding_model,
+        endpoint=settings.embedding_endpoint,
+        dimensions=settings.embedding_dimensions,
+        batch_size=settings.embedding_batch_size,
+        ssl_context=trusted_ca.ssl_context,
+    )
+
+
+def process_dispatch(
+    dispatch_id: int,
+    *,
+    task_id: str | None,
+    processor: Callable[[int], str] | None = None,
+    session_factory=None,
+) -> str:
+    """Claim one dispatch; duplicate deliveries never rerun ingestion."""
+
+    factory = session_factory or get_session_factory()
+    item_id = _claim_dispatch(
+        dispatch_id, task_id, session_factory=factory
+    )
+    if item_id is None:
+        return "duplicate"
+    try:
+        state = (processor or process_item)(item_id)
+    except TransientFetchError:
+        _release_dispatch_for_retry(
+            dispatch_id, task_id, session_factory=factory
+        )
+        # Celery may log task exceptions; preserve retry type but never copy
+        # connector/provider details into the task failure surface.
+        raise TransientFetchError("transient_fetch_failed") from None
+    except Exception as exc:
+        _mark_dispatch_failed(
+            dispatch_id, exc, task_id=task_id, session_factory=factory
+        )
+        raise RuntimeError("ingestion_failed") from None
+    _complete_dispatch(
+        dispatch_id, task_id, session_factory=factory
+    )
+    return state
+
+
+def _claim_dispatch(
+    dispatch_id: int,
+    task_id: str | None,
+    *,
+    session_factory=None,
+) -> int | None:
+    factory = session_factory or get_session_factory()
+    with factory() as db:
+        dispatch = db.scalar(
+            select(IngestDispatch)
+            .where(IngestDispatch.id == dispatch_id)
+            .with_for_update()
+        )
+        if dispatch is None or dispatch.state not in {
+            "pending",
+            "enqueued",
+        }:
+            return None
+        if (
+            dispatch.task_id is not None
+            and task_id is not None
+            and dispatch.task_id != task_id
+        ):
+            return None
+        item = db.get(ContentItem, dispatch.item_id)
+        if item is None:
+            dispatch.state = "failed"
+            dispatch.error_code = "item_missing"
+            dispatch.updated_at = datetime.now(UTC)
+            db.commit()
+            return None
+        dispatch.state = "running"
+        if task_id is not None:
+            dispatch.task_id = task_id
+        dispatch.updated_at = datetime.now(UTC)
+        db.commit()
+        return item.id
+
+
+def _release_dispatch_for_retry(
+    dispatch_id: int,
+    task_id: str | None,
+    *,
+    session_factory=None,
+) -> None:
+    factory = session_factory or get_session_factory()
+    with factory() as db:
+        dispatch = db.scalar(
+            select(IngestDispatch)
+            .where(IngestDispatch.id == dispatch_id)
+            .with_for_update()
+        )
+        if (
+            dispatch is None
+            or dispatch.state != "running"
+            or (
+                task_id is not None
+                and dispatch.task_id not in {None, task_id}
+            )
+        ):
+            return
+        dispatch.state = "enqueued"
+        dispatch.updated_at = datetime.now(UTC)
+        db.commit()
+
+
+def _complete_dispatch(
+    dispatch_id: int,
+    task_id: str | None,
+    *,
+    session_factory=None,
+) -> None:
+    factory = session_factory or get_session_factory()
+    with factory() as db:
+        dispatch = db.scalar(
+            select(IngestDispatch)
+            .where(IngestDispatch.id == dispatch_id)
+            .with_for_update()
+        )
+        if (
+            dispatch is None
+            or dispatch.state != "running"
+            or (
+                task_id is not None
+                and dispatch.task_id not in {None, task_id}
+            )
+        ):
+            return
+        dispatch.state = "completed"
+        dispatch.error_code = None
+        dispatch.updated_at = datetime.now(UTC)
+        db.commit()
+
+
+def _mark_dispatch_failed(
+    dispatch_id: int,
+    exc: BaseException,
+    *,
+    task_id: str | None = None,
+    session_factory=None,
+) -> None:
+    factory = session_factory or get_session_factory()
+    error_code = (
+        "transient_fetch_failed"
+        if isinstance(exc, TransientFetchError)
+        else "ingestion_failed"
+    )
+    with factory() as db:
+        dispatch = db.scalar(
+            select(IngestDispatch)
+            .where(IngestDispatch.id == dispatch_id)
+            .with_for_update()
+        )
+        if (
+            dispatch is None
+            or dispatch.state == "completed"
+            or (
+                task_id is not None
+                and dispatch.task_id not in {None, task_id}
+            )
+        ):
+            return
+        dispatch.state = "failed"
+        dispatch.error_code = error_code
+        dispatch.updated_at = datetime.now(UTC)
+        item = db.get(ContentItem, dispatch.item_id)
+        if item is not None and item.state != "ready":
+            item.state = "failed"
+            item.fail_reason = error_code
+        db.commit()
 
 
 def ingest_url(url: str, *, user_id: int, why_saved: str | None = None, connector=None, embedder=None, object_store=None, session_factory=None) -> tuple[int, str]:
@@ -151,7 +449,11 @@ def _mark_failed(item_id: int, exc: BaseException, *, session_factory=None) -> N
         item = db.get(ContentItem, item_id)
         if item is not None:
             item.state = "failed"
-            item.fail_reason = str(exc)
+            item.fail_reason = (
+                "transient_fetch_failed"
+                if isinstance(exc, TransientFetchError)
+                else "ingestion_failed"
+            )
             db.commit()
 
 

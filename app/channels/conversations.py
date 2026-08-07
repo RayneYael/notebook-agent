@@ -8,11 +8,15 @@ from datetime import UTC, datetime
 from typing import Any, Sequence
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
-from sqlalchemy import desc, select
+from sqlalchemy import desc, select, update
 from sqlalchemy.orm import Session
 
 from app.channels.types import ChannelEnvelope, TenantContext
-from app.models import ConversationThread, ConversationTurn
+from app.models import (
+    ConversationThread,
+    ConversationTurn,
+    PendingChannelAction,
+)
 
 
 def get_or_create_thread(
@@ -53,7 +57,17 @@ def reset_thread(
         .with_for_update()
     )
     if current is not None:
-        current.closed_at = datetime.now(UTC)
+        now = datetime.now(UTC)
+        db.execute(
+            update(PendingChannelAction)
+            .where(
+                PendingChannelAction.thread_id == current.id,
+                PendingChannelAction.consumed_at.is_(None),
+                PendingChannelAction.cancelled_at.is_(None),
+            )
+            .values(cancelled_at=now)
+        )
+        current.closed_at = now
         current.updated_at = current.closed_at
         db.flush()
     return get_or_create_thread(db, tenant, envelope)
@@ -114,6 +128,9 @@ def save_completed_turn(
     assistant_text: str,
     sources: Sequence[dict[str, Any]],
     model_messages: Sequence[ModelMessage],
+    answer_status: str = "legacy",
+    error_code: str | None = None,
+    action_results: Sequence[dict[str, Any]] = (),
 ) -> ConversationTurn:
     existing = find_turn(db, thread.id, envelope.message_id)
     if existing is not None:
@@ -128,6 +145,9 @@ def save_completed_turn(
         assistant_text=assistant_text,
         sources=list(sources),
         model_messages=serialized,
+        answer_status=answer_status,
+        error_code=error_code,
+        action_results=list(action_results),
         status="completed",
     )
     db.add(turn)

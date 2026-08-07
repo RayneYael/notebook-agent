@@ -59,7 +59,15 @@ async def test_agent_requires_search_and_returns_only_recorded_sources():
     settings = replace(Settings(), agent_timeout_seconds=2)
     services = FakeServices([citation])
     runtime = KnowledgeAgent(
-        TestModel(call_tools="all", custom_output_text="answer [S3]"),
+        TestModel(
+            call_tools=[
+                "search_segments",
+                "get_neighbors",
+                "get_item",
+                "open_at",
+            ],
+            custom_output_text="answer [S3]",
+        ),
         settings,
         lambda _: services,
     )
@@ -109,13 +117,30 @@ async def test_agent_empty_search_fails_closed():
     assert result.answer.text == "知识库中未找到足够证据。"
 
 
-def test_model_tool_schemas_never_expose_user_id():
+def test_model_tool_schemas_never_expose_trusted_identifiers():
     agent = build_agent(TestModel())
     tools = agent._function_toolset.tools
 
-    assert set(tools) == {"search_segments", "get_neighbors", "get_item", "open_at"}
+    assert set(tools) == {
+        "search_segments",
+        "get_neighbors",
+        "get_item",
+        "open_at",
+        "request_save_confirmation",
+        "save_videos",
+        "confirm_video_save",
+        "clarify_save_confirmation",
+        "cancel_video_save",
+    }
     for tool in tools.values():
-        assert "user_id" not in tool.function_schema.json_schema["properties"]
+        properties = tool.function_schema.json_schema["properties"]
+        assert {
+            "user_id",
+            "thread_id",
+            "message_id",
+            "request_key",
+            "task_id",
+        }.isdisjoint(properties)
 
 
 @pytest.mark.asyncio

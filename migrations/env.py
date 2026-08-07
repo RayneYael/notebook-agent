@@ -21,8 +21,10 @@ if config.config_file_name is not None:
 target_metadata = Base.metadata
 
 # DB URL comes from environment variables (app.config), not from alembic.ini,
-# so no connection string / credentials are ever hardcoded or committed.
-config.set_main_option("sqlalchemy.url", get_settings().database_url)
+# so no connection string / credentials are ever hardcoded or committed. Tests
+# may inject an already-open connection to guarantee migration isolation.
+if config.attributes.get("connection") is None:
+    config.set_main_option("sqlalchemy.url", get_settings().database_url)
 
 
 def run_migrations_offline() -> None:
@@ -56,6 +58,16 @@ def run_migrations_online() -> None:
     and associate a connection with the context.
 
     """
+    provided_connection = config.attributes.get("connection")
+    if provided_connection is not None:
+        context.configure(
+            connection=provided_connection,
+            target_metadata=target_metadata,
+        )
+        with context.begin_transaction():
+            context.run_migrations()
+        return
+
     connectable = engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",

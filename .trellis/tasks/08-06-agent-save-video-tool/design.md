@@ -181,9 +181,11 @@ Agent runtime 记录 `ActionOutcome`，并按真实结果映射：
 | confirmation cancelled | `ok` | `save_cancelled` |
 | pending missing/expired | `failed` | `confirmation_missing` / `confirmation_expired` |
 
-模型可以生成自然语言汇总，但必须引用每个 tool result 的 `[A<n>]` marker；output validator 拒绝
-未知/遗漏 marker。应用在末尾追加 canonical per-item result list，确保 partial failure 不会被模型
-写成全成功。clarification/cancel 使用稳定应用文案。
+模型在 tool call 后生成的 action draft 完全丢弃，不进入用户回复或可恢复 history。应用只根据真实
+`ActionOutcome` 生成 canonical ordered summary，分别统计 queued、already-exists 和 failed，并为每个
+失败项映射安全、可执行的原因。action 分支不实现 `[A<n>]` output validator/repair；`result_id` 只作为
+应用结果列表中的内部关联编号。这样 partial failure 不可能被模型改写成全成功。clarification/cancel
+同样使用稳定应用文案。
 
 知识回答分支维持现有 `[S<n>]` citation allow-list。只有真实 action outcome 才能跳过
 `search_required`；普通无工具草稿仍 fail closed。若一条消息同时要求保存并解释尚未导入的视频，
@@ -199,6 +201,9 @@ knowledge rows migration backfill 为 `ok`（有 sources）或 `not_found/no_evi
 
 action result payload 仅包含内部 item/result ID、safe code、state 和必要的 canonical URL reference；
 不保存外部 identity、queue credential 或 exception text。
+
+action turn 的 `model_messages` 保存为空列表；恢复和 duplicate replay 只依赖持久化的 canonical
+assistant text、answer status、error code 与 action results，不重放被丢弃的模型 action draft。
 
 ## 9. Collection-import extension seam
 

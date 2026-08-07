@@ -139,7 +139,12 @@ class ChannelService:
             db.commit()
 
         execution = await self._agent.run(request, diagnostics=diagnostics)
-        if execution.answer.status == "failed":
+        # A terminal action outcome must be durable even when its public status
+        # is failed; plain transient knowledge failures remain retryable.
+        if (
+            execution.answer.status == "failed"
+            and not execution.answer.action_results
+        ):
             return self._response_ready(diagnostics, execution.answer)
 
         with self._session_factory() as db:
@@ -165,6 +170,9 @@ class ChannelService:
                 assistant_text=execution.answer.text,
                 sources=[value.model_dump() for value in execution.answer.citations],
                 model_messages=execution.new_messages,
+                answer_status=execution.answer.status,
+                error_code=execution.answer.error_code,
+                action_results=execution.answer.action_results,
             )
             db.commit()
         return self._response_ready(diagnostics, execution.answer)
@@ -223,10 +231,16 @@ def _command(text: str) -> tuple[str | None, str | None]:
 
 def _answer_from_turn(turn, public_id: str) -> AgentAnswer:
     citations = [Citation.model_validate(value) for value in turn.sources]
+    answer_status = turn.answer_status
+    error_code = turn.error_code
+    if answer_status == "legacy":
+        answer_status = "ok" if citations else "not_found"
+        error_code = None if citations else "no_evidence"
     return AgentAnswer(
-        status="ok" if citations else "not_found",
+        status=answer_status,
         text=turn.assistant_text,
         citations=citations,
+        action_results=list(turn.action_results or []),
         thread_id=public_id,
-        error_code=None if citations else "no_evidence",
+        error_code=error_code,
     )

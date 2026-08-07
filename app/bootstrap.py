@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+from app.agent.actions import AgentActionServices
 from app.agent.provider import build_model
 from app.agent.runtime import KnowledgeAgent
 from app.agent.services import KnowledgeServices
 from app.channels.service import ChannelService
+from app.channels.pending_actions import PendingConfirmationService
 from app.config import Settings, get_settings
 from app.db import get_session_factory
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
+from app.ingest.submission import IngestSubmissionService
+from app.ingest.tasks import publish_ingest_dispatch
 from app.tls import TrustedCA, configure_trusted_ca
 
 
@@ -44,11 +48,28 @@ def build_knowledge_agent(
     def service_factory(request):
         return KnowledgeServices(request.tenant, factory, embedder=embedder)
 
+    action_factory = None
+    if settings.agent_save_enabled:
+        action_services = AgentActionServices(
+            submission=IngestSubmissionService(
+                factory, publish_ingest_dispatch
+            ),
+            pending=PendingConfirmationService(factory),
+        )
+
+        def action_factory(_request):
+            return action_services
+
     # ``configure_trusted_ca`` exports the resolved bundle through the standard
     # Python TLS environment before provider construction.  Do not create a
     # per-model httpx client here: the provider owns its default client and its
     # lifecycle, while the embedding client receives the same context directly.
-    return KnowledgeAgent(build_model(settings), settings, service_factory)
+    return KnowledgeAgent(
+        build_model(settings),
+        settings,
+        service_factory,
+        action_factory=action_factory,
+    )
 
 
 def build_channel_service(settings: Settings | None = None) -> ChannelService:

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Preserve fail-closed bridge, restart safety, and multi-channel privacy"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Keep pending inspection tenant/thread-bound and side-effect free"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Fail closed without leaking pending data or database exceptions"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Do not log short replies, URLs, identities, or pending payloads"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Add focused semantic-routing and regression tests"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review pending persistence, Agent deps, tool choice, replay, and channel boundaries together"}
+{"file": ".trellis/tasks/08-06-agent-save-video-tool/design.md", "reason": "Preserve the parent action-result, pending lifecycle, and draft-discard contracts"}

@@ -1,0 +1,7 @@
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify restart and bridge behavior remain fail closed"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Audit tenant/thread ownership, expiry, and read-only semantics"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Verify snapshot failure cannot become unsafe action success"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Audit diagnostics for URL, reply, identity, and payload leakage"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review semantic intent tests and regression coverage"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check persistence-to-Agent dynamic context and replay as one contract"}
+{"file": ".trellis/tasks/08-06-agent-save-video-tool/design.md", "reason": "Confirm parent save-action invariants remain intact"}
