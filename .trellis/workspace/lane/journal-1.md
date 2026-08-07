@@ -57,3 +57,36 @@
 ### Status
 
 [OK] **Completed**
+
+
+## Session 3: Agent retrieval convergence and provider-compatible answers
+
+**Date**: 2026-08-08
+**Task**: Agent retrieval convergence and provider-compatible answers
+**Branch**: `main`
+
+### Summary
+
+Implemented provider-independent retrieval convergence, diversified evidence selection, independent answer composition, development HTTP diagnostics, and PromptedOutput compatibility for DeepSeek Thinking mode.
+
+### Main Changes
+
+- Enforced one backend retrieval per model step with bounded 5/2/3 budgets and typed skipped results.
+- Added Top-5 source diversity, independent answer composition, citation validation, canonical history, and deterministic evidence fallback.
+- Captured full provider HTTP errors in development, diagnosed Thinking mode rejecting tool_choice=required, and switched composer to PromptedOutput.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `27140c8` | (see git log) |
+| `3c35631` | (see git log) |
+| `ced5cac` | (see git log) |
+
+### Testing
+
+- [OK] Earlier directed diagnostics/runtime validation passed 46 tests; PromptedOutput switch was not run by Codex at user request, and the user confirmed the task complete.
+
+### Status
+
+[OK] **Completed**
