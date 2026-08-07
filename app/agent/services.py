@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 import math
 
@@ -14,7 +14,12 @@ from app.channels.types import TenantContext
 from app.diagnostics import RequestDiagnostics
 from app.ingest.embed import EmbeddingError, EmbeddingProvider
 from app.models import ContentItem, Segment
-from app.retrieval.search import bm25_search, vector_search
+from app.retrieval.search import Hit, bm25_search, vector_search
+
+
+SEARCH_RESULT_LIMIT = 10
+SEARCH_CANDIDATE_POOL_LIMIT = 50
+MAX_SOURCE_ITEMS = 5
 
 
 class KnowledgeNotFound(LookupError):
@@ -65,6 +70,38 @@ def _citation(item: ContentItem, segment: Segment, *, score: float | None = None
     return citation
 
 
+def _diversify_hits(hits: Iterable[Hit], *, limit: int) -> list[Hit]:
+    """Keep ranked segment evidence while reserving representation per video.
+
+    Retrieval backends are allowed to return many strong adjacent transcript
+    chunks from one video.  The Agent needs candidate *videos* before it can
+    choose a Top-5 answer, so the public window first reserves one strongest
+    segment from each of at most five item groups and only then fills spare
+    positions with further segments from those selected groups.
+    """
+
+    best_by_segment: dict[int, Hit] = {}
+    for hit in hits:
+        current = best_by_segment.get(hit.segment_id)
+        if current is None or hit.score > current.score:
+            best_by_segment[hit.segment_id] = hit
+
+    ranked = sorted(best_by_segment.values(), key=lambda value: value.score, reverse=True)
+    by_item: dict[int, list[Hit]] = {}
+    for hit in ranked:
+        by_item.setdefault(hit.item_id, []).append(hit)
+
+    selected_item_ids = list(by_item)[:MAX_SOURCE_ITEMS]
+    representatives = [by_item[item_id][0] for item_id in selected_item_ids]
+    selected_segments = {hit.segment_id for hit in representatives}
+    remaining = [
+        hit
+        for hit in ranked
+        if hit.item_id in selected_item_ids and hit.segment_id not in selected_segments
+    ]
+    return (representatives + remaining)[:limit]
+
+
 class KnowledgeServices:
     """Read-only services whose tenant is fixed at construction time."""
 
@@ -74,12 +111,12 @@ class KnowledgeServices:
         session_factory: Callable[[], Session],
         *,
         embedder: EmbeddingProvider | None = None,
-        max_results: int = 10,
+        max_results: int = SEARCH_RESULT_LIMIT,
     ) -> None:
         self._tenant = tenant
         self._session_factory = session_factory
         self._embedder = embedder
-        self._max_results = max_results
+        self._max_results = max(1, min(max_results, SEARCH_RESULT_LIMIT))
         self._diagnostics: RequestDiagnostics | None = None
 
     def set_diagnostics(self, diagnostics: RequestDiagnostics) -> None:
@@ -87,35 +124,35 @@ class KnowledgeServices:
 
         self._diagnostics = diagnostics
 
-    def search_segments(self, query: str, *, limit: int = 6) -> list[Citation]:
+    def search_segments(self, query: str, *, limit: int = SEARCH_RESULT_LIMIT) -> list[Citation]:
         """Hybrid lexical/vector search, merged without exposing tenant arguments."""
 
         query = query.strip()
         if not query:
             return []
         limit = max(1, min(limit, self._max_results))
+        candidate_limit = min(
+            SEARCH_CANDIDATE_POOL_LIMIT,
+            max(20, limit * 5),
+        )
         vector = self._embed_query(query)
         self._event("retrieval_started")
         try:
             with self._session_factory() as db:
                 hits = bm25_search(
-                    db, query, user_id=self._tenant.app_user_id, k=limit
+                    db, query, user_id=self._tenant.app_user_id, k=candidate_limit
                 )
                 hits.extend(
                     vector_search(
                         db,
                         vector,
                         user_id=self._tenant.app_user_id,
-                        k=limit,
+                        k=candidate_limit,
                     )
                 )
 
-                segment_ids: list[int] = []
-                for hit in sorted(hits, key=lambda value: value.score, reverse=True):
-                    if hit.segment_id not in segment_ids:
-                        segment_ids.append(hit.segment_id)
-                    if len(segment_ids) >= limit:
-                        break
+                selected_hits = _diversify_hits(hits, limit=limit)
+                segment_ids = [hit.segment_id for hit in selected_hits]
                 if not segment_ids:
                     self._event("retrieval_completed", error_code="no_evidence")
                     return []
@@ -128,7 +165,19 @@ class KnowledgeServices:
                     )
                 ).all()
                 by_id = {
-                    segment.id: _citation(item, segment, score=max((hit.score for hit in hits if hit.segment_id == segment.id), default=None)) for segment, item in rows
+                    segment.id: _citation(
+                        item,
+                        segment,
+                        score=max(
+                            (
+                                hit.score
+                                for hit in hits
+                                if hit.segment_id == segment.id
+                            ),
+                            default=None,
+                        ),
+                    )
+                    for segment, item in rows
                 }
                 citations = [by_id[value] for value in segment_ids if value in by_id]
                 self._event("retrieval_completed")

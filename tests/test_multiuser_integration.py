@@ -634,6 +634,53 @@ def test_every_read_service_is_tenant_scoped(db_factory):
     assert {value.segment_id for value in vector_hits} == {segment_a.id}
 
 
+def test_pgvector_search_diversifies_top_five_items_without_cross_tenant_hydration(db_factory):
+    with db_factory() as db:
+        tenant_a = resolve_or_register(db, envelope(user=uuid4().hex))
+        tenant_b = resolve_or_register(db, envelope(user=uuid4().hex))
+        crowded_item, crowded_first = _add_item(
+            db, tenant_a.app_user_id, "crowded-vector-evidence-0"
+        )
+        for sequence in range(1, 8):
+            db.add(
+                Segment(
+                    item_id=crowded_item.id,
+                    seq=sequence,
+                    start_sec=sequence * 600,
+                    end_sec=sequence * 600 + 30,
+                    text=f"crowded-vector-evidence-{sequence}",
+                    embedding=[0.01] * 1536,
+                    boundary_kind="hard_cut",
+                )
+            )
+        other_items = [
+            _add_item(db, tenant_a.app_user_id, f"other-vector-evidence-{index}")
+            for index in range(1, 6)
+        ]
+        _, tenant_b_segment = _add_item(
+            db, tenant_b.app_user_id, "tenant-b-vector-evidence"
+        )
+        for item, segment in other_items:
+            segment.embedding = [0.01] * 1536
+        crowded_first.embedding = [0.01] * 1536
+        db.commit()
+
+    service = KnowledgeServices(
+        tenant_a,
+        db_factory,
+        embedder=FakeEmbeddingProvider(),
+    )
+    citations = service.search_segments("no lexical match", limit=10)
+
+    item_ids = {citation.item_id for citation in citations}
+    assert len(item_ids) == 5
+    assert crowded_item.id in item_ids
+    assert tenant_b_segment.id not in {citation.segment_id for citation in citations}
+    # A selected video keeps its distant locations after every selected video
+    # has first received a representative candidate.
+    assert len([citation for citation in citations if citation.item_id == crowded_item.id]) >= 2
+
+
 @pytest.mark.asyncio
 async def test_agent_tool_uses_real_pgvector_and_hydrates_only_tenant_citation(db_factory):
     """Exercise the live retrieval composition without an external model/provider.

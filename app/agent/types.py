@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+from typing_extensions import TypedDict
+
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from app.channels.types import TenantContext
@@ -40,6 +42,33 @@ class AgentAnswer(BaseModel):
     action_results: list[dict] = Field(default_factory=list)
     thread_id: str | None = None
     error_code: str | None = None
+
+
+class RetrievalToolPayload(TypedDict):
+    """The only retrieval-tool result shape exposed to the planning Agent.
+
+    ``skipped`` is deliberately distinct from an empty successful search: a
+    provider may emit a batch despite ``parallel_tool_calls=False``, but only
+    the first retrieval in that model step is allowed to reach backend
+    services.
+    """
+
+    status: Literal["ok", "skipped"]
+    evidence: list[dict]
+    reason: Literal["same_model_step", "budget_exhausted"] | None
+
+
+class AnswerSection(BaseModel):
+    """One composer-written section backed by server-owned segment ids."""
+
+    text: str = Field(min_length=1)
+    citation_ids: list[int] = Field(min_length=1)
+
+
+class AnswerDraft(BaseModel):
+    """Private structured composer output; never persisted verbatim."""
+
+    sections: list[AnswerSection] = Field(min_length=1, max_length=8)
 
 
 @dataclass(frozen=True)

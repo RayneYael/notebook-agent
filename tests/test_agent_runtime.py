@@ -1,11 +1,14 @@
+import asyncio
 from dataclasses import replace
 import json
 import logging
 
 import pytest
 from pydantic_ai.messages import ModelRequest, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.models.function import FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.usage import RequestUsage
 
 from app.agent.runtime import KnowledgeAgent, _append_sources, build_agent
 from app.agent.services import EmbeddingUnavailable, ItemDetails, RetrievalUnavailable
@@ -35,6 +38,20 @@ class FakeServices:
     def open_at(self, segment_id):
         self.calls.append("open_at")
         return self.citations[0]
+
+
+def composer_for(*segment_ids: int) -> TestModel:
+    return TestModel(
+        call_tools=[],
+        custom_output_text=json.dumps({
+            "sections": [
+                {
+                    "text": "根据知识库证据的总结。",
+                    "citation_ids": list(segment_ids),
+                }
+            ]
+        }),
+    )
 
 
 def request():
@@ -69,6 +86,7 @@ async def test_agent_requires_search_and_returns_only_recorded_sources():
         ),
         settings,
         lambda _: services,
+        composer_model=composer_for(3),
     )
 
     result = await runtime.run(request())
@@ -76,7 +94,13 @@ async def test_agent_requires_search_and_returns_only_recorded_sources():
     assert result.answer.status == "ok"
     assert result.answer.citations == [citation]
     assert "https://youtu.be/video?t=42" in result.answer.text
-    assert result.new_messages
+    assert len(result.new_messages) == 2
+    assert all(
+        not isinstance(part, ToolReturnPart)
+        for message in result.new_messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+    )
     assert services.calls == ["search_segments"]
 
 
@@ -192,7 +216,7 @@ def test_citation_equality_excludes_private_retrieval_diagnostics():
 
 
 @pytest.mark.asyncio
-async def test_agent_rejects_missing_or_fabricated_citation_markers():
+async def test_invalid_composer_drafts_retry_once_then_use_evidence_fallback():
     citation = Citation(
         item_id=2,
         segment_id=3,
@@ -200,21 +224,38 @@ async def test_agent_rejects_missing_or_fabricated_citation_markers():
         excerpt="evidence",
         url="https://example.test",
     )
-    settings = replace(Settings(), agent_timeout_seconds=2)
-    for output in ("answer without marker", "answer [S999]"):
-        runtime = KnowledgeAgent(
-            TestModel(call_tools=["search_segments"], custom_output_text=output),
-            settings,
-            lambda _: FakeServices([citation]),
+    composer_requests = []
+
+    def invalid_composer(_messages, info):
+        composer_requests.append(info)
+        assert info.output_tools == []
+        return ModelResponse(
+            parts=[
+                TextPart(json.dumps({
+                    "sections": [{"text": "untrusted", "citation_ids": [999]}]
+                }))
+            ]
         )
-        result = await runtime.run(request())
-        assert result.answer.status == "failed"
-        assert result.answer.error_code == "answer_unavailable"
-        assert "[S999]" not in result.answer.text
+
+    services = FakeServices([citation])
+    runtime = KnowledgeAgent(
+        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: services,
+        composer_model=FunctionModel(invalid_composer),
+    )
+    result = await runtime.run(request())
+
+    assert result.answer.status == "ok"
+    assert result.answer.error_code is None
+    assert result.answer.text.startswith("自动总结未完成")
+    assert "[S999]" not in result.answer.text
+    assert services.calls == ["search_segments"]
+    assert len(composer_requests) == 2
 
 
 @pytest.mark.asyncio
-async def test_agent_repairs_fabricated_citation_with_a_fresh_search():
+async def test_composer_repairs_citation_against_same_allow_list_without_search():
     citation = Citation(
         item_id=2,
         segment_id=3,
@@ -224,46 +265,34 @@ async def test_agent_repairs_fabricated_citation_with_a_fresh_search():
     )
     services = FakeServices([citation])
 
-    def model(messages, _info):
-        tool_returns = [
-            part
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ToolReturnPart)
-        ]
-        retry_requested = any(
-            isinstance(part, RetryPromptPart)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
+    composer_calls = []
+
+    def composer(_messages, info):
+        composer_calls.append(info)
+        assert info.output_tools == []
+        ids = [999] if len(composer_calls) == 1 else [3]
+        return ModelResponse(
+            parts=[
+                TextPart(json.dumps({
+                    "sections": [{"text": "repaired answer", "citation_ids": ids}]
+                }))
+            ]
         )
-        if not tool_returns or retry_requested and len(tool_returns) == 1:
-            return ModelResponse(
-                parts=[
-                    ToolCallPart(
-                        "search_segments",
-                        json.dumps({"query": "safe retrieval"}),
-                        tool_call_id=f"search-{len(tool_returns)}",
-                    )
-                ]
-            )
-        if len(tool_returns) == 1:
-            return ModelResponse(parts=[TextPart("unsafe draft [S999]")])
-        return ModelResponse(parts=[TextPart("repaired answer [S3]")])
 
     runtime = KnowledgeAgent(
-        FunctionModel(model),
+        TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
         replace(Settings(), agent_timeout_seconds=2),
         lambda _: services,
+        composer_model=FunctionModel(composer),
     )
     result = await runtime.run(request())
 
     assert result.answer.status == "ok"
     assert "repaired answer [S3]" in result.answer.text
     assert "S999" not in result.answer.text
-    assert services.calls.count("search_segments") == 2
-    assert result.new_messages == []
+    assert services.calls == ["search_segments"]
+    assert len(composer_calls) == 2
+    assert len(result.new_messages) == 2
 
 
 @pytest.mark.asyncio
@@ -321,7 +350,7 @@ async def test_zero_hit_retrieval_loop_returns_no_evidence_without_limit():
 
 
 @pytest.mark.asyncio
-async def test_budget_exhaustion_reopens_only_fresh_search_for_citation_repair():
+async def test_provider_batch_executes_one_backend_retrieval_per_model_step():
     citation = Citation(
         item_id=2,
         segment_id=3,
@@ -333,34 +362,206 @@ async def test_budget_exhaustion_reopens_only_fresh_search_for_citation_repair()
     services = FakeServices([citation])
     requests = []
 
-    def repair_model(messages, info):
+    def batched_model(messages, info):
         requests.append(info)
-        visible = {tool.name for tool in info.function_tools}
-        retries = any(
-            isinstance(part, RetryPromptPart)
-            for message in messages if isinstance(message, ModelRequest)
+        returns = [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
             for part in message.parts
-        )
-        if retries and services.calls.count("search_segments") == 2:
-            assert visible & {"search_segments", "get_neighbors", "get_item", "open_at"} == {"search_segments"}
-            return ModelResponse(parts=[ToolCallPart("search_segments", json.dumps({"query": "fresh"}), tool_call_id="repair-search")])
-        if "search_segments" in visible:
-            return ModelResponse(parts=[ToolCallPart("search_segments", json.dumps({"query": "query"}), tool_call_id=f"search-{len(services.calls)}")])
-        if "get_neighbors" in visible:
-            return ModelResponse(parts=[ToolCallPart("get_neighbors", json.dumps({"segment_id": 3}), tool_call_id=f"neighbors-{len(services.calls)}")])
-        if services.calls.count("search_segments") > 2:
-            return ModelResponse(parts=[TextPart("repaired answer [S3]")])
-        return ModelResponse(parts=[TextPart("unsafe draft [S999]")])
+            if isinstance(part, ToolReturnPart)
+        ]
+        if not returns:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("search_segments", json.dumps({"query": "one"}), tool_call_id="search-one"),
+                    ToolCallPart("search_segments", json.dumps({"query": "two"}), tool_call_id="search-two"),
+                ],
+                usage=RequestUsage(output_tokens=700),
+            )
+        if len(returns) == 2:
+            assert [part.content["status"] for part in returns] == ["ok", "skipped"]
+            assert returns[1].content["reason"] == "same_model_step"
+            return ModelResponse(
+                parts=[
+                    ToolCallPart("get_neighbors", json.dumps({"segment_id": 3}), tool_call_id="neighbors-one"),
+                    ToolCallPart("get_neighbors", json.dumps({"segment_id": 3}), tool_call_id="neighbors-two"),
+                    ToolCallPart("get_item", json.dumps({"item_id": 2}), tool_call_id="item-three"),
+                ],
+                usage=RequestUsage(output_tokens=700),
+            )
+        assert [part.content["status"] for part in returns[-3:]] == [
+            "ok", "skipped", "skipped",
+        ]
+        return ModelResponse(parts=[TextPart("retrieval stop")], usage=RequestUsage(output_tokens=666))
 
     result = await KnowledgeAgent(
-        FunctionModel(repair_model), replace(Settings(), agent_timeout_seconds=2), lambda _: services
+        FunctionModel(batched_model),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: services,
+        composer_model=composer_for(3),
     ).run(request())
 
     assert result.answer.status == "ok"
-    assert services.calls.count("search_segments") == 3
-    assert len(services.calls) == 6
-    assert len(requests) <= 8
-    assert result.new_messages == []
+    assert "根据知识库证据的总结" in result.answer.text
+    assert not result.answer.text.startswith("自动总结未完成")
+    assert services.calls == ["search_segments", "get_neighbors"]
+    assert all(info.model_settings["parallel_tool_calls"] is False for info in requests)
+    assert len(requests) == 3
+
+
+@pytest.mark.asyncio
+async def test_composer_output_limit_uses_ok_evidence_fallback_with_answer_diagnostics(caplog):
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test?t=42",
+        start_sec=42,
+    )
+
+    def token_limited_composer(_messages, info):
+        assert info.output_tools == []
+        return ModelResponse(
+            parts=[
+                TextPart(json.dumps({
+                    "sections": [{"text": "draft", "citation_ids": [3]}]
+                }))
+            ],
+            usage=RequestUsage(output_tokens=2001),
+        )
+
+    diagnostics = RequestDiagnostics.start("request", 1, "c" * 32)
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        result = await KnowledgeAgent(
+            TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
+            replace(Settings(), agent_timeout_seconds=2),
+            lambda _: FakeServices([citation]),
+            composer_model=FunctionModel(token_limited_composer),
+        ).run(request(), diagnostics=diagnostics)
+
+    payloads = [record.diagnostic_payload for record in caplog.records if hasattr(record, "diagnostic_payload")]
+    answer_limit = [
+        value for value in payloads
+        if value.get("agent_phase") == "answer" and value.get("limit_kind") == "output_tokens"
+    ]
+    assert result.answer.status == "ok"
+    assert result.answer.text.startswith("自动总结未完成")
+    assert "检索步骤已达到上限" not in result.answer.text
+    assert answer_limit[-1]["limit_value"] == 2000
+    assert answer_limit[-1]["used_value"] == 2001
+
+
+@pytest.mark.asyncio
+async def test_composer_provider_failure_discards_draft_and_returns_evidence():
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test",
+    )
+
+    def broken_composer(_messages, _info):
+        raise RuntimeError("private provider error")
+
+    result = await KnowledgeAgent(
+        TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: FakeServices([citation]),
+        composer_model=FunctionModel(broken_composer),
+    ).run(request())
+
+    assert result.answer.status == "ok"
+    assert result.answer.text.startswith("自动总结未完成")
+    assert "private provider error" not in result.answer.text
+    assert len(result.new_messages) == 2
+
+
+@pytest.mark.asyncio
+async def test_retrieval_http_error_logs_safe_status_without_body(caplog):
+    body_sentinel = "PRIVATE-retrieval-http-body"
+
+    def unavailable_model(_messages, _info):
+        raise ModelHTTPError(422, "test-model", body=body_sentinel)
+
+    diagnostics = RequestDiagnostics.start("request", 1, "d" * 32)
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        result = await KnowledgeAgent(
+            FunctionModel(unavailable_model),
+            replace(Settings(), agent_timeout_seconds=2),
+            lambda _: FakeServices([]),
+        ).run(request(), diagnostics=diagnostics)
+
+    payloads = [record.diagnostic_payload for record in caplog.records if hasattr(record, "diagnostic_payload")]
+    failure = next(value for value in payloads if value.get("error_class") == "ModelHTTPError")
+    assert result.answer.status == "failed"
+    assert result.answer.error_code == "runtime_error"
+    assert failure["agent_phase"] == "retrieval"
+    assert failure["http_status"] == 422
+    assert body_sentinel not in json.dumps(payloads)
+
+
+@pytest.mark.asyncio
+async def test_composer_http_error_logs_safe_status_and_uses_evidence_fallback(caplog):
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test",
+    )
+    body_sentinel = "PRIVATE-composer-http-body"
+
+    def unavailable_composer(_messages, _info):
+        raise ModelHTTPError(503, "test-model", body=body_sentinel)
+
+    diagnostics = RequestDiagnostics.start("request", 1, "e" * 32)
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        result = await KnowledgeAgent(
+            TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
+            replace(Settings(), agent_timeout_seconds=2),
+            lambda _: FakeServices([citation]),
+            composer_model=FunctionModel(unavailable_composer),
+        ).run(request(), diagnostics=diagnostics)
+
+    payloads = [record.diagnostic_payload for record in caplog.records if hasattr(record, "diagnostic_payload")]
+    failure = next(value for value in payloads if value.get("error_class") == "ModelHTTPError")
+    assert result.answer.status == "ok"
+    assert result.answer.error_code is None
+    assert result.answer.text.startswith("自动总结未完成")
+    assert failure["agent_phase"] == "answer"
+    assert failure["http_status"] == 503
+    assert body_sentinel not in json.dumps(payloads)
+
+
+@pytest.mark.asyncio
+async def test_composer_timeout_discards_draft_and_returns_evidence():
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="source",
+        excerpt="evidence",
+        url="https://example.test",
+    )
+
+    async def slow_composer(_messages, _info):
+        await asyncio.sleep(0.05)
+        return ModelResponse(parts=[TextPart("unreachable draft")])
+
+    result = await KnowledgeAgent(
+        TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
+        replace(Settings(), agent_timeout_seconds=0.01),
+        lambda _: FakeServices([citation]),
+        composer_model=FunctionModel(slow_composer),
+    ).run(request())
+
+    assert result.answer.status == "ok"
+    assert result.answer.error_code is None
+    assert result.answer.text.startswith("自动总结未完成")
+    assert "unreachable draft" not in result.answer.text
+    assert len(result.new_messages) == 2
 
 
 def test_multi_source_output_groups_top_five_videos_and_keeps_distant_timestamps():
@@ -385,7 +586,7 @@ def test_multi_source_output_groups_top_five_videos_and_keeps_distant_timestamps
 
 
 @pytest.mark.asyncio
-async def test_multi_source_draft_over_five_videos_retries_with_grouped_top_five():
+async def test_composer_top_five_retry_does_not_retrieve_again():
     citations = [
         Citation(
             item_id=index,
@@ -399,43 +600,26 @@ async def test_multi_source_draft_over_five_videos_retries_with_grouped_top_five
     ]
     services = FakeServices(citations)
 
-    def model(messages, info):
-        has_result = any(
-            isinstance(part, ToolReturnPart)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
-        retry = any(
-            isinstance(part, RetryPromptPart)
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-        )
-        if not has_result or retry and len(services.calls) == 1:
-            assert {
-                tool.name for tool in info.function_tools
-            } & {"search_segments", "get_neighbors", "get_item", "open_at"} == {
-                "search_segments"
-            }
-            return ModelResponse(parts=[ToolCallPart(
-                "search_segments", json.dumps({"query": "ranked"}),
-                tool_call_id=f"search-{len(services.calls)}",
-            )])
-        if len(services.calls) == 1:
-            return ModelResponse(parts=[TextPart(
-                "too many sources " + " ".join(f"[S{index}]" for index in range(1, 7))
-            )])
-        return ModelResponse(parts=[TextPart(
-            "grouped sources " + " ".join(f"[S{index}]" for index in range(1, 6))
-        )])
+    composer_calls = []
+
+    def composer(_messages, info):
+        composer_calls.append(info)
+        assert info.output_tools == []
+        ids = list(range(1, 7)) if len(composer_calls) == 1 else list(range(1, 6))
+        return ModelResponse(parts=[TextPart(json.dumps({
+            "sections": [{"text": "grouped sources", "citation_ids": ids}]
+        }))])
 
     result = await KnowledgeAgent(
-        FunctionModel(model), replace(Settings(), agent_timeout_seconds=2), lambda _: services
+        TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: services,
+        composer_model=FunctionModel(composer),
     ).run(request())
 
     assert result.answer.status == "ok"
-    assert services.calls == ["search_segments", "search_segments"]
+    assert services.calls == ["search_segments"]
+    assert len(composer_calls) == 2
     assert {citation.item_id for citation in result.answer.citations} == set(range(1, 6))
 
 
@@ -478,7 +662,8 @@ async def test_agent_tool_error_and_request_limit_fail_closed():
         TestModel(call_tools=["search_segments"], custom_output_text="answer [S3]"),
         replace(settings, agent_request_limit=1),
         lambda _: FakeServices([citation]),
+        composer_model=composer_for(3),
     )
     exhausted = await limited.run(request())
-    assert exhausted.answer.status == "failed"
-    assert exhausted.answer.error_code == "limit"
+    assert exhausted.answer.status == "ok"
+    assert exhausted.answer.error_code is None

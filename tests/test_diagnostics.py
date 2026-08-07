@@ -3,6 +3,9 @@ import logging
 from datetime import date
 from pathlib import Path
 
+import pytest
+from pydantic_ai.exceptions import ModelHTTPError
+
 from app.diagnostics import RequestDiagnostics
 
 
@@ -22,6 +25,102 @@ def test_diagnostics_emit_only_stable_fields(caplog):
     assert payload["error_code"] == "embedding_unavailable"
     assert payload["error_class"] == "RuntimeError"
     assert private_message not in json.dumps(payload)
+
+
+def test_diagnostics_allow_phase_and_skipped_tool_without_content(caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "tool_call",
+            tool_name="search_segments",
+            tool_outcome="skipped",
+            call_index=2,
+            agent_phase="retrieval",
+        )
+        diagnostics.event(
+            "agent_failed",
+            error_code="limit",
+            limit_kind="output_tokens",
+            limit_value=2000,
+            used_value=2066,
+            agent_phase="answer",
+        )
+
+    skipped, answer_limit = [record.diagnostic_payload for record in caplog.records[-2:]]
+    assert skipped["tool_outcome"] == "skipped"
+    assert skipped["agent_phase"] == "retrieval"
+    assert answer_limit["agent_phase"] == "answer"
+    assert answer_limit["limit_kind"] == "output_tokens"
+
+
+@pytest.mark.parametrize("status", [400, 422, 429, 500, 503])
+def test_diagnostics_projects_only_valid_http_status_without_error_body(caplog, status):
+    body_sentinel = f"PRIVATE-provider-body-{status}"
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "agent_failed",
+            error_code="answer_unavailable",
+            exception=ModelHTTPError(status, "test-model", body=body_sentinel),
+            http_status=status,
+            agent_phase="answer",
+        )
+
+    payload = caplog.records[-1].diagnostic_payload
+    assert payload["http_status"] == status
+    assert payload["error_class"] == "ModelHTTPError"
+    assert payload["agent_phase"] == "answer"
+    assert "exception_message" not in payload
+    assert "provider_model" not in payload
+    assert "provider_response_body" not in payload
+    assert body_sentinel not in json.dumps(payload)
+
+
+def test_development_diagnostics_include_complete_provider_error(caplog):
+    body_sentinel = "provider rejected output schema"
+    body = {
+        "error": {
+            "message": body_sentinel,
+            "type": "invalid_request_error",
+            "param": "tools[0].function.parameters",
+        },
+        "raw_bytes": b"debug-body",
+    }
+    error = ModelHTTPError(400, "development-model", body=body)
+    diagnostics = RequestDiagnostics.start(
+        "a" * 32,
+        7,
+        environment="development",
+    )
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "agent_failed",
+            error_code="answer_unavailable",
+            exception=error,
+            http_status=error.status_code,
+            agent_phase="answer",
+        )
+
+    payload = caplog.records[-1].diagnostic_payload
+    assert payload["http_status"] == 400
+    assert payload["exception_message"] == str(error)
+    assert payload["provider_model"] == "development-model"
+    assert payload["provider_response_body"]["error"]["message"] == body_sentinel
+    assert payload["provider_response_body"]["raw_bytes"] == "b'debug-body'"
+    json.dumps(payload)
+
+
+@pytest.mark.parametrize("status", [True, False, 99, 600, -1, 429.0, "429", None])
+def test_diagnostics_rejects_invalid_http_status(status, caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event("agent_failed", http_status=status)
+
+    assert "http_status" not in caplog.records[-1].diagnostic_payload
 
 
 def test_invalid_request_id_is_replaced_before_logging():

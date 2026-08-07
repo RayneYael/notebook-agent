@@ -643,12 +643,7 @@ async def test_mixed_search_then_save_returns_action_without_citation_retry():
                         "search_segments",
                         json.dumps({"query": "existing evidence"}),
                         tool_call_id="search-call",
-                    )
-                ]
-            )
-        if len(returns) == 1:
-            return ModelResponse(
-                parts=[
+                    ),
                     ToolCallPart(
                         "save_videos",
                         json.dumps(
@@ -659,7 +654,7 @@ async def test_mixed_search_then_save_returns_action_without_citation_retry():
                             }
                         ),
                         tool_call_id="save-call",
-                    )
+                    ),
                 ]
             )
         return ModelResponse(parts=[TextPart("action draft without S marker")])

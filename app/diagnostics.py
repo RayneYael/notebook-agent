@@ -32,6 +32,7 @@ _TOOLS = frozenset({
     "clarify_save_confirmation", "cancel_video_save",
 })
 _LIMITS = frozenset({"request", "tool_calls", "output_tokens", "unknown"})
+_AGENT_PHASES = frozenset({"retrieval", "answer"})
 _ERRORS = frozenset({
     "-", "no_evidence", "embedding_unavailable", "retrieval_unavailable",
     "timeout", "limit", "answer_unavailable", "runtime_error", "not_found",
@@ -266,7 +267,9 @@ class RequestDiagnostics:
               limit_value: int | None = None, used_value: int | None = None,
               projected_value: int | None = None, error_code: str | None = None,
               exception: BaseException | None = None,
-              duration_ms: int | None = None) -> None:
+              duration_ms: int | None = None,
+              agent_phase: str | None = None,
+              http_status: int | None = None) -> None:
         try:
             payload: dict[str, Any] = {
                 "event": "knowledge_request",
@@ -279,7 +282,20 @@ class RequestDiagnostics:
             }
             if route in _ROUTES: payload["route"] = route
             if tool_name in _TOOLS: payload["tool_name"] = tool_name
-            if tool_outcome in {"started", "succeeded", "failed"}: payload["tool_outcome"] = tool_outcome
+            if tool_outcome in {"started", "succeeded", "failed", "skipped"}: payload["tool_outcome"] = tool_outcome
+            if agent_phase in _AGENT_PHASES: payload["agent_phase"] = agent_phase
+            safe_http_status = _safe_http_status(http_status)
+            if safe_http_status is not None: payload["http_status"] = safe_http_status
+            if self.environment == "development" and exception is not None:
+                payload["exception_message"] = _debug_exception_text(exception)
+                if hasattr(exception, "model_name"):
+                    payload["provider_model"] = _debug_json_value(
+                        getattr(exception, "model_name")
+                    )
+                if hasattr(exception, "body"):
+                    payload["provider_response_body"] = _debug_json_value(
+                        getattr(exception, "body")
+                    )
             for key, value in {"call_index": call_index, "result_count": result_count, "retry_count": retry_count, "limit_value": limit_value, "used_value": used_value, "projected_value": projected_value}.items():
                 projected = _safe_int(value, none=True)
                 if projected is not None: payload[key] = projected
@@ -296,6 +312,32 @@ def _safe_text(value: object, limit: int = 4096) -> str | None:
 def _safe_int(value: object, *, none: bool = False) -> int | None:
     if isinstance(value, bool) or not isinstance(value, int): return None if none else 0
     return max(0, value)
+
+
+def _safe_http_status(value: object) -> int | None:
+    """Project only an actual, valid HTTP response status."""
+
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value if 100 <= value <= 599 else None
+
+
+def _debug_exception_text(exception: BaseException) -> str:
+    """Preserve the complete local-development exception text if possible."""
+
+    try:
+        return str(exception)
+    except Exception:
+        return repr(exception)
+
+
+def _debug_json_value(value: object) -> object:
+    """Normalize arbitrary provider details without breaking JSON logging."""
+
+    try:
+        return json.loads(json.dumps(value, ensure_ascii=False, default=repr))
+    except Exception:
+        return repr(value)
 
 
 def _safe_float(value: object) -> float | None:
