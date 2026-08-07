@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
 from app.channels.types import TenantContext
 
@@ -21,6 +21,14 @@ class Citation(BaseModel):
     excerpt: str
     url: str
     start_sec: float | None = None
+    _retrieval_score: float | None = PrivateAttr(default=None)
+
+    def __eq__(self, other: object) -> bool:
+        """Keep private retrieval diagnostics out of the public source contract."""
+
+        if not isinstance(other, Citation):
+            return NotImplemented
+        return self.model_dump() == other.model_dump()
 
 
 class AgentAnswer(BaseModel):

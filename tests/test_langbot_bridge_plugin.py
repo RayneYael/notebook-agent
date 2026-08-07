@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import logging
 import sys
 import types
 from pathlib import Path
@@ -116,7 +117,8 @@ class _EventContext:
 async def test_early_event_uses_query_reply_api(monkeypatch: pytest.MonkeyPatch):
     module = _load_bridge_module(monkeypatch)
     monkeypatch.setenv("KB_BOT_CHANNELS", '{"wechat-bot":"wechat"}')
-    monkeypatch.setattr(module, "_post", lambda payload: {"text": "user 42"})
+    forwarded = []
+    monkeypatch.setattr(module, "_post", lambda payload: (forwarded.append(payload) or {"text": "user 42"}))
     event_context = _EventContext()
 
     listener = object.__new__(module.KnowledgeAgentEventListener)
@@ -126,6 +128,8 @@ async def test_early_event_uses_query_reply_api(monkeypatch: pytest.MonkeyPatch)
     assert event_context.postorder_prevented is True
     assert len(event_context.replies) == 1
     assert event_context.replies[0].root[0].text == "user 42"
+    assert len(forwarded[0]["trace_id"]) == 32
+    assert forwarded[0]["trace_id"].isalnum()
     assert not hasattr(event_context.event, "reply_message_chain")
 
 
@@ -174,3 +178,14 @@ async def test_duplicate_delivery_only_claims_one_platform_reply(
     assert len(first.replies) == 1
     assert duplicate.replies == []
     assert duplicate.default_prevented is True
+
+
+def test_bridge_event_projects_invalid_values(monkeypatch: pytest.MonkeyPatch, caplog):
+    module = _load_bridge_module(monkeypatch)
+    with caplog.at_level(logging.INFO, logger="notebook_agent.bridge"):
+        module._event(stage="PRIVATE-stage", trace_id="PRIVATE-trace", channel="PRIVATE-channel", outcome="PRIVATE-outcome")
+    text = caplog.records[-1].getMessage()
+    assert "PRIVATE" not in text
+    assert '"stage":"gateway_result"' in text
+    assert '"trace_id":"-"' in text
+    assert '"channel":"unknown"' in text

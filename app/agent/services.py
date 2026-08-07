@@ -52,8 +52,8 @@ def _url(item: ContentItem, segment: Segment | None = None) -> str:
     return item.url
 
 
-def _citation(item: ContentItem, segment: Segment) -> Citation:
-    return Citation(
+def _citation(item: ContentItem, segment: Segment, *, score: float | None = None) -> Citation:
+    citation = Citation(
         item_id=item.id,
         segment_id=segment.id,
         title=_title(item),
@@ -61,6 +61,8 @@ def _citation(item: ContentItem, segment: Segment) -> Citation:
         url=_url(item, segment),
         start_sec=float(segment.start_sec) if segment.start_sec is not None else None,
     )
+    citation._retrieval_score = score
+    return citation
 
 
 class KnowledgeServices:
@@ -126,7 +128,7 @@ class KnowledgeServices:
                     )
                 ).all()
                 by_id = {
-                    segment.id: _citation(item, segment) for segment, item in rows
+                    segment.id: _citation(item, segment, score=max((hit.score for hit in hits if hit.segment_id == segment.id), default=None)) for segment, item in rows
                 }
                 citations = [by_id[value] for value in segment_ids if value in by_id]
                 self._event("retrieval_completed")

@@ -11,6 +11,7 @@ from app.bootstrap import build_channel_service, build_embedding_provider
 from app.channels.http_gateway import serve as serve_channel_gateway
 from app.channels.types import ChannelEnvelope
 from app.config import get_settings
+from app.diagnostics import configure_runtime_logging
 from app.db import get_session_factory, session
 from app.ingest.tasks import ingest_url
 from app.models import AppUser, ChannelIdentity
@@ -59,6 +60,11 @@ def main() -> None:
         print(f"item={item_id} state={state}")
         return
     settings = get_settings()
+    configure_runtime_logging(
+        log_dir=settings.notebook_agent_log_dir,
+        max_bytes=settings.notebook_agent_log_max_bytes,
+        backup_count=settings.notebook_agent_log_backup_count,
+    )
     if args.command == "gateway-server":
         serve_channel_gateway(settings)
         return

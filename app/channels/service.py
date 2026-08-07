@@ -78,10 +78,13 @@ class ChannelService:
         with self._session_factory() as db:
             tenant = resolve_or_register(db, envelope)
             diagnostics = RequestDiagnostics.start(
-                envelope.request_id, tenant.app_user_id
+                envelope.request_id, tenant.app_user_id, envelope.trace_id,
+                allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
+                environment=self._settings.notebook_agent_env,
             )
             diagnostics.event("accepted")
             if command == "start":
+                diagnostics.event("route", route="command")
                 db.commit()
                 return self._response_ready(
                     diagnostics,
@@ -94,6 +97,7 @@ class ChannelService:
                     ),
                 )
             if command == "whoami":
+                diagnostics.event("route", route="command")
                 db.commit()
                 return self._response_ready(
                     diagnostics,
@@ -102,6 +106,7 @@ class ChannelService:
                     ),
                 )
             if command == "new":
+                diagnostics.event("route", route="command")
                 thread = reset_thread(db, tenant, envelope)
                 db.commit()
                 return self._response_ready(
@@ -116,6 +121,7 @@ class ChannelService:
             thread = get_or_create_thread(db, tenant, envelope)
             duplicate = find_turn(db, thread.id, envelope.message_id)
             if duplicate is not None:
+                diagnostics.event("duplicate", route="duplicate")
                 answer = _answer_from_turn(duplicate, thread.public_id)
                 db.commit()
                 return self._response_ready(diagnostics, answer)
@@ -138,6 +144,7 @@ class ChannelService:
             )
             db.commit()
 
+        diagnostics.event("route", route="agent")
         execution = await self._agent.run(request, diagnostics=diagnostics)
         # A terminal action outcome must be durable even when its public status
         # is failed; plain transient knowledge failures remain retryable.

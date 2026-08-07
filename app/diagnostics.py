@@ -1,43 +1,304 @@
-"""Redacted, correlation-safe runtime diagnostics for knowledge requests."""
+"""Private, allow-listed runtime diagnostics and bounded local log sinks."""
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import re
+import sys
 import time
+import math
 from dataclasses import dataclass
+from datetime import date
+from logging.handlers import RotatingFileHandler
+from pathlib import Path
+from typing import Any
 
 
 LOGGER = logging.getLogger("notebook_agent.runtime")
+_TRACE_RE = re.compile(r"[0-9a-f]{32}\Z")
+_REQUEST_RE = re.compile(r"[0-9a-f]{32}\Z")
+_STAGES = frozenset({
+    "accepted", "route", "duplicate", "gateway_response_ready", "agent_started",
+    "model_attempt", "tool_call", "embedding_started", "embedding_completed",
+    "embedding_failed", "retrieval_started", "retrieval_completed", "retrieval_failed",
+    "citation_validated", "agent_failed", "action_validated",
+})
+_ROUTES = frozenset({"agent", "command", "duplicate", "action"})
+_TOOLS = frozenset({
+    "search_segments", "get_neighbors", "get_item", "open_at",
+    "request_save_confirmation", "save_videos", "confirm_video_save",
+    "clarify_save_confirmation", "cancel_video_save",
+})
+_LIMITS = frozenset({"request", "tool_calls", "output_tokens", "unknown"})
+_ERRORS = frozenset({
+    "-", "no_evidence", "embedding_unavailable", "retrieval_unavailable",
+    "timeout", "limit", "answer_unavailable", "runtime_error", "not_found",
+    "search_required", "empty_answer", "identity_error", "thread_missing",
+    "queue_unavailable", "invalid_envelope",
+})
+
+
+def new_trace_id() -> str:
+    """Create a random opaque correlation id; it carries no business meaning."""
+
+    from uuid import uuid4
+    return uuid4().hex
+
+
+def is_trace_id(value: object) -> bool:
+    return isinstance(value, str) and bool(_TRACE_RE.fullmatch(value))
+
+
+def classify_usage_limit(exc: BaseException) -> tuple[str, int | None, int | None]:
+    """Project known PydanticAI limit text without ever logging that text."""
+
+    message = str(exc)
+    patterns = {
+        "request": r"^The next request would exceed the request_limit of (\d+)",
+        "tool_calls": r"^The next tool call\(s\) would exceed the tool_calls_limit of (\d+) \(tool_calls=(\d+)\)",
+        "output_tokens": r"^Exceeded the output_tokens_limit of (\d+) \(output_tokens=(\d+)\)",
+    }
+    for kind, pattern in patterns.items():
+        match = re.match(pattern, message)
+        if match:
+            limit = int(match.group(1))
+            used = int(match.group(2)) if match.lastindex and match.lastindex >= 2 else None
+            return kind, limit, used
+    return "unknown", None, None
+
+
+class _SafeJsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = getattr(record, "diagnostic_payload", None)
+        if not isinstance(payload, dict):
+            payload = {"event": "runtime_diagnostic_unavailable"}
+        return json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+
+
+class DailySizeRotatingFileHandler(RotatingFileHandler):
+    """One owner, daily files with bounded in-day size rotations."""
+
+    def __init__(self, directory: Path, *, max_bytes: int, backup_count: int,
+                 stdout_handler: logging.Handler | None = None) -> None:
+        self.directory = directory
+        self._active_day = date.today()
+        self._max_files = backup_count
+        self._stdout_handler = stdout_handler
+        self._reported_failure = False
+        directory.mkdir(mode=0o750, parents=True, exist_ok=True)
+        os.chmod(directory, 0o750)
+        if os.stat(directory).st_mode & 0o777 != 0o750:
+            raise PermissionError("log directory mode could not be secured")
+        super().__init__(
+            self._path_for_day(self._active_day), maxBytes=max_bytes,
+            backupCount=backup_count, encoding="utf-8", delay=False,
+        )
+
+    def _path_for_day(self, day: date) -> str:
+        return str(self.directory / f"notebook-agent-{day.isoformat()}.log")
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            today = date.today()
+            if today != self._active_day:
+                if self.stream:
+                    self.stream.close()
+                    self.stream = None
+                self._active_day = today
+                self.baseFilename = os.path.abspath(self._path_for_day(today))
+            super().emit(record)
+            self._trim_days()
+        except Exception:
+            self.handleError(record)
+
+    def _open(self):
+        stream = super()._open()
+        try:
+            os.chmod(self.baseFilename, 0o640)
+            if os.stat(self.baseFilename).st_mode & 0o777 != 0o640:
+                raise PermissionError("log file mode could not be secured")
+            return stream
+        except Exception:
+            try:
+                stream.close()
+            except Exception:
+                pass
+            raise
+
+    def _trim_days(self) -> None:
+        # Keep current file plus at most backup_count previous rotated/day files.
+        files = sorted(self.directory.glob("notebook-agent-*.log*"), key=lambda p: p.stat().st_mtime)
+        excess = len(files) - (self._max_files + 1)
+        for path in files[:max(0, excess)]:
+            path.unlink()
+
+    def handleError(self, record: logging.LogRecord) -> None:  # noqa: N802
+        # Logging is observability only. In particular, do not let a transient
+        # disk failure surface a traceback (which could contain record data) or
+        # change the request/response path.
+        if self._reported_failure:
+            return
+        self._reported_failure = True
+        LOGGER.removeHandler(self)
+        try:
+            self.close()
+        except Exception:
+            pass
+        if self._stdout_handler is not None:
+            fallback = LOGGER.makeRecord(
+                LOGGER.name, logging.INFO, __file__, 0, "diagnostic", (), None,
+                extra={"diagnostic_payload": {
+                    "event": "file_logging_unavailable", "error_class": "OSError",
+                }},
+            )
+            self._stdout_handler.handle(fallback)
+
+
+def configure_runtime_logging(
+    *, log_dir: str, max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5
+) -> bool:
+    """Install idempotent stdout + optional private file handlers.
+
+    Returns whether the file sink is active. A broken file sink never prevents
+    stdout/journal diagnostics or request handling.
+    """
+
+    if max_bytes <= 0 or backup_count <= 0:
+        raise ValueError("logging rotation limits must be positive")
+    config = (str(Path(log_dir).resolve()), max_bytes, backup_count)
+    managed = [
+        handler
+        for handler in LOGGER.handlers
+        if getattr(handler, "_notebook_runtime_config", None) == config
+    ]
+    if managed:
+        return any(
+            isinstance(handler, DailySizeRotatingFileHandler)
+            for handler in managed
+        )
+    for handler in list(LOGGER.handlers):
+        LOGGER.removeHandler(handler)
+        handler.close()
+    LOGGER.setLevel(logging.INFO)
+    LOGGER.propagate = False
+    formatter = _SafeJsonFormatter()
+    stdout = logging.StreamHandler(sys.stdout)
+    stdout._notebook_runtime_config = config  # type: ignore[attr-defined]
+    stdout.setFormatter(formatter)
+    LOGGER.addHandler(stdout)
+    try:
+        file_handler = DailySizeRotatingFileHandler(
+            Path(log_dir), max_bytes=max_bytes, backup_count=backup_count,
+            stdout_handler=stdout,
+        )
+        file_handler._notebook_runtime_config = config  # type: ignore[attr-defined]
+        file_handler.setFormatter(formatter)
+        LOGGER.addHandler(file_handler)
+    except OSError as exc:
+        LOGGER.info(
+            "diagnostic", extra={"diagnostic_payload": {
+                "event": "file_logging_unavailable", "error_class": type(exc).__name__,
+            }}
+        )
+        return False
+    LOGGER.info("diagnostic", extra={"diagnostic_payload": {"event": "runtime_logging_enabled"}})
+    return True
+
+
+def shutdown_runtime_logging() -> None:
+    for handler in list(LOGGER.handlers):
+        LOGGER.removeHandler(handler)
+        handler.close()
 
 
 @dataclass(frozen=True)
 class RequestDiagnostics:
-    """Emit only stable operational fields, never user or provider payloads."""
+    """Only serializes the explicit event contract; all content is rejected."""
 
     request_id: str
     tenant_id: int
+    trace_id: str
     started_at: float
+    allow_retrieval_content: bool = False
+    environment: str = "production"
 
     @classmethod
-    def start(cls, request_id: str, tenant_id: int) -> "RequestDiagnostics":
-        return cls(request_id=request_id, tenant_id=tenant_id, started_at=time.monotonic())
+    def start(
+        cls, request_id: str, tenant_id: int, trace_id: str | None = None,
+        *, allow_retrieval_content: bool = False, environment: str = "production"
+    ) -> "RequestDiagnostics":
+        safe_request_id = request_id if isinstance(request_id, str) and _REQUEST_RE.fullmatch(request_id) else new_trace_id()
+        enabled = environment == "development" and allow_retrieval_content is True
+        return cls(safe_request_id, _safe_int(tenant_id), trace_id if is_trace_id(trace_id) else new_trace_id(), time.monotonic(), enabled, environment if environment in {"development", "production"} else "production")
 
-    def event(
-        self,
-        stage: str,
-        *,
-        error_code: str | None = None,
-        exception: BaseException | None = None,
-    ) -> None:
-        """Log fixed fields without interpolating exception messages or payloads."""
+    def retrieval_detail(self, *, tool_name: str, call_index: int, query: str | None = None,
+                         limit: int | None = None, radius: int | None = None,
+                         item_id: int | None = None, segment_id: int | None = None,
+                         title: str | None = None, author: str | None = None,
+                         description: str | None = None, url: str | None = None,
+                         score: float | None = None, excerpt: str | None = None,
+                         start: float | None = None, anchor: str | None = None) -> None:
+        """Local-only typed retrieval facts; no generic payload escape hatch."""
+        if not (self.environment == "development" and self.allow_retrieval_content) or tool_name not in {"search_segments", "get_neighbors", "get_item", "open_at"}:
+            return
+        try:
+            payload: dict[str, Any] = {"event": "retrieval_detail", "request_id": self.request_id, "trace_id": self.trace_id, "tenant_id": self.tenant_id, "duration_ms": max(0, int((time.monotonic() - self.started_at) * 1000)), "tool_name": tool_name, "call_index": _safe_int(call_index)}
+            strings = {"query": query, "title": title, "author": author, "description": description, "url": url, "excerpt": excerpt, "anchor": anchor}
+            for key, value in strings.items():
+                projected = _safe_text(value)
+                if projected is not None: payload[key] = projected
+            for key, value in {"limit": limit, "radius": radius, "item_id": item_id, "segment_id": segment_id}.items():
+                projected = _safe_int(value, none=True)
+                if projected is not None: payload[key] = projected
+            for key, value in {"score": score, "start": start}.items():
+                projected = _safe_float(value)
+                if projected is not None: payload[key] = projected
+            LOGGER.info("diagnostic", extra={"diagnostic_payload": payload})
+        except Exception:
+            return
 
-        LOGGER.info(
-            "knowledge_request stage=%s request_id=%s tenant_id=%s error_code=%s "
-            "error_class=%s duration_ms=%d",
-            stage,
-            self.request_id,
-            self.tenant_id,
-            error_code or "-",
-            type(exception).__name__ if exception is not None else "-",
-            int((time.monotonic() - self.started_at) * 1000),
-        )
+    def event(self, stage: str, *, route: str | None = None,
+              tool_name: str | None = None, tool_outcome: str | None = None,
+              call_index: int | None = None, result_count: int | None = None,
+              retry_count: int | None = None, limit_kind: str | None = None,
+              limit_value: int | None = None, used_value: int | None = None,
+              projected_value: int | None = None, error_code: str | None = None,
+              exception: BaseException | None = None,
+              duration_ms: int | None = None) -> None:
+        try:
+            payload: dict[str, Any] = {
+                "event": "knowledge_request",
+                "stage": stage if stage in _STAGES else "agent_failed",
+                "request_id": self.request_id, "trace_id": self.trace_id,
+                "tenant_id": self.tenant_id,
+                "duration_ms": _safe_int(duration_ms) if duration_ms is not None else max(0, int((time.monotonic() - self.started_at) * 1000)),
+                "error_code": error_code if error_code in _ERRORS else "-",
+                "error_class": type(exception).__name__ if exception is not None else "-",
+            }
+            if route in _ROUTES: payload["route"] = route
+            if tool_name in _TOOLS: payload["tool_name"] = tool_name
+            if tool_outcome in {"started", "succeeded", "failed"}: payload["tool_outcome"] = tool_outcome
+            for key, value in {"call_index": call_index, "result_count": result_count, "retry_count": retry_count, "limit_value": limit_value, "used_value": used_value, "projected_value": projected_value}.items():
+                projected = _safe_int(value, none=True)
+                if projected is not None: payload[key] = projected
+            if limit_kind in _LIMITS: payload["limit_kind"] = limit_kind
+            LOGGER.info("diagnostic", extra={"diagnostic_payload": payload})
+        except Exception:
+            return
+
+
+def _safe_text(value: object, limit: int = 4096) -> str | None:
+    return value[:limit] if isinstance(value, str) else None
+
+
+def _safe_int(value: object, *, none: bool = False) -> int | None:
+    if isinstance(value, bool) or not isinstance(value, int): return None if none else 0
+    return max(0, value)
+
+
+def _safe_float(value: object) -> float | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)): return None
+    result = float(value)
+    return result if math.isfinite(result) else None

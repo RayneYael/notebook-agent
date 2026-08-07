@@ -13,6 +13,13 @@ timestamp and nonce. Copy this directory into the LangBot plugin workspace,
 configure the three values shown in `.env.example`, and start
 `python -m app.cli gateway-server` from the notebook-agent project first.
 
+For operations, the bridge emits only allow-listed JSON events to its stderr: a
+random `trace_id`, fixed channel/stage/outcome, duration and exception class.
+LangBot's plugin runtime keeps this stderr in its bounded plugin log view. It
+does not create a persistent bridge log file and it never emits message text,
+IDs, payloads, URLs, secrets or exception messages. Use `trace_id` to join a
+bridge event to the Notebook Agent gateway's safe diagnostics.
+
 Before platform acceptance, apply
 `../langbot-4.10.6-redact-monitoring.patch` to the fixed LangBot 4.10.6 source
 with `patch --dry-run -p1` first. Despite its retained filename, the patch does

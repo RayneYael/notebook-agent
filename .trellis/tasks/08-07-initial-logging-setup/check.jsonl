@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/provider-tls-diagnostics.md", "reason": "Verify diagnostics never expose provider/query payloads and keep stable error outcomes."}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify bridge logging does not regress readiness, fail-closed behavior, privacy, or single reply."}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Apply the backend test and quality review checklist, including forbidden leakage patterns."}

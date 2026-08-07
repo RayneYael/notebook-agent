@@ -2,17 +2,19 @@
 
 Date: 2026-08-06
 
-## Observed failure
+## Historical failure and current evidence
 
-The running OpenClaw WeChat poll loop raises an aiohttp connector certificate exception while connecting
-to the HTTPS iLink endpoint. The underlying OpenSSL error is `CERTIFICATE_VERIFY_FAILED` with an unavailable
-local issuer. No token, QR content, user identity, or message was copied into this artifact.
+Historical logs recorded an aiohttp connector certificate exception while connecting to the HTTPS iLink endpoint.
+The underlying OpenSSL error was `CERTIFICATE_VERIFY_FAILED` with an unavailable local issuer. This is stale:
+on 2026-08-07 the user confirmed that the actual deployed LangBot/OpenClaw can log in and continuously poll
+WeChat successfully. No token, QR content, user identity, or message was copied into this artifact.
 
 ## Runtime trust evidence
 
-The LangBot Python environment contains a certifi bundle, but Python reports no default CA file and the
-running process has neither `SSL_CERT_FILE` nor `REQUESTS_CA_BUNDLE`. Disabling certificate verification is
-not an acceptable remedy.
+The historical environment inspection found a certifi bundle while Python reported no default CA file and the
+process had neither `SSL_CERT_FILE` nor `REQUESTS_CA_BUNDLE`. It must not be used to perturb today's healthy
+default trust path. Disabling certificate verification is not an acceptable remedy; any future enterprise CA
+override must be explicit, client-local and verified.
 
 ## Readiness mismatch
 

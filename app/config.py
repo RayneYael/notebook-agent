@@ -54,6 +54,25 @@ def _require(name: str) -> str:
 
 @dataclass(frozen=True)
 class Settings:
+    # --- Private runtime diagnostics ---
+    # The relative default intentionally resolves in the gateway working
+    # directory. Production systemd sets this to /var/log/notebook-agent.
+    notebook_agent_log_dir: str = field(
+        default_factory=lambda: _env("NOTEBOOK_AGENT_LOG_DIR", ".runtime/logs")
+        or ".runtime/logs"
+    )
+    notebook_agent_log_max_bytes: int = field(
+        default_factory=lambda: _env_int("NOTEBOOK_AGENT_LOG_MAX_BYTES", 10 * 1024 * 1024)
+    )
+    notebook_agent_log_backup_count: int = field(
+        default_factory=lambda: _env_int("NOTEBOOK_AGENT_LOG_BACKUP_COUNT", 5)
+    )
+    notebook_agent_env: str = field(
+        default_factory=lambda: _env("NOTEBOOK_AGENT_ENV", "production") or "production"
+    )
+    notebook_agent_log_retrieval_content: bool = field(
+        default_factory=lambda: _env_bool("NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT", False)
+    )
     # --- Outbound TLS ---
     # Optional explicit CA bundle.  If unset, application composition uses
     # SSL_CERT_FILE/REQUESTS_CA_BUNDLE or certifi for the current interpreter.
@@ -116,7 +135,7 @@ class Settings:
         )
     )
     agent_request_limit: int = field(
-        default_factory=lambda: _env_int("AGENT_REQUEST_LIMIT", 6)
+        default_factory=lambda: _env_int("AGENT_REQUEST_LIMIT", 8)
     )
     agent_tool_calls_limit: int = field(
         default_factory=lambda: _env_int("AGENT_TOOL_CALLS_LIMIT", 10)
@@ -146,6 +165,12 @@ class Settings:
     channel_gateway_port: int = field(
         default_factory=lambda: _env_int("CHANNEL_GATEWAY_PORT", 8765)
     )
+
+    def __post_init__(self) -> None:
+        if self.notebook_agent_env not in {"development", "production"}:
+            raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
+        if self.notebook_agent_log_retrieval_content and self.notebook_agent_env != "development":
+            raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
 
 
 def _build_database_url() -> str:

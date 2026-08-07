@@ -1,0 +1,32 @@
+{
+  "id": "fix-agent-tool-call-limit",
+  "name": "fix-agent-tool-call-limit",
+  "title": "Fix agent tool-call limit accounting",
+  "description": "Bound knowledge retrieval rounds so simple questions converge before PydanticAI's raw tool-call limit while preserving fail-closed citation repair.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend",
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-07",
+  "completedAt": null,
+  "branch": null,
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "app/agent/runtime.py",
+    "app/config.py",
+    ".env.example",
+    "docs/deployment.md",
+    "tests/test_agent_runtime.py"
+  ],
+  "notes": "",
+  "meta": {}
+}

@@ -1,0 +1,8 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package entry point and pre-development/quality routing."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Preserve distinct fail-closed Agent outcomes and redacted request diagnostics."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Executable contract for staged retrieval budgets, citation repair, and Top-5 grouped sources."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Backend error-handling layer is affected by usage-limit convergence and fallback behavior."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend implementation and regression-test quality gate."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Changing a shared configuration default requires a single source of truth and a search for every documented consumer."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The convergence budget spans Agent state, runtime configuration, documentation, and multi-source answer rendering."}
+{"file":".trellis/tasks/08-07-fix-agent-tool-call-limit/research/root-cause.md","reason":"Observed tool-call sequence, PydanticAI projected-usage semantics, and selected convergence mechanism."}

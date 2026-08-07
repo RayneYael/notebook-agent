@@ -21,7 +21,8 @@
   "children": [
     "08-06-debug-wechat-double-reply",
     "08-06-agent-retrieval-live-path",
-    "08-06-openclaw-tls-readiness"
+    "08-06-openclaw-tls-readiness",
+    "08-07-initial-logging-setup"
   ],
   "parent": "08-05-knowledge-retrieval-agent",
   "relatedFiles": [],

@@ -4,7 +4,9 @@ import asyncio
 import hashlib
 import hmac
 import json
+import logging
 import os
+import re
 import time
 import urllib.request
 import uuid
@@ -12,6 +14,35 @@ import uuid
 from langbot_plugin.api.definition.components.common.event_listener import EventListener
 from langbot_plugin.api.entities import context, events
 from langbot_plugin.api.entities.builtin.platform import message as platform_message
+
+
+LOGGER = logging.getLogger("notebook_agent.bridge")
+if not LOGGER.handlers:
+    _stderr = logging.StreamHandler()
+    _stderr.setFormatter(logging.Formatter("%(message)s"))
+    LOGGER.addHandler(_stderr)
+LOGGER.setLevel(logging.INFO)
+LOGGER.propagate = False
+_TRACE_ID_RE = re.compile(r"[0-9a-f]{32}\Z")
+_STAGES = {"forward", "gateway_result"}
+_CHANNELS = {"telegram", "wechat", "slack"}
+_OUTCOMES = {"posted", "failed"}
+
+
+def _event(*, stage: str, trace_id: str, channel: str, outcome: str | None = None,
+           exception: BaseException | None = None, duration_ms: int | None = None) -> None:
+    """Plugin runtime keeps stderr bounded; never create a bridge log file."""
+
+    payload = {"event": "bridge_request", "stage": stage if stage in _STAGES else "gateway_result",
+               "trace_id": trace_id if _TRACE_ID_RE.fullmatch(trace_id) else "-",
+               "channel": channel if channel in _CHANNELS else "unknown"}
+    if outcome in _OUTCOMES:
+        payload["outcome"] = outcome
+    if exception is not None:
+        payload["error_class"] = type(exception).__name__
+    if duration_ms is not None:
+        payload["duration_ms"] = max(0, int(duration_ms))
+    LOGGER.info(json.dumps(payload, sort_keys=True, separators=(",", ":")))
 
 
 class ReplyDeduplicator:
@@ -74,10 +105,19 @@ class KnowledgeAgentEventListener(EventListener):
                 deduplicator = self._reply_deduplicator = ReplyDeduplicator()
             if not await deduplicator.claim(f"{bot_uuid}:{payload['message_id']}"):
                 return
+            trace_id = uuid.uuid4().hex
+            payload["trace_id"] = trace_id
+            started_at = time.monotonic()
+            _event(stage="forward", trace_id=trace_id, channel=channel)
             answer = await asyncio.to_thread(_post, payload)
+            _event(stage="gateway_result", trace_id=trace_id, channel=channel,
+                   outcome="posted", duration_ms=(time.monotonic() - started_at) * 1000)
             text = str(answer.get("text") or "知识库暂时无法回复，请稍后重试。")
-        except Exception:
+        except Exception as exc:
             # Identity and message contents are intentionally not logged here.
+            if "trace_id" in locals() and "channel" in locals():
+                _event(stage="gateway_result", trace_id=trace_id, channel=channel,
+                       outcome="failed", exception=exc)
             text = "知识库渠道暂时不可用，请稍后重试。"
         # PersonMessageReceived is emitted before LangBot's pipeline stages.
         # Once default processing is prevented, PipelineManager returns without

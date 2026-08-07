@@ -18,6 +18,7 @@ from app.agent.types import AgentAnswer
 from app.bootstrap import build_channel_service
 from app.channels.types import ChannelEnvelope
 from app.config import Settings
+from app.diagnostics import configure_runtime_logging
 
 
 MAX_BODY_BYTES = 64 * 1024
@@ -95,9 +96,8 @@ def _handler(
                 self._json(HTTPStatus.UNAUTHORIZED, {"error": "unauthorized"})
                 return
             try:
-                # HMAC authenticates the bridge, but its payload remains input.
-                # Correlation IDs are generated at this application boundary so
-                # a channel cannot choose or collide with diagnostic IDs.
+                # The HMAC authenticates the bridge. Its trace token is only an
+                # opaque correlation field; request IDs remain gateway-owned.
                 envelope = replace(
                     ChannelEnvelope(**json.loads(body)), request_id=uuid4().hex
                 )
@@ -130,6 +130,11 @@ def serve(settings: Settings) -> None:
         raise RuntimeError("channel gateway must bind to loopback")
     if not settings.channel_gateway_secret:
         raise RuntimeError("CHANNEL_GATEWAY_SECRET is required")
+    configure_runtime_logging(
+        log_dir=settings.notebook_agent_log_dir,
+        max_bytes=settings.notebook_agent_log_max_bytes,
+        backup_count=settings.notebook_agent_log_backup_count,
+    )
 
     service = build_channel_service(settings)
     loop = asyncio.new_event_loop()

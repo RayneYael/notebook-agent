@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from app.agent.types import AgentAnswer
 from app.channels.http_gateway import RequestVerifier, _handler, signature
+from app.channels.types import ChannelEnvelope
 
 
 def test_gateway_signature_accepts_once_and_rejects_replay_or_tampering():
@@ -37,6 +38,17 @@ def test_gateway_rejects_stale_requests_and_short_secrets():
         assert "at least 32" in str(exc)
     else:
         raise AssertionError("short gateway secret should be rejected")
+
+
+def test_trace_id_must_be_fixed_lowercase_hex_and_is_not_a_request_id():
+    values = dict(
+        channel="telegram", account_id="account", external_user_id="external",
+        conversation_id="conversation", message_id="message", text="private",
+    )
+    envelope = ChannelEnvelope(**values, trace_id="a" * 32)
+    assert envelope.trace_id == "a" * 32
+    with __import__("pytest").raises(ValueError, match="trace_id"):
+        ChannelEnvelope(**values, trace_id="A" * 32)
 
 
 def test_gateway_replaces_untrusted_request_id_at_the_http_boundary():

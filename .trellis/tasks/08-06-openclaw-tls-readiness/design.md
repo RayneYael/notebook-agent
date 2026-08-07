@@ -7,14 +7,14 @@
 
 ## 2. CA resolution
 
-在启动 OpenClaw adapter 前按确定顺序解析 CA：
+当前部署已成功登录并持续 poll，因此没有显式覆盖时不解析或替换 CA：保留 upstream
+`aiohttp.ClientSession()` 与 Python/OpenSSL 的原有 verified TLS 行为。不得写入
+`SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`，也不得添加正常路径的 preflight GET。
 
-1. 已显式配置且可读的部署 CA；
-2. LangBot 当前 Python 环境的 certifi bundle；
-3. Python/OpenSSL 已配置的默认 CA（若真实存在）。
-
-将结果应用到 aiohttp 使用的 verified SSL context，或在 client 创建前注入其实际识别的标准
-变量。预检路径存在性/可读性，并用真实 TLS handshake 证明证书链可验证。禁止关闭验证。
+仅在 adapter `tls_ca_bundle` 或 `TLS_CA_BUNDLE` 明确设置时，验证其为可读、可加载的 PEM，并将
+由 `ssl.create_default_context(cafile=...)` 创建的 context 注入**该 OpenClaw client**。该 context
+继续执行证书链与 hostname 校验；无效显式覆盖是 `certificate_verification_failed`，而非回退或
+关闭校验。
 
 ## 3. Adapter state machine
 
@@ -45,7 +45,7 @@ channels，后者证明特定 channel 能与上游平台交换数据。
 
 | Error | State | Code | Retry |
 | --- | --- | --- | --- |
-| CA missing/unreadable | failed | `certificate_verification_failed` | configuration change required |
+| explicit CA missing/unreadable | failed | `certificate_verification_failed` | configuration change required |
 | certificate chain/hostname failure | failed | `certificate_verification_failed` | no blind retry loop |
 | timeout/reset/DNS | degraded | `upstream_unavailable` | bounded backoff |
 | auth/login expiry | degraded or failed per existing protocol | existing safe auth code | preserve existing relogin behavior |

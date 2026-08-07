@@ -1,0 +1,4 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/provider-tls-diagnostics.md", "reason": "Preserve the existing redacted request diagnostics, trusted request ID, and failure taxonomy."}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Preserve LangBot required-plugin readiness, fail-closed routing, single reply, and channel privacy."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Define and validate the trace/log event contract across bridge, gateway, Agent, and file sinks."}

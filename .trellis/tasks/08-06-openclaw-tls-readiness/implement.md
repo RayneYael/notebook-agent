@@ -7,13 +7,14 @@
 
 ## 1. 复现与失败测试
 
-- [ ] 用 LangBot 实际 Python 环境记录默认 CA/ certifi presence 和脱敏 TLS preflight 结果。
-- [ ] 增加测试证明无效 CA 会触发 `certificate_verification_failed`，且 adapter 不会报告 healthy。
+- [ ] 记录当前生产实例已成功登录并持续 poll；默认路径以此为兼容基线，不强制 certifi 或 TLS preflight。
+- [ ] 增加测试证明无效**显式** CA 会触发 `certificate_verification_failed`，且 adapter 不会报告 healthy。
 - [ ] 增加状态测试证明 background poll task 创建不等于 healthy。
 
 ## 2. 实现可信 CA 初始化
 
-- [ ] 在版本化 launcher/patch 中实现确定性 CA resolution 和可读性校验。
+- [ ] 在版本化 patch 中仅实现显式 CA override 的可读性校验和 client-local context。
+- [ ] 确保默认路径不写全局 CA 环境、不强制 certifi、也不发额外 preflight GET。
 - [ ] 确保 aiohttp/OpenClaw client 使用 verified context；不得关闭证书或 hostname verification。
 - [ ] 将证书错误映射为稳定且脱敏的配置失败，避免无限 traceback/retry 同时报告 running。
 
@@ -45,7 +46,7 @@ python3 ./.trellis/scripts/task.py validate 08-06-openclaw-tls-readiness
 
 ## 5. 部署验证与文档
 
-- [ ] 更新部署文档：CA resolution、process vs adapter readiness、诊断、重启和 rollback。
+- [ ] 更新部署文档：当前成功 poll 基线、可选 CA override、process vs adapter readiness、诊断、重启和 rollback。
 - [ ] 重新生成 patched runtime 并重启 LangBot，不重置登录/绑定数据。
 - [ ] 证明无 `CERTIFICATE_VERIFY_FAILED` 且连续 3 次 poll 成功或 healthy 2 分钟。
 - [ ] Telegram/required plugin 自动回归通过；微信私聊最终 smoke 交给用户人工执行。

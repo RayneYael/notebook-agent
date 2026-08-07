@@ -58,22 +58,30 @@ loopback 检查。
 
 ### macOS TLS CA
 
-部分 macOS Python 环境无法从系统钥匙串提供 OpenClaw/iLink 所需的 CA 链。若 LangBot
-日志出现 `SSLCertVerificationError`，先在**启动 LangBot 的同一个环境**中定位 certifi：
+当前部署已经可以成功登录并持续轮询 WeChat；这是本 patch 必须保留的默认基线。没有显式 CA
+覆盖时，OpenClaw 继续使用 LangBot/aiohttp/Python 原有的已验证 TLS 行为：不强制选择 certifi、
+不改写 `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`，也不额外发送 TLS preflight GET。
+
+通常不必手工配置 macOS。仅当部署需要企业/私有 CA，或 adapter readiness 显示
+`certificate_verification_failed` 时，才在对应 OpenClaw bot 的 adapter config 设置
+`tls_ca_bundle`，或在启动 LangBot 的环境设置 `TLS_CA_BUNDLE`。其值必须是可读的 PEM bundle；
+patch 会创建只供该 OpenClaw client 使用的 `CERT_REQUIRED` / hostname-checked TLS context。
+可用下列命令定位候选 CA 文件：
 
 ```bash
 .venv/bin/python -c 'import certifi; print(certifi.where())'
 ```
 
-把输出路径作为两个环境变量的值后再启动 LangBot：
+将输出路径作为 `tls_ca_bundle` 或 `TLS_CA_BUNDLE` 的值后再启动 LangBot：
 
 ```dotenv
-SSL_CERT_FILE=/absolute/path/to/certifi/cacert.pem
-REQUESTS_CA_BUNDLE=/absolute/path/to/certifi/cacert.pem
+TLS_CA_BUNDLE=/absolute/path/to/certifi/cacert.pem
 ```
 
-这两个变量不是 secret；不要把机器上的绝对路径当作可移植默认值提交到仓库。Linux
-镜像若已经有正确 CA bundle，不需要强行添加它们。
+该变量不是 secret；不要把机器上的绝对路径当作可移植默认值提交到仓库。无效的显式覆盖会以
+`certificate_verification_failed` fail closed；移除或修正该覆盖后再启动。Linux 镜像若已经有
+正确 CA bundle，不需要添加任何覆盖。不要使用 `ssl=False`、unverified SSL context、HTTP
+endpoint 或忽略证书异常作为临时修复。
 
 Notebook Agent gateway 与独立 Celery worker 都会在各自进程中解析可信 CA：优先使用可读的
 `TLS_CA_BUNDLE`，其次是已有的 `SSL_CERT_FILE` / `REQUESTS_CA_BUNDLE`，最后是该
@@ -258,6 +266,9 @@ patch -p1 < /absolute/path/to/notebook-agent/integrations/langbot-4.10.6-redact-
 3. 对显式绑定 required plugin 的 pipeline，每条消息都必须确认该插件处理了早期 event
    并调用 `prevent_default()`。runtime 断线、插件缺席或未阻止默认处理时，LangBot
    只返回固定“渠道暂时不可用”提示，绝不回退到 Local Agent。
+4. OpenClaw/iLink 的普通登录和长轮询保持 upstream 已验证 TLS 行为；只有显式设置
+   `tls_ca_bundle` 或 `TLS_CA_BUNDLE` 时才为该 client 创建可追踪的 verified CA context。
+   无论使用哪条路径，都只有成功完成 `getUpdates` poll 才将微信 adapter 标为 `healthy`。
 
 把下列配置写入 LangBot 的 `data/config.yaml`。本项目必须明确配置 bridge plugin；留空
 会保留上游兼容行为，但不会得到本部署的启动保护。
@@ -347,6 +358,37 @@ bridge pipeline 必须关闭“启用全部插件”，并显式只绑定
 `notebook-agent/notebook-knowledge-agent`。这正是运行时 fail-closed gate 的适用范围；
 不要把 required bridge 仅靠全局自动发现绑定。
 
+### 7.4 OpenClaw TLS 与 adapter readiness
+
+`/healthz` 保持进程级兼容语义：它只说明 LangBot HTTP process 可响应，不能证明微信
+上游仍可 poll。应用补丁后，登录管理面可通过受认证接口查看 adapter 级状态：
+
+```bash
+curl --fail -H 'Authorization: Bearer <LangBot-admin-token>' \
+  http://127.0.0.1:<LangBot API port>/api/v1/platform/adapters/readiness
+```
+
+返回项只包含 adapter 名称、`state`、稳定 `error_code`、`exception_class`、最近一次成功 poll
+的年龄、retry 次数/下次 retry，以及 CA bundle 路径；不会包含微信 token、二维码、昵称、外部
+用户 ID、消息正文、cookie 或 provider payload。不同版本的 LangBot 管理认证 header 可能不同，
+请使用该部署既有的管理员认证方式，且不要把 token 贴入终端历史、日志或工单。
+
+状态解释：
+
+| state | 含义与操作 |
+| --- | --- |
+| `starting` / `authenticating` | adapter 已开始但尚无成功 poll；它不是 healthy。等待登录或检查启动日志。 |
+| `healthy` | 至少一次 `getUpdates` 成功；随后每次成功 poll 刷新 success age。验收需要连续三次成功 poll 或持续两分钟 healthy。 |
+| `degraded` | DNS、timeout、reset 或临时 upstream 故障；adapter 以 1–10 秒的有界指数退避重试，状态包含安全的错误类别与 retry metadata。 |
+| `failed` + `certificate_verification_failed` | 显式 CA 覆盖不可读/无效，或真实证书链/hostname 无法验证；不会无限 retry。修正或移除显式覆盖后安全重启 LangBot。 |
+| `failed` + `authentication_failed` | 维持既有登录失败语义；检查受保护的登录管理流程，不要在健康接口或日志中复制二维码/token。 |
+| `stopped` | 已按正常停止流程终止。 |
+
+正常路径没有 CA preflight；真实 poll 的非证书网络失败会显示 `degraded/upstream_unavailable`，
+再以 verified TLS 重试。若状态是 `certificate_verification_failed`，重新扫码不会修复根证书
+问题。确认或移除显式 CA bundle 后只重启 LangBot core/adapter，不要重置 Telegram token、
+微信登录、bot UUID、用户绑定、conversation history 或内容数据。
+
 平台配置参考：
 
 - Telegram：https://docs.langbot.app/en/usage/platforms/telegram
@@ -361,8 +403,8 @@ bridge pipeline 必须关闭“启用全部插件”，并显式只绑定
 3. 部署并启动兼容 Celery worker，确认它监听 `ingest`，CA/Redis/MinIO 均 ready。
 4. 部署并启动 Notebook Agent `gateway-server`，检查 loopback health 与只读检索 smoke。
 5. 设置 `AGENT_SAVE_ENABLED=true` 并重启 gateway；不得重置 channel login、identity 或 content。
-6. 若使用 macOS CA workaround，同时向 LangBot 进程注入
-   `SSL_CERT_FILE` 与 `REQUESTS_CA_BUNDLE`。
+6. 确认已应用 TLS/readiness patch；保留已证实的默认登录/轮询路径。仅有企业 CA 需求或明确
+   诊断时，在 LangBot 进程中设置 `tls_ca_bundle` 或 `TLS_CA_BUNDLE`。不要禁用 TLS verification。
 7. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
 8. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
    `initialized`，**之后**才启动每个 enabled adapter；不要手工改变这个顺序。
@@ -375,10 +417,12 @@ readiness 检查不使用“等待 N 秒”。在 LangBot 进程日志中确认
 curl --fail http://127.0.0.1:<LangBot API port>/healthz
 ```
 
-HTTP `healthz` 只有在 application 已通过启动 gate 并创建 HTTP task 后才会返回成功。
-管理面板的 plugin 详情还必须显示 bridge status 为 `initialized`；若 deadline 超时，先
-检查 plugin package、其私有 `.env` 权限、gateway health 和 CA，再重启 LangBot。不要
-先启动 adapter 试图“等它自己恢复”。
+HTTP `healthz` 只有在 application 已通过启动 gate 并创建 HTTP task 后才会返回成功，不能
+替代微信 poll 检查。接着查询 `/api/v1/platform/adapters/readiness`：OpenClaw 必须是
+`healthy`，并满足连续三次成功 poll 或保持两分钟 healthy；`starting`、`degraded` 或 `failed`
+都不能作为微信可用证据。管理面板的 plugin 详情还必须显示 bridge status 为 `initialized`；
+若 deadline 超时，先检查 plugin package、其私有 `.env` 权限、gateway health 和 CA，再重启
+LangBot。不要先启动 adapter 试图“等它自己恢复”。
 
 日常停止采用相反顺序：
 
@@ -408,6 +452,9 @@ Group=notebook-agent
 WorkingDirectory=/opt/notebook-agent
 EnvironmentFile=/etc/notebook-agent/notebook-agent.env
 Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent
+Environment=NOTEBOOK_AGENT_ENV=production
+Environment=NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
 ExecStart=/opt/notebook-agent/.venv/bin/python -m app.cli gateway-server
 Restart=on-failure
 RestartSec=5
@@ -415,6 +462,9 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true
+LogsDirectory=notebook-agent
+LogsDirectoryMode=0750
+UMask=0027
 
 [Install]
 WantedBy=multi-user.target
@@ -429,6 +479,26 @@ sudo systemctl status notebook-agent-gateway
 ```
 
 systemd 日志中不应出现问题正文、证据全文、平台 token 或外部身份映射。
+
+## 9.1 安全诊断日志
+
+Notebook Agent gateway 和 CLI 都会把严格结构化的 INFO 事件双写到 stdout 与日志文件。本地默认
+位置为 `.runtime/logs/notebook-agent-YYYY-MM-DD.log`；上面的 systemd 配置通过
+`LogsDirectory=notebook-agent` 在不放宽 `ProtectSystem=strict` 的前提下创建
+`/var/log/notebook-agent/`，服务器文件同样命名为 `notebook-agent-YYYY-MM-DD.log`。使用
+`journalctl -u notebook-agent-gateway` 查看 stdout/journal。文件按日期和 10 MiB 大小轮转，默认
+保留 5 个备份；文件目录暂时不可写时，启动仍会继续并在 stdout/journal 写入
+`file_logging_unavailable`。
+
+LangBot core 保持自己的 stdout 与 `data/logs/langbot-YYYY-MM-DD.log`。bridge 是独立 plugin
+子进程，只向 LangBot plugin runtime 的有界 stderr 日志写极少量事件，**不会创建 bridge 日志文件**。
+bridge 首次转发产生随机 32 位 `trace_id`，gateway 创建独立 `request_id`；可以用二者在 plugin
+日志页、Notebook Agent 文件和 journal 联查。trace ID 不是身份、授权、幂等或消息去重字段。
+
+日志仅包含阶段、内部 request/tenant ID、trace ID、固定 route/tool/limit/error 枚举、计数和耗时。
+永远禁止问题和历史正文、检索词、prompt、模型输出、工具参数/结果、证据及 citation ID、URL、向量、
+外部身份、provider payload、token、DSN、secret 以及异常消息。没有环境变量或 debug 开关可以改变
+该规则。
 
 ## 10. 首次启动 smoke
 
@@ -454,7 +524,8 @@ systemd 日志中不应出现问题正文、证据全文、平台 token 或外�
 | MinIO | `GET /minio/health/ready` | HTTP 200 |
 | ingestion worker | Celery `inspect ping` + `active_queues` | worker pong 且监听 `ingest` |
 | Agent 进程 | `GET http://127.0.0.1:8765/health` | HTTP 200、status ok |
-| LangBot readiness | 日志 marker + `GET /healthz` | required bridge 为 `initialized` 后 API 才可用 |
+| LangBot process health | `GET /healthz` | required bridge 为 `initialized` 后 API 才可用；不代表微信 poll healthy |
+| OpenClaw adapter readiness | `GET /api/v1/platform/adapters/readiness`（管理员认证） | `state=healthy`，连续三次成功 poll 或持续两分钟；无 `certificate_verification_failed` |
 | bridge runtime | LangBot plugin detail | `notebook-agent/notebook-knowledge-agent` 为 `initialized` |
 | 模型与检索 | CLI `ask` smoke | 有工具证据和时间戳 |
 | Telegram | `/whoami` | 返回稳定内部用户编号 |

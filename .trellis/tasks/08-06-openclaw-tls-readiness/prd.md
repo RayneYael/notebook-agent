@@ -2,16 +2,15 @@
 
 ## Goal
 
-修复 LangBot/OpenClaw WeChat adapter 对 `ilinkai.weixin.qq.com` 的证书验证失败，并让启动、
-health/readiness 和管理诊断准确反映 adapter 是否真正能持续 poll。系统不能在永久 TLS 失败时
-继续宣称微信渠道 running/healthy。
+保留当前已验证的 LangBot/OpenClaw WeChat TLS 行为，并让启动、health/readiness 和管理诊断
+准确反映 adapter 是否真正能持续 poll。为确有企业 CA 需求的部署提供可选、局部且 fail-closed 的
+覆盖，不改变当前正常渠道的默认信任路径。
 
 ## Confirmed Facts
 
-- 运行日志显示 `aiohttp.client_exceptions.ClientConnectorCertificateError`，底层错误为
-  `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`。
-- LangBot 使用的 Python 环境存在 certifi CA 文件，但默认 OpenSSL CA file 为空，进程也没有
-  `SSL_CERT_FILE` 或 `REQUESTS_CA_BUNDLE`。
+- 历史日志曾显示 `aiohttp.client_exceptions.ClientConnectorCertificateError`，底层错误为
+  `CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`；它不是当前故障依据。
+- 用户在 2026-08-07 确认实际部署可成功登录 WeChat 并持续 poll；这是必须保留的基线。
 - `openclaw_weixin.py::run_async()` 创建 `_poll_loop()` 后立即记录 adapter running；poll loop
   对异常只打印 traceback 并退避重试，因此 required-plugin readiness 和 `/healthz` 都无法表示
   微信 adapter 健康。
@@ -22,8 +21,10 @@ health/readiness 和管理诊断准确反映 adapter 是否真正能持续 poll�
 
 ### R1 — Verified TLS trust
 
-- 使用 LangBot 实际 Python runtime 可解析的可信 CA bundle；优先其 certifi bundle，并在启动
-  OpenClaw client 前注入标准 CA 环境或显式 verified SSL context。
+- 未配置覆盖时保持 LangBot/aiohttp/Python 原有的 verified TLS 默认行为，不强制选择 certifi、
+  不写入进程全局 CA 环境变量，也不增加额外 preflight GET。
+- 可选 `tls_ca_bundle` 或 `TLS_CA_BUNDLE` 必须是可读、可加载的 PEM；仅为该 OpenClaw client
+  注入显式 verified SSL context。
 - 保持证书链和 hostname verification 开启。禁止 `ssl=False`、unverified context、忽略
   certificate exception 或降级 HTTP。
 - CA 路径缺失、不可读或证书验证失败时必须产生稳定、脱敏的
@@ -44,7 +45,7 @@ health/readiness 和管理诊断准确反映 adapter 是否真正能持续 poll�
   重试信息，不能只输出无人消费的 traceback。
 - 不得记录或返回 access token、二维码内容、微信昵称、外部用户 ID、消息正文、cookie 或完整
   provider payload。
-- TLS preflight 失败时要给管理员明确修复方向；不能声称用户应重新扫码来解决 CA 问题。
+- 显式 CA 覆盖无效时要给管理员明确修复方向；不能声称用户应重新扫码来解决 CA 问题。
 
 ### R4 — Compatibility and deployment
 
@@ -62,8 +63,8 @@ health/readiness 和管理诊断准确反映 adapter 是否真正能持续 poll�
 
 ## Acceptance Criteria
 
-- [ ] 使用部署 LangBot Python 环境启动后，对 `ilinkai.weixin.qq.com` 不再出现
-  `CERTIFICATE_VERIFY_FAILED`；CA 路径可追踪但不会泄露 credential。
+- [ ] 默认部署继续保持已证实的成功登录和持续 poll，不因本任务引入 certifi 选择、全局 CA 写入或
+  额外 TLS 请求；可选 CA 路径可追踪但不会泄露 credential。
 - [ ] 登录后连续 3 次 poll 成功，或 adapter 保持 healthy/connected 至少 2 分钟；状态证据不以
   required-plugin marker 代替 poll 成功。
 - [ ] 故意配置不存在/不可读 CA 时，preflight 或 adapter health 明确返回
