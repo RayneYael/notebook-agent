@@ -83,6 +83,22 @@ describe("video detail", () => {
     expect(container.querySelector("img")).toHaveAttribute("fetchpriority", "high");
   });
 
+  it("makes overflowing chapters keyboard-scrollable", () => {
+    render(
+      <VideoDetailView
+        item={item}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("list", { name: "视频章节" })).toHaveAttribute("tabindex", "0");
+  });
+
   it("renders an existing non-empty backend summary without generating one", () => {
     render(
       <VideoDetailView

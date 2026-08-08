@@ -149,7 +149,7 @@ export function VideoDetailView({
         <section className="detail-section" aria-labelledby="chapters-title">
           <p className="eyebrow">快速跳转</p>
           <h2 id="chapters-title">章节</h2>
-          <ol className="chapter-list">
+          <ol className="chapter-list" aria-label="视频章节" tabIndex={0}>
             {item.chapters.map((chapter, index) => {
               const start = Number(chapter.start_sec ?? chapter.start_time ?? chapter.start ?? 0);
               return (

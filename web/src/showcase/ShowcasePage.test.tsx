@@ -19,12 +19,24 @@ describe("ShowcasePage", () => {
 
     expect(screen.getByRole("heading", { name: "让收藏过的知识，再次可用。" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: /收藏不是终点/ })).toBeInTheDocument();
+    expect(screen.getByText(/当我们按下收藏键的刹那/)).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "独立资料空间" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "基于原文生成回答" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "答案依据全程可追溯" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "适合不想让“看过”等于“忘过”的人。" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "从一个链接，到一条有出处的答案。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "保存视频链接，取回答案与出处。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "选一个场景，看答案出处。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "下次需要答案，直接回到原文。" })).toBeInTheDocument();
     expect(screen.getByText(/不会调用模型或上传数据/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /进入资料库/ })).toHaveAttribute("href", "/login");
+    expect(screen.getByLabelText("从视频到可追溯答案的处理路径")).toBeInTheDocument();
+    expect(screen.getAllByRole("img")).toHaveLength(3);
+    expect(screen.getByRole("img", { name: "How to Talk to Users 视频封面" })).toHaveAttribute(
+      "src",
+      "https://i.ytimg.com/vi/MT4Ig2uqjTc/hqdefault.jpg",
+    );
     expect(document.body).toHaveTextContent("视频链接 + 保存说明");
-    expect(document.body).toHaveTextContent("每位用户只能查看自己的资料库");
+    expect(document.body).toHaveTextContent("页面内容、检索结果与回答依据都限定在当前账户范围内");
     expect(document.body).toHaveTextContent("可用登录入口以当前部署配置为准");
     expect(document.body).not.toHaveTextContent(/why_saved|tenant|Transcript|Chunks|Hybrid Search|EVIDENCE MODE|混合索引/i);
   });

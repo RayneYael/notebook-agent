@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
@@ -127,7 +127,7 @@ describe("login page", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("renders only channels advertised by the server", async () => {
+  it("keeps every login method visible and disables channels not advertised by the server", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -143,11 +143,13 @@ describe("login page", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByRole("button", { name: "使用 Telegram 登录" })).toBeEnabled();
-    expect(screen.queryByRole("button", { name: "使用微信登录" })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeEnabled());
+    expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
+    expect(screen.getByText("当前部署未启用")).toBeInTheDocument();
   });
 
-  it("shows a retryable error instead of guessing login channels", async () => {
+  it("keeps channel entries visible with a retryable status when capabilities fail", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const loadCapabilities = vi
       .fn()
@@ -164,9 +166,73 @@ describe("login page", () => {
     );
 
     expect(await screen.findByRole("alert")).toHaveTextContent("登录方式暂时无法加载");
-    expect(screen.queryByRole("button", { name: "使用 Telegram 登录" })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
+    expect(screen.getAllByText("暂时无法连接")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "重试" }));
-    expect(await screen.findByRole("button", { name: "使用微信登录" })).toBeEnabled();
+    await waitFor(() => expect(screen.getByRole("button", { name: "使用微信登录" })).toBeEnabled());
+  });
+
+  it("shows all login methods while capabilities are still loading", () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage loadCapabilities={() => new Promise(() => undefined)} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
+    expect(screen.getAllByText("正在检测")).toHaveLength(2);
+  });
+
+  it("validates the reserved password form without calling an authentication API", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const createChallenge = vi.fn();
+    const exchangeSession = vi.fn();
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage
+            loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
+            createChallenge={createChallenge}
+            exchangeSession={exchangeSession}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.click(await screen.findByRole("button", { name: "使用账号密码登录" }));
+    const account = screen.getByRole("textbox", { name: "账号" });
+    const password = screen.getByLabelText("密码");
+    expect(password).toHaveAttribute("type", "password");
+    await user.click(screen.getByRole("button", { name: "显示密码" }));
+    expect(password).toHaveAttribute("type", "text");
+
+    await user.click(screen.getByRole("button", { name: "登录" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("请输入账号和密码");
+
+    await user.type(account, "demo-user");
+    await user.type(password, "not-sent-anywhere");
+    await user.click(screen.getByRole("button", { name: "登录" }));
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "当前版本暂未接入账号密码认证，请使用微信或 Telegram",
+    );
+    expect(createChallenge).not.toHaveBeenCalled();
+    expect(exchangeSession).not.toHaveBeenCalled();
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+
+    await user.click(screen.getByRole("button", { name: "返回其他登录方式" }));
+    expect(screen.getByRole("button", { name: "使用微信登录" })).toBeEnabled();
+    expect(screen.queryByRole("textbox", { name: "账号" })).not.toBeInTheDocument();
   });
 
   it("stops polling after an error even when the previous result was pending", () => {

@@ -18,6 +18,7 @@ interface DemoScene {
   sourceTitle: string;
   sourceCreator: string;
   sourceUrl: string;
+  thumbnailUrl: string;
   answerLead: string;
   answerPoints: string[];
   evidence: EvidenceLink[];
@@ -33,6 +34,7 @@ const demoScenes: DemoScene[] = [
     sourceTitle: "How to Talk to Users",
     sourceCreator: "Eric Migicovsky · Y Combinator",
     sourceUrl: "https://www.youtube.com/watch?v=MT4Ig2uqjTc",
+    thumbnailUrl: "https://i.ytimg.com/vi/MT4Ig2uqjTc/hqdefault.jpg",
     answerLead: "不要先推销方案，也不要让用户预测未来。把对话拉回到已经发生过的具体经历。",
     answerPoints: [
       "先问最近一次遇到问题的时间、地点和上下文，而不是“你会不会用这个功能”。",
@@ -66,6 +68,7 @@ const demoScenes: DemoScene[] = [
     sourceTitle: "But what is a neural network?",
     sourceCreator: "Grant Sanderson · 3Blue1Brown",
     sourceUrl: "https://www.youtube.com/watch?v=aircAruvnKk",
+    thumbnailUrl: "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg",
     answerLead: "可以先把它理解成一个会调参数的数字转换器：输入很多数字，经过多层变换，输出一组判断结果。",
     answerPoints: [
       "示例把一张 28×28 的手写数字图片转换成 784 个亮度值，每个值进入一个输入神经元。",
@@ -99,6 +102,7 @@ const demoScenes: DemoScene[] = [
     sourceTitle: "How to practice effectively...for just about anything",
     sourceCreator: "Annie Bosler & Don Greene · TED-Ed",
     sourceUrl: "https://www.youtube.com/watch?v=f2O6mQkFiiw",
+    thumbnailUrl: "https://i.ytimg.com/vi/f2O6mQkFiiw/hqdefault.jpg",
     answerLead: "有效练习不只看时长，更看注意力、难度边界和反馈质量。",
     answerPoints: [
       "练习时减少干扰，把注意力集中在当前任务和最薄弱的环节上。",
@@ -226,10 +230,24 @@ export function ShowcasePage() {
           </div>
 
           <div className="showcase-hero__instrument" aria-label="从视频到可追溯答案的处理路径">
-            <div className="instrument-orbit" aria-hidden="true">
-              <span className="instrument-orbit__core">N</span>
-              <span className="instrument-orbit__dot instrument-orbit__dot--one" />
-              <span className="instrument-orbit__dot instrument-orbit__dot--two" />
+            <div className="instrument-cover-stack" aria-label="资料库中的三个真实视频来源">
+              {demoScenes.map((scene, index) => (
+                <figure className="instrument-cover" key={scene.id}>
+                  <span className="instrument-cover__wire" aria-hidden="true" />
+                  <img
+                    src={scene.thumbnailUrl}
+                    alt={`${scene.sourceTitle} 视频封面`}
+                    width="480"
+                    height="360"
+                    decoding="async"
+                    fetchPriority={index === demoScenes.length - 1 ? "high" : "auto"}
+                  />
+                  <figcaption>
+                    <span>{scene.index}</span>
+                    <strong>{scene.sourceTitle}</strong>
+                  </figcaption>
+                </figure>
+              ))}
             </div>
             <div className="instrument-readout">
               <p><span>你收藏</span><strong>一段 YouTube 视频</strong></p>
@@ -254,10 +272,10 @@ export function ShowcasePage() {
           </div>
           <div className="showcase-purpose__content">
             <p className="showcase-overline">项目目的</p>
-            <h2 id="purpose-title">收藏不是终点。<br />真正的问题是：<em>需要时还能不能找到。</em></h2>
+            <h2 id="purpose-title">收藏不是终点。<br /><em>原文要找得回。</em></h2>
             <div className="showcase-purpose__statement">
               <p>
-                我们会保存很多视频，却很少有时间重新看完。传统收藏夹只记得“链接在哪里”，Notebook Agent 更进一步，记住“视频里讲了什么”。
+                当我们按下收藏键的刹那，你是否会想到这是你最后一次与你的视频碰面？我们不希望视频只成为收藏夹的一串链接，我们希望当你有需要的时候，能一眼找到你想要的内容。Notebook Agent 不仅能帮你记住视频在哪里，更能提醒你视频讲了什么。
               </p>
               <p>
                 它先从你的资料库里找到相关原文，再组织答案；找不到时会明确说明，不会凭模型记忆补出一个看似合理的结论。
@@ -267,18 +285,18 @@ export function ShowcasePage() {
           <div className="showcase-purpose__proofs" aria-label="项目原则">
             <article>
               <span>01</span>
-              <h3>每个人一份资料库</h3>
-              <p>每位用户只能查看自己的资料库，页面与回答都不会混入其他人的内容。</p>
+              <h3>独立资料空间</h3>
+              <p>每位用户拥有独立的私人资料库。页面内容、检索结果与回答依据都限定在当前账户范围内，不与其他用户的数据混用。</p>
             </article>
             <article>
               <span>02</span>
-              <h3>先找原文，再回答</h3>
-              <p>回答只能引用服务端允许的真实片段，拒绝伪造来源。</p>
+              <h3>基于原文生成回答</h3>
+              <p>系统先检索资料库中的相关字幕片段，再据此组织答案；缺少足够依据时会明确说明，不用模型记忆补全。</p>
             </article>
             <article>
               <span>03</span>
-              <h3>每个结论都能回看</h3>
-              <p>标题、原文片段与视频时间戳一起返回，结论随时可核对。</p>
+              <h3>答案依据全程可追溯</h3>
+              <p>回答会同时关联视频标题、原文片段与对应时间点，方便随时返回原视频，核对结论所在的完整上下文。</p>
             </article>
           </div>
         </section>
@@ -310,7 +328,7 @@ export function ShowcasePage() {
           </div>
           <div className="showcase-process__heading">
             <p className="showcase-overline">分步骤使用流程</p>
-            <h2 id="process-title">从一个链接，到一条有出处的答案。</h2>
+            <h2 id="process-title">保存视频链接，<br />取回答案与出处。</h2>
             <p>真实产品中的导入在后台异步完成，不会阻塞聊天或浏览。</p>
           </div>
           <ol className="showcase-process__list">
@@ -335,7 +353,7 @@ export function ShowcasePage() {
           <div className="showcase-demo__heading">
             <div>
               <p className="showcase-overline">真实来源 · 预设试用</p>
-              <h2 id="demo-title">选择一个场景，看看证据怎样变成答案。</h2>
+              <h2 id="demo-title">选一个场景，<br />看答案出处。</h2>
             </div>
             <p>
               下列答案是根据公开字幕预先整理的交互演示，不会调用模型或上传数据。真实使用时，来源会替换成你自己的资料库内容。
@@ -426,7 +444,7 @@ export function ShowcasePage() {
 
         <section className="showcase-cta" aria-labelledby="showcase-cta-title">
           <p className="showcase-overline">YOUR KNOWLEDGE / YOUR EVIDENCE</p>
-          <h2 id="showcase-cta-title">下一次需要答案时，<br />不必从收藏夹重新开始。</h2>
+          <h2 id="showcase-cta-title">下次需要答案，<br />直接回到原文。</h2>
           <Link className="showcase-button showcase-button--dark" to="/login">进入私人资料库 <ArrowIcon /></Link>
           <p className="showcase-cta__note">本页展示已经实现的 YouTube 资料库流程 · 可用登录入口以当前部署配置为准</p>
         </section>
