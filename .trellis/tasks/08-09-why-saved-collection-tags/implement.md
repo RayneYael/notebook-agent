@@ -99,6 +99,17 @@
 - [x] Run all frontend checks, rebuild 5175, and confirm the open dialog copy in
   the authenticated browser fixture.
 
+## Gate 12 - Personalized demo descriptions follow-up
+
+- [x] Trace the repeated sentence to the ignored authenticated fixture rather
+  than the production ingestion path.
+- [x] Verify the five source URLs through `yt-dlp` and confirm production already
+  maps connector metadata description into `ContentItem.description`.
+- [x] RED/GREEN an ignored runtime check requiring five specific, unique,
+  placeholder-free descriptions; keep demo overrides outside version control.
+- [x] Restart only the owned 5175 fixture and verify all five detail APIs,
+  desktop detail pages, and the 391x844 creative-confidence page.
+
 ## Validation Commands
 
 ```powershell

@@ -54,6 +54,10 @@ remains an ordinary validated hashtag inside `why_saved`.
 - Video-detail heroes keep the complete source title, but long Latin or CJK
   titles use a compact responsive type scale and the desktop cover retains
   roughly half of the available hero width.
+- Authenticated demo fixtures must use specific, mutually distinct video
+  descriptions grounded in the source video's public metadata. Demo overrides
+  remain ignored runtime data and must never become title-ID conditionals in
+  production frontend code.
 - All additions match the existing pale editorial UI, remain usable at
   390x844, expose programmatic labels, and never rely on color alone.
 
@@ -96,3 +100,6 @@ remains an ordinary validated hashtag inside `why_saved`.
 - [x] Detail tests and browser smoke prove long titles remain complete, select
   compact typography, keep the cover visually dominant, and avoid desktop or
   mobile horizontal overflow without shrinking ordinary titles unnecessarily.
+- [x] Source-metadata checks and browser smoke prove the five non-primary demo
+  videos have distinct, detailed, placeholder-free descriptions while the
+  production Connector-to-ContentItem description path remains unchanged.

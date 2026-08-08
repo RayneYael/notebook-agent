@@ -163,3 +163,27 @@
   ESLint, and Vite build passed. The refreshed 5175 dialog reports
   `备注（可选）`, retains field name `why-saved`, remains open for review, and
   has no horizontal overflow. Ports 5173 and 5174 were untouched.
+
+## 2026-08-09 personalized demo descriptions follow-up
+
+- Root cause: 5175 imports the ignored shared
+  `.runtime/authenticated_demo_server.py`, whose `_item` helper assigns one
+  generic description to every video. This is demo data, not a failed production
+  crawl. Production `YouTubeConnector.fetch_meta` reads `description`,
+  `process_item` writes it to `ContentItem.description`, and the model already
+  persists the field.
+- Public metadata was freshly retrieved with the repository's `yt-dlp` runtime
+  for `aircAruvnKk`, `f2O6mQkFiiw`, `UF8uR6Z6KLc`, `PZ7lDrwYdZc`, and
+  `16p9YRF0l-g`. All five returned non-empty official descriptions. The 5175-only
+  wrapper now supplies grounded Chinese descriptions covering neural-network
+  layers and parameters, deliberate practice, Jobs's three stories, Atomic
+  Habits' four laws, and Kelley's creative-confidence argument.
+- TDD stayed inside the ignored runtime boundary: the first assertion failed
+  with zero overrides; GREEN requires exactly five unique descriptions, at
+  least 60 characters each, and rejects the generic placeholder. The check
+  passes, `py_compile` passes, and the runtime files remain excluded from Git.
+- The owned 5175 process was restarted without touching 5173 or 5174. All five
+  detail APIs returned unique descriptions of 96-115 characters. Browser smoke
+  visited every detail with no desktop overflow; at 391x844 the longest checked
+  description occupied 339x168 with no horizontal overflow. The preview is left
+  on `/videos/creative-confidence` for user review.
