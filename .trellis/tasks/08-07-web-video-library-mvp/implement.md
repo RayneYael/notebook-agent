@@ -103,6 +103,14 @@
 - [ ] Finish/archive task records only when the real PostgreSQL migration run
   and live Telegram/WeChat acceptance criteria are genuinely complete.
 
+## Browser-feedback closeout (2026-08-09)
+
+- [x] Replace the Showcase hero orbit with three real YouTube covers in a wireframe 3D stack; verify all images load and have distinct browser `matrix3d` transforms.
+- [x] Increase Showcase heading line/letter spacing, rebalance the purpose/process/demo/CTA copy, and add restrained visual separation to the three project-principle blocks.
+- [x] Make overflowing VideoDetail chapters a bounded, divided, keyboard-scrollable region; verify `ArrowDown` changes the focused list's `scrollTop` in a 390×844 browser.
+- [x] Run the final frontend suite: 12 test files / 42 tests, typecheck, lint, build, and OpenAPI stale check all pass.
+- [x] Preserve the overall task in `review`; PostgreSQL migration and live Telegram/WeChat acceptance gaps above remain unchanged and are not implied complete by this UI closeout.
+
 ## Validation Commands
 
 ```powershell
