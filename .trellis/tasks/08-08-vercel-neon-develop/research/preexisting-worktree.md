@@ -3,7 +3,9 @@
 Recorded before deployment implementation on 2026-08-08.
 
 - Base commit: `3989dee916e6420877edc988fc51adfe7f24e5ac`
-- Deployment branch: `codex/vercel-neon-deploy`
+- Final deployment branch: `main`
+- Temporary preparation branch: `codex/vercel-neon-deploy`
+- Latest remote integration base: `913c10b`
 - Modified files owned by earlier work:
   - `.env.example`
   - `README.md`

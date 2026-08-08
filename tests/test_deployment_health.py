@@ -8,7 +8,7 @@ POOLED_URL = (
     "ep-example-pooler.us-east-2.aws.neon.tech/notebook"
     "?sslmode=require"
 )
-REVISION = "d4e5f6a7b8c9"
+REVISION = "c7e8a91b2d34"
 
 
 class FakeCursor:

@@ -4,8 +4,8 @@
 
 - Record the current committed base SHA and the complete unstaged/untracked
   file list.
-- Create `codex/vercel-neon-deploy` from the committed HEAD and set it as the
-  task branch.
+- Prepare and verify the deployment commit in an isolated worktree based on the
+  latest `origin/main`, then set `main` as the task branch.
 - Never stage or commit files owned by the existing MCP task.
 - Gate: staged diff and `base..HEAD` diff contain only this task's files.
 
@@ -41,10 +41,9 @@ git diff --check
 ## 4. Commit, push, and connect Vercel to Git
 
 - Review and commit only the deployment task files.
-- Push `codex/vercel-neon-deploy` to GitHub.
+- Push the reviewed commit to GitHub `main` using a fast-forward update only.
 - Create `notebook-agent` in Vercel and link the GitHub repository.
-- Configure the selected branch as the stable branch for this dedicated
-  develop-only project.
+- Configure `main` as the stable Production branch for the competition project.
 - Add `DATABASE_URL` and non-secret environment markers to Vercel without
   echoing values.
 - Start the first Git-sourced deployment and capture its project, deployment,

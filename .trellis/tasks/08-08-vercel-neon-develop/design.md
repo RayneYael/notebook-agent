@@ -3,7 +3,7 @@
 ## Deployment topology
 
 ```text
-GitHub branch: codex/vercel-neon-deploy
+GitHub branch: main
                   |
                   | Git integration / automatic deploy
                   v
@@ -27,14 +27,15 @@ Operator migration path
 
 ## Git and environment isolation
 
-The existing working tree is dirty with changes owned by another task. The
-deployment branch is created from the current committed HEAD, and only files
-listed by this task are staged. Before every commit and push, compare the staged
-diff and branch diff against the base commit. The deployment must be sourced
-from a Git commit, not from a CLI upload of the dirty local directory.
+The existing working tree is dirty with changes owned by another task. Changes
+are prepared and checked on an isolated temporary branch, then `main` is updated
+only from a clean worktree based on the latest remote commit. Before every
+commit and push, compare the staged diff and branch diff against the base
+commit. The deployment must be sourced from the GitHub `main` commit, not from
+a CLI upload of the dirty local directory.
 
-Use one Vercel project named `notebook-agent`. Configure the deployment branch
-as that project's stable Production target. This is the final competition
+Use one Vercel project named `notebook-agent`. Configure `main`
+as that project's stable Production branch. This is the final competition
 environment; later Chat/MCP tasks update the same project instead of creating a
 second develop or production deployment.
 
@@ -135,7 +136,7 @@ approval.
 1. Validate handler tests locally without cloud credentials.
 2. Create the isolated Neon database and apply migrations through the direct
    endpoint.
-3. Push the deployment branch and connect it to the dedicated Vercel project.
+3. Push the reviewed commit to `main`, then connect it to the Vercel project.
 4. Add the pooled URL to the develop project environment and deploy.
 5. Verify HTTPS, response redaction, database revision, and Git provenance.
 

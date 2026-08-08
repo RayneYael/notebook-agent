@@ -8,11 +8,12 @@ including unrelated uncommitted MCP work.
 
 ## Requirements
 
-- Deploy from a dedicated Git branch based on the current committed `main`
-  HEAD. Existing uncommitted files in the working tree must remain unstaged and
-  must not be present in the deployed commit.
+- Deploy from the GitHub `main` branch. Prepare the change in isolation and
+  update `main` only from a clean worktree based on the latest remote commit.
+  Existing uncommitted files in the original working tree must remain unstaged
+  and must not be present in the deployed commit.
 - Create the competition Vercel project and connect it
-  to the GitHub repository so later pushes to the selected develop branch
+  to the GitHub repository so later pushes to `main`
   deploy automatically to a stable Vercel URL.
 - Create the competition Neon database with PostgreSQL extensions and the
   repository's committed Alembic migrations applied to the current committed
@@ -35,8 +36,8 @@ including unrelated uncommitted MCP work.
 
 ## Acceptance Criteria
 
-- [ ] A dedicated competition deployment branch exists on GitHub and contains only the
-      intended develop-deployment changes relative to its committed base.
+- [ ] GitHub `main` contains the reviewed competition-deployment commit and no
+      unrelated uncommitted working-tree changes.
 - [ ] A Git-connected Vercel project automatically builds that branch and has a
       stable HTTPS URL.
 - [ ] The competition Neon database exists, has `vector` and `pg_trgm`
@@ -47,7 +48,7 @@ including unrelated uncommitted MCP work.
       without leaking secrets or internal exception text.
 - [ ] Vercel uses the pooled Neon URL at runtime; migrations are run through a
       direct URL outside the Vercel build.
-- [ ] A subsequent Git push to the selected branch is demonstrably connected to
+- [ ] A subsequent Git push to `main` is demonstrably connected to
       a Vercel deployment, without manually uploading local files.
 - [ ] Local tests for response shape, redaction, and failure behavior pass, and
       the Vercel build completes within the standard Python bundle limit.

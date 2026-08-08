@@ -12,7 +12,7 @@
   "assignee": "lane",
   "createdAt": "2026-08-08",
   "completedAt": null,
-  "branch": "codex/vercel-neon-deploy",
+  "branch": "main",
   "base_branch": "main",
   "worktree_path": null,
   "commit": null,

@@ -8,7 +8,7 @@ projects.
 
 | Resource | Value |
 | --- | --- |
-| Git branch | `codex/vercel-neon-deploy` |
+| Git branch | `main` |
 | Vercel project | `notebook-agent` |
 | Neon project | `notebook-agent` |
 | Environment marker | `competition` |
@@ -42,14 +42,14 @@ alembic upgrade head
 alembic current
 ```
 
-The committed deployment currently expects revision `d4e5f6a7b8c9`. Update
+The committed deployment currently expects revision `c7e8a91b2d34`. Update
 `EXPECTED_DATABASE_REVISION` in `vercel.json` in the same commit as every future
 migration. Never run Alembic from a Vercel build or function import.
 
 ## Vercel setup
 
 Connect the GitHub repository to a Vercel project named `notebook-agent` and
-configure `codex/vercel-neon-deploy` as its Production branch. Set the pooled
+configure `main` as its Production branch. Set the pooled
 Neon value as the secret `DATABASE_URL` in the Vercel Production environment.
 
 The repository pins Python 3.12. Vercel installs the committed
@@ -71,7 +71,7 @@ https://<project-domain>/api/health
 Expected body:
 
 ```json
-{"status":"ok","environment":"competition","database":{"status":"ok","revision":"d4e5f6a7b8c9"}}
+{"status":"ok","environment":"competition","database":{"status":"ok","revision":"c7e8a91b2d34"}}
 ```
 
 Missing credentials, a direct/non-TLS runtime URL, database downtime, or schema
@@ -95,4 +95,4 @@ Fill this section with non-secret identifiers after the live deployment:
 - Neon project ID: pending
 - Neon branch ID: pending
 - Deployed Git commit: pending
-- Alembic revision: `d4e5f6a7b8c9`
+- Alembic revision: `c7e8a91b2d34`
