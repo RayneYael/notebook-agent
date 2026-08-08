@@ -7,17 +7,25 @@
   "functions": {
     "api/health.py": {
       "maxDuration": 30,
-      "excludeFiles": "{.trellis,docs,integrations,tests}/**"
+      "excludeFiles": "{.agents/**,.claude/**,.codex/**,.env,.env.*,.git/**,.github/**,.pytest_cache/**,.trellis/**,.vercel/**,.venv/**,build/**,docs/**,integrations/**,tests/**,*.egg-info/**,AGENTS.md,README.md,README.zh-CN.md,docker-compose.yml,mermaid-diagram.svg}"
     }
   },
-  "rewrites": [
+  "routes": [
     {
-      "source": "/",
-      "destination": "/api/health"
+      "src": "^/$",
+      "dest": "/api/health"
     },
     {
-      "source": "/health",
-      "destination": "/api/health"
+      "src": "^/health$",
+      "dest": "/api/health"
+    },
+    {
+      "src": "^/api/health$",
+      "dest": "/api/health"
+    },
+    {
+      "src": "^/.*$",
+      "status": 404
     }
   ]
 }

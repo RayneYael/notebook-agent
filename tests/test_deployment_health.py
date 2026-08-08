@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 
 from app.deployment_health import build_health_response, probe_database
 
@@ -138,3 +139,18 @@ def test_schema_mismatch_fails_closed_without_returning_actual_revision():
     assert response.http_status == 503
     assert response.failure_code == "database_schema_mismatch"
     assert "older-revision" not in json.dumps(response.payload)
+
+
+def test_vercel_config_allowlists_health_routes_and_excludes_local_secrets():
+    root = Path(__file__).resolve().parents[1]
+    config = json.loads((root / "vercel.json").read_text())
+
+    assert config["routes"] == [
+        {"src": "^/$", "dest": "/api/health"},
+        {"src": "^/health$", "dest": "/api/health"},
+        {"src": "^/api/health$", "dest": "/api/health"},
+        {"src": "^/.*$", "status": 404},
+    ]
+    excluded = config["functions"]["api/health.py"]["excludeFiles"]
+    assert ".env.*" in excluded
+    assert ".vercel/**" in excluded

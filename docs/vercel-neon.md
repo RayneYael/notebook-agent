@@ -55,7 +55,9 @@ Neon value as the secret `DATABASE_URL` in the Vercel Production environment.
 The repository pins Python 3.12. Vercel installs the committed
 `pyproject.toml` dependencies and must remain under the standard 500 MB
 uncompressed function limit. Non-runtime directories are excluded by
-`.vercelignore` and `functions.excludeFiles`.
+`.vercelignore` and `functions.excludeFiles`. Public routing is a strict
+allowlist for `/`, `/health`, and `/api/health`; repository source paths and
+local environment files must return 404.
 
 ## Verification
 
