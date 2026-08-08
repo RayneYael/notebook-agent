@@ -19,7 +19,8 @@
   "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
   "children": [
-    "08-09-why-saved-collection-tags"
+    "08-09-why-saved-collection-tags",
+    "08-09-frontend-delivery-integration"
   ],
   "parent": "08-04-video-text-kb",
   "relatedFiles": [

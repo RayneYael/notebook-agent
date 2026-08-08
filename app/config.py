@@ -308,6 +308,9 @@ class Settings:
     web_port: int = field(
         default_factory=lambda: _env_int("WEB_PORT", 8000)
     )
+    web_serve_static: bool = field(
+        default_factory=lambda: _env_bool("WEB_SERVE_STATIC", True)
+    )
     web_static_dir: str = field(
         default_factory=lambda: _env("WEB_STATIC_DIR", "web/dist") or "web/dist"
     )

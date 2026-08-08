@@ -100,6 +100,21 @@ def test_web_auth_settings_reject_retention_shorter_than_rate_window():
         settings.validate_web_auth()
 
 
+def test_web_static_serving_defaults_on_and_accepts_explicit_disable(monkeypatch):
+    monkeypatch.delenv("WEB_SERVE_STATIC", raising=False)
+    base = {
+        "database_url": "postgresql+psycopg://unused/unused",
+        "redis_url": "redis://unused/0",
+    }
+
+    assert Settings(**base).web_serve_static is True
+    monkeypatch.setenv("WEB_SERVE_STATIC", "false")
+    assert Settings(**base).web_serve_static is False
+    monkeypatch.setenv("WEB_SERVE_STATIC", "sometimes")
+    with pytest.raises(ValueError, match="WEB_SERVE_STATIC must be a boolean"):
+        Settings(**base)
+
+
 def test_web_origin_rejects_lookalike_loopback_and_paths():
     base = {
         "database_url": "postgresql+psycopg://unused/unused",

@@ -20,7 +20,7 @@ def build_web_app(
     session_factory=None,
     publisher=None,
     object_store=None,
-    mount_static: bool = True,
+    mount_static: bool | None = None,
 ):
     """Wire concrete services while keeping test doubles explicit and local."""
 
@@ -90,6 +90,11 @@ def build_web_app(
         submission=submission,
         transcript=TranscriptService(factory, store),
     )
+    serve_static = (
+        settings.web_serve_static
+        if mount_static is None
+        else mount_static
+    )
     return create_app(
         services=services,
         expected_origin=settings.web_origin,
@@ -97,5 +102,5 @@ def build_web_app(
         publish_budget_seconds=settings.web_publish_budget_seconds,
         save_enabled=settings.agent_save_enabled,
         web_login_channels=settings.web_login_channels,
-        static_dir=settings.web_static_dir if mount_static else None,
+        static_dir=settings.web_static_dir if serve_static else None,
     )

@@ -25,6 +25,7 @@ def settings(**overrides):
         "web_cookie_secure": True,
         "web_publish_budget_seconds": 1.5,
         "agent_save_enabled": True,
+        "web_serve_static": True,
         "web_static_dir": "web/dist",
         "ingest_max_active_per_user": 10,
         "ingest_daily_new_item_limit": 50,
@@ -86,6 +87,27 @@ def test_runtime_applies_the_global_save_switch_to_web_capabilities():
 
     assert response.status_code == 200
     assert response.json()["save_enabled"] is False
+
+
+def test_runtime_can_run_api_only_without_a_static_build(tmp_path):
+    missing_build = tmp_path / "missing-web-dist"
+
+    app = build_web_app(
+        settings(
+            web_serve_static=False,
+            web_static_dir=str(missing_build),
+        ),
+        session_factory=lambda: None,
+        publisher=lambda _dispatch_id: "task",
+        object_store=object(),
+    )
+
+    with TestClient(app, base_url="https://testserver") as client:
+        health = client.get("/api/v1/health")
+        root = client.get("/")
+
+    assert health.status_code == 200
+    assert root.status_code == 404
 
 
 @pytest.mark.parametrize(

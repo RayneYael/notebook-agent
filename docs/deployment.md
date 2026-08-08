@@ -31,10 +31,16 @@ WeChat ----------/             |
                                                   |
                                  MinIO + embedding API
 
+Bundled Web:
 Browser -> HTTPS reverse proxy -> Notebook Agent web-server (127.0.0.1:8000)
                                   |-- FastAPI /api/v1
                                   |-- React production assets
                                   `-- same PostgreSQL/Redis/MinIO services
+
+Split services, same public origin:
+Browser -> HTTPS reverse proxy -> /*        -> React static service
+                               `-> /api/v1  -> Notebook Agent web-server
+                                               (WEB_SERVE_STATIC=false)
 ```
 
 安全边界有一个重要限制：`gateway-server` 只允许绑定 `127.0.0.1`、`::1` 或
@@ -269,7 +275,10 @@ PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gat
 
 ### 6.3 同源 Web 视频资料库
 
-Web 前端必须先完成 production build，并与 FastAPI 从同一个 browser origin 提供：
+`web/` 是一个可独立构建和部署的私有前端应用包，不是 npm 组件库。详细的 bundled、
+split-service、Vercel 和回滚契约见[前端独立部署说明](frontend-deployment.md)。
+
+Bundled 模式下，Web 前端必须先完成 production build，并与 FastAPI 从同一个 browser origin 提供：
 
 ```bash
 cd web
@@ -282,6 +291,10 @@ corepack pnpm build
 cd ..
 .venv/bin/python -m app.cli web-server
 ```
+
+前后端由不同服务运行时，后端设置 `WEB_SERVE_STATIC=false`，静态服务提供 `web/dist`，
+公网 proxy 仍按同一域名把 `/api/v1/*` 转发到后端。此模式不要求后端镜像包含
+`web/dist`。不要配置跨 origin API、wildcard CORS、domain cookie 或浏览器 token fallback。
 
 `web-server` 默认只监听 `127.0.0.1:8000`。生产只把公网 `443` 反向代理到该端口；
 `8765` channel gateway 继续保持 loopback-only，绝不能一起暴露。TLS proxy 必须保留原始

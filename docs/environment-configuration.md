@@ -12,7 +12,7 @@
 | 保存 URL、重试 ingestion、更新/删除/恢复知识条目 | PostgreSQL、Redis、MinIO、Celery worker、Celery beat、Notebook Agent | [B. 完整本地 MCP](#b-完整本地-mcp) |
 | 给 MiXer 或其他远程 MCP client 提供 HTTPS endpoint | 场景 A 或 B 的依赖、Streamable HTTP、TLS reverse proxy | [C. Streamable HTTP / MiXer](#c-streamable-http--mixer) |
 | 接入 Telegram/微信 | gateway-server、已安装的 LangBot bridge plugin、LangBot core/adapters | [D. 可选 LangBot 渠道](#d-可选-langbot-渠道) |
-| 使用私有浏览器视频资料库 | PostgreSQL、`web/dist`、web-server、TLS reverse proxy、至少一个登录渠道；保存功能另需场景 B 的依赖 | [E. Same-origin Web library](#e-same-origin-web-library) |
+| 使用私有浏览器视频资料库 | PostgreSQL、静态前端服务或 `web/dist`、web-server、TLS reverse proxy、至少一个登录渠道；保存功能另需场景 B 的依赖 | [E. Same-origin Web library](#e-same-origin-web-library) |
 
 四个容易混淆的配置位置：
 
@@ -271,7 +271,12 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 
 ## E. Same-origin Web library
 
-这是浏览器端视频资料库的运行入口。Web 登录码必须由场景 D 中启用的 Telegram 或微信渠道批准；仅构建前端页面不能替代真实登录渠道。新增视频、失败重试和后台 ingestion 还需要场景 B 的 Redis、MinIO、worker 与 beat。
+这是浏览器端视频资料库的运行入口。`web/` 已经是一个独立的私有 React 应用包，
+不是需要发布到 npm 的组件库。它可以由 Python `web-server` 直接提供，也可以由独立
+静态服务提供；两种模式都必须让浏览器只看到一个 public origin，并把 `/api/v1/*`
+路由到 Python API。完整边界与代理示例见[前端独立部署说明](frontend-deployment.md)。
+
+Web 登录码必须由场景 D 中启用的 Telegram 或微信渠道批准；仅构建前端页面不能替代真实登录渠道。新增视频、失败重试和后台 ingestion 还需要场景 B 的 Redis、MinIO、worker 与 beat。
 
 ### 根 `.env` 增量
 
@@ -287,6 +292,7 @@ WEB_COOKIE_SECURE=true
 # 应用绑定 loopback，由同机 TLS reverse proxy 提供公网访问。
 WEB_HOST=127.0.0.1
 WEB_PORT=8000
+WEB_SERVE_STATIC=true
 WEB_STATIC_DIR=web/dist
 WEB_FORWARDED_ALLOW_IPS=127.0.0.1
 WEB_PUBLISH_BUDGET_SECONDS=5
@@ -308,7 +314,8 @@ corepack pnpm --dir web lint
 corepack pnpm --dir web build
 ```
 
-启动 gateway、至少一个登录渠道和 Web server：
+启动 gateway、至少一个登录渠道和 Web server。默认 bundled 模式保持
+`WEB_SERVE_STATIC=true`，由该进程同时提供 API 与 `web/dist`：
 
 ```bash
 .venv/bin/python -m app.cli gateway-server
@@ -316,6 +323,11 @@ corepack pnpm --dir web build
 ```
 
 TLS reverse proxy 必须把同一个 public origin 的 `/api/v1/*` 转发到 `web-server`，其余路径提供 SPA；不要把 loopback channel gateway 暴露给浏览器。最小验收：
+
+如果前端静态服务与 Python 后端分开部署，把后端设置为
+`WEB_SERVE_STATIC=false`；这时后端不读取或要求 `WEB_STATIC_DIR` 中存在构建产物，
+但 proxy 仍必须从同一个 public origin 将 `/api/v1/*` 转发到它。不要改成跨 origin
+API URL，也不要加入 wildcard CORS。
 
 ```text
 GET /api/v1/health
@@ -434,6 +446,7 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | `WEB_AUTH_CHALLENGE_RETENTION_SECONDS` / `WEB_AUTH_SESSION_RETENTION_SECONDS` | Web auth cleanup | `86400` / `604800` | 有界清理 | 否 | web-server、gateway |
 | `WEB_COOKIE_SECURE` | web-server | `true` | 所有 Web profile；不得关闭 | 否 | web-server |
 | `WEB_HOST` / `WEB_PORT` | web-server | `127.0.0.1` / `8000` | 应用监听；与 MCP 同机时端口必须不同 | 否 | web-server、reverse proxy |
+| `WEB_SERVE_STATIC` | web-server | `true` | `true` 由 Python 提供 `web/dist`；`false` 为同源代理后的 API-only 进程 | 否 | web-server |
 | `WEB_STATIC_DIR` | web-server | `web/dist` | React production build | 否 | web-server |
 | `WEB_PUBLISH_BUDGET_SECONDS` | Web batch/retry | `5` | broker 总等待预算 | 否 | web-server |
 | `WEB_FORWARDED_ALLOW_IPS` | web-server | `127.0.0.1` | 可信 reverse proxy allowlist；禁止 wildcard | 否 | web-server |

@@ -1,0 +1,44 @@
+# Implementation plan
+
+## Gate 0 - Ownership and source completion
+
+- [x] Fetch `origin` and `upstream`; confirm `upstream/main@a5d244e`.
+- [x] Create isolated `codex/frontend-delivery-integration` from the clean
+  collection branch; leave dirty root main and source worktrees untouched.
+- [x] Confirm collection branch `5b81485` and Showcase branch `b123d0f` have
+  committed handoffs.
+- [ ] Receive the active Web task's final committed handoff and residual-WIP
+  ownership report.
+
+## Gate 1 - Independent delivery contract
+
+- [x] RED: prove production composition cannot select API-only mode from
+  settings and expects static assets by default.
+- [x] GREEN: add strict `WEB_SERVE_STATIC` configuration with backward-compatible
+  bundled default and API-only composition.
+- [x] Document bundled and split-service same-origin topologies, proxy rules,
+  health checks, caching, rollback, and unsupported cross-origin behavior.
+
+## Gate 2 - Source integration and review
+
+- [ ] Integrate one source commit at a time, resolve shared frontend files by
+  behavior, and run the matching focused tests after each commit.
+- [ ] Review combined code for correctness, accessibility, product copy,
+  responsive behavior, security boundaries, duplication, and simpler designs.
+- [ ] Fix only reproducible blockers or narrow maintainability defects.
+
+## Gate 3 - Full verification
+
+- [ ] Run relevant Python config/API/CLI tests and compilation.
+- [ ] As sole owner, run frontend test, typecheck, lint, OpenAPI stale check,
+  and build serially in the integration worktree.
+- [ ] Run desktop and exact 390x844 browser smoke for Showcase, login, library,
+  add dialog, and detail; record console and overflow evidence.
+- [ ] Validate Trellis records and Git diff/commit boundaries.
+
+## Gate 4 - Handoff
+
+- [ ] Create Lore commits with source integration and delivery-boundary intent.
+- [ ] Push only the integration branch to the user's fork.
+- [ ] Open an upstream PR without merging; include architecture decision,
+  verification, and external deployment gates.
