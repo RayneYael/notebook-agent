@@ -40,14 +40,19 @@
   `alembic upgrade head --sql` succeeds. Offline downgrade intentionally cannot
   cross the published item-management revision because that downgrade performs
   a live deleted-row safety check; the published revision was not rewritten.
-- Final backend verification passed in one run: `313 passed, 58 skipped in
-  158.28s`. All skips are PostgreSQL-gated under the explicit port-1 URL.
-  Diagnostics verification separately passed `29 passed`, including the safe
-  `quota_exceeded` projection.
+- Final post-MCP backend verification passed in one run: `331 passed, 58
+  skipped in 167.67s`. All skips are PostgreSQL-gated under the explicit
+  port-1 URL. The frozen lock now includes both MCP and Web/FastAPI runtime
+  dependencies, and the Windows stdio protocol test uses explicit UTF-8 plus a
+  cross-platform pipe timeout.
 - Final frontend verification passed: OpenAPI JSON and generated TypeScript
   contract were unchanged, ESLint passed, all 39 Vitest cases across 12 files
   passed, TypeScript typecheck passed, and the Vite production build completed
   (`307.38 kB` JavaScript, `96.65 kB` gzip).
+- The new upstream environment guide now includes a first-class same-origin
+  Web profile, the complete `WEB_*` variable reference, frozen frontend build
+  commands, login-channel dependency, port separation from MCP, and the
+  browser/API smoke sequence.
 - Earlier Chromium smoke verified the private login/library/detail journey and
   the public Showcase at desktop and 390x844 widths, including direct-route
   refresh, source timestamp links, no horizontal overflow, and clean console

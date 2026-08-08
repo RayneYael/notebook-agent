@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
-import select as select_module
+import queue
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -1055,6 +1056,7 @@ run_stdio(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
 
     def send(value):
@@ -1064,9 +1066,15 @@ run_stdio(
 
     def receive():
         assert process.stdout is not None
-        ready, _, _ = select_module.select([process.stdout], [], [], 5)
-        assert ready, "stdio MCP server did not return a response"
-        line = process.stdout.readline()
+        lines: queue.Queue[str] = queue.Queue(maxsize=1)
+        threading.Thread(
+            target=lambda: lines.put(process.stdout.readline()),
+            daemon=True,
+        ).start()
+        try:
+            line = lines.get(timeout=5)
+        except queue.Empty:
+            pytest.fail("stdio MCP server did not return a response")
         assert line
         return json.loads(line)
 
