@@ -95,7 +95,7 @@
 - [x] Perform correctness, security, accessibility, performance, and
   first-principles reviews; run a final official-guidance audit subagent.
 - [x] Resolve all P1/P2 findings and rerun affected evidence.
-- [ ] Use the Lore commit workflow to create reviewable commits without `.omx/`.
+- [x] Use the Lore commit workflow to create reviewable commits without `.omx/`.
 - [ ] Push only `codex/web-video-library-mvp` to `origin`.
 - [ ] Create a PR from the fork branch to `upstream/main`; do not update, merge,
   or push either repository's `main` branch.
