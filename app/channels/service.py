@@ -8,10 +8,10 @@ from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
-from sqlalchemy.orm import Session
 from pydantic_ai.messages import ModelMessagesTypeAdapter
+from sqlalchemy.orm import Session
 
-from app.agent.runtime import AgentExecution, KnowledgeAgent
+from app.agent.runtime import KnowledgeAgent
 from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.channels.conversations import (
     find_turn,
@@ -20,8 +20,19 @@ from app.channels.conversations import (
     reset_thread,
     save_completed_turn,
 )
-from app.channels.errors import IdentityError, UnboundIdentity
+from app.channels.errors import (
+    DisabledIdentity,
+    ExpiredLinkToken,
+    IdentityConflict,
+    IdentityError,
+    InvalidLinkToken,
+    LinkMergeBusy,
+    UnboundIdentity,
+    UsedLinkToken,
+    WrongChannelLinkToken,
+)
 from app.channels.identity import (
+    classify_link_argument,
     consume_link_token,
     create_link_token,
     resolve_identity,
@@ -195,35 +206,82 @@ class ChannelService:
         if not argument:
             return AgentAnswer(
                 status="failed",
-                text="用法：已登录渠道发送 /link telegram；新渠道发送 /link <绑定码>。",
+                text="用法：发送 /link telegram、/link wechat 或 /link <绑定码>。",
                 error_code="link_usage",
             )
+        try:
+            kind, value = classify_link_argument(argument)
+        except IdentityConflict:
+            return AgentAnswer(
+                status="failed",
+                text="目前只支持 Telegram 与微信之间绑定。",
+                error_code="link_channel_unsupported",
+            )
+        except InvalidLinkToken:
+            return AgentAnswer(
+                status="failed",
+                text="绑定码格式无效，请从来源渠道重新生成。",
+                error_code="link_token_invalid",
+            )
         with self._session_factory() as db:
-            try:
-                tenant = resolve_identity(db, envelope)
-            except UnboundIdentity:
-                tenant = consume_link_token(db, envelope, argument)
+            if kind == "token":
+                try:
+                    consume_link_token(db, envelope, value)
+                except IdentityError as exc:
+                    return _link_failure(exc)
                 db.commit()
                 return AgentAnswer(
                     status="ok",
-                    text="渠道绑定成功，现在可访问同一个私有知识库。",
+                    text="渠道绑定成功。两个渠道现在共享同一个私有知识库，聊天历史仍各自独立。",
                 )
-
-            token = create_link_token(
-                db,
-                tenant,
-                target_channel=argument.lower(),
-                ttl=timedelta(seconds=self._settings.channel_link_ttl_seconds),
-            )
+            try:
+                tenant = resolve_identity(db, envelope)
+                if value == envelope.channel:
+                    return AgentAnswer(
+                        status="failed",
+                        text="目标渠道必须与当前渠道不同。",
+                        error_code="link_channel_current",
+                    )
+                token = create_link_token(
+                    db,
+                    tenant,
+                    target_channel=value,
+                    ttl=timedelta(seconds=self._settings.channel_link_ttl_seconds),
+                )
+            except IdentityError as exc:
+                return _link_failure(exc)
             db.commit()
+            ttl_minutes = max(
+                1, (self._settings.channel_link_ttl_seconds + 59) // 60
+            )
             return AgentAnswer(
                 status="ok",
                 text=(
                     f"绑定码：{token}\n"
-                    f"请在 {argument.lower()} 中发送 /link {token}。"
-                    "该绑定码短期有效且只能使用一次。"
+                    f"请在 {value} 中发送 /link {token}。"
+                    f"该绑定码约 {ttl_minutes} 分钟内有效且只能使用一次。"
                 ),
             )
+
+
+def _link_failure(exc: IdentityError) -> AgentAnswer:
+    if isinstance(exc, UsedLinkToken):
+        text, code = "该绑定码已使用，请重新生成。", "link_token_used"
+    elif isinstance(exc, ExpiredLinkToken):
+        text, code = "该绑定码已过期，请重新生成。", "link_token_expired"
+    elif isinstance(exc, WrongChannelLinkToken):
+        text, code = "请在绑定码指定的目标渠道中使用。", "link_channel_mismatch"
+    elif isinstance(exc, LinkMergeBusy):
+        text, code = "目标账户仍有内容正在处理，请稍后用同一绑定码重试。", "link_merge_busy"
+    elif isinstance(exc, DisabledIdentity):
+        text, code = "来源或目标账户已停用，无法绑定。", "link_account_disabled"
+    elif isinstance(exc, UnboundIdentity):
+        text, code = "请先在当前来源渠道发送 /start。", "link_source_unbound"
+    elif isinstance(exc, IdentityConflict):
+        text, code = "账户状态发生变化，请稍后重试或重新生成绑定码。", "link_merge_conflict"
+    else:
+        text, code = "绑定码无效，请重新生成。", "link_token_invalid"
+    return AgentAnswer(status="failed", text=text, error_code=code)
 
 
 def _command(text: str) -> tuple[str | None, str | None]:

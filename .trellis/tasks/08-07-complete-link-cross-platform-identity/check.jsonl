@@ -1,0 +1,3 @@
+{"file":".trellis/tasks/08-07-complete-link-cross-platform-identity/research/current-link-audit.md","reason":"Review the original behavior gaps, ownership graph, duplicate constraints and worker race risks."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Check bridge compatibility, fail-closed behavior and required human platform smoke."}
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Check that codes, messages, notes and external identities never enter diagnostics or evidence."}

@@ -96,6 +96,7 @@ class _Event:
 class _EventContext:
     def __init__(self):
         self.event = _Event()
+        self.bot_uuid = "wechat-bot"
         self.default_prevented = False
         self.postorder_prevented = False
         self.replies = []
@@ -107,7 +108,7 @@ class _EventContext:
         self.postorder_prevented = True
 
     async def get_bot_uuid(self) -> str:
-        return "wechat-bot"
+        return self.bot_uuid
 
     async def reply(self, message_chain):
         self.replies.append(message_chain)
@@ -131,6 +132,52 @@ async def test_early_event_uses_query_reply_api(monkeypatch: pytest.MonkeyPatch)
     assert len(forwarded[0]["trace_id"]) == 32
     assert forwarded[0]["trace_id"].isalnum()
     assert not hasattr(event_context.event, "reply_message_chain")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("bot_uuid", "channel", "command"),
+    [
+        ("telegram-bot", "telegram", "/link wechat"),
+        ("wechat-bot", "wechat", "/link telegram"),
+    ],
+)
+async def test_link_commands_keep_normalized_channel_envelope(
+    monkeypatch: pytest.MonkeyPatch,
+    bot_uuid: str,
+    channel: str,
+    command: str,
+):
+    module = _load_bridge_module(monkeypatch)
+    monkeypatch.setenv(
+        "KB_BOT_CHANNELS",
+        '{"telegram-bot":"telegram","wechat-bot":"wechat"}',
+    )
+    forwarded = []
+    monkeypatch.setattr(
+        module,
+        "_post",
+        lambda payload: (forwarded.append(payload) or {"text": "ok"}),
+    )
+    event_context = _EventContext()
+    event_context.bot_uuid = bot_uuid
+    command_chain = type(
+        "CommandChain",
+        (),
+        {
+            "message_id": "link-command-message",
+            "__str__": lambda self: command,
+        },
+    )
+    event_context.event.message_chain = command_chain()
+
+    listener = object.__new__(module.KnowledgeAgentEventListener)
+    await listener._handle(event_context)
+
+    assert len(forwarded) == 1
+    assert forwarded[0]["channel"] == channel
+    assert forwarded[0]["text"] == command
+    assert len(event_context.replies) == 1
 
 
 @pytest.mark.asyncio
