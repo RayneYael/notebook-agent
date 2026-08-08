@@ -782,7 +782,7 @@ def test_celery_worker_inspection_requires_pong_and_mutation_queues(monkeypatch)
             self.inspector = inspector
 
         def inspect(self, *, timeout):
-            assert timeout <= 0.35
+            assert timeout <= 1.0
             return self.inspector
 
     class App:

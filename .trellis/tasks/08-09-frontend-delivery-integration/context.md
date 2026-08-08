@@ -99,3 +99,14 @@
   user's fork branch `codex/web-video-library-mvp`. To avoid a duplicate PR, the
   verified integration head will fast-forward that fork branch and update the
   same PR. No merge is authorized or planned.
+
+## 2026-08-09 final upstream refresh
+
+- A final fetch found `upstream/main` had advanced from `a5d244e` to
+  `3e8c2f8` through PR 3. The only product delta was an MCP worker readiness
+  timeout increase from 0.35/0.75 seconds to 1/3 seconds; it was merged without
+  conflict and did not touch the Web package or API contract.
+- The upstream product change left one unit-test assertion at the old
+  `timeout <= 0.35` boundary. With the required placeholder test environment,
+  the MCP suite reproduced exactly that one failure. Updating the assertion to
+  the new one-second inspect limit produced `18 passed`.
