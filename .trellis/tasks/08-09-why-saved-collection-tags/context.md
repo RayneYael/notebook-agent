@@ -135,3 +135,20 @@
   within the viewport and the page had no horizontal overflow.
 - Port 5175 remains live and the desktop preview is left with `How` suggestions
   open for direct review. Ports 5173 and 5174 were not touched.
+
+## 2026-08-09 long detail-title balance follow-up
+
+- User feedback identified `How to practice effectively...for just about
+  anything` as a title that visually overwhelmed its cover. The fix preserves
+  the complete source title, uses a compact density after 44 visual character
+  units (CJK characters count as two), and changes the desktop hero from a 43%
+  media column to a balanced 50% media column.
+- TDD RED showed the reported title had no compact-density contract. GREEN adds
+  the density marker and responsive type rules without truncation. A normal
+  `How to Talk to Users` title remains standard density at 64px.
+- Final verification: 13 frontend test files / 56 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, and Vite build passed. At 1724x1375 the reported
+  cover measured 460x259 and the compact 52px title measured 436x204, with no
+  horizontal overflow. At 391x844 the cover measured 339x191, the title used
+  32px type, and no horizontal overflow appeared. The 5175 preview is restored
+  to the reported desktop detail for review; ports 5173 and 5174 were untouched.

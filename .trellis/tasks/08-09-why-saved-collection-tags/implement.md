@@ -81,6 +81,15 @@
 - [x] Run all frontend checks and desktop plus 391x844 browser smoke before the
   local-only commit.
 
+## Gate 10 - Long detail-title balance follow-up
+
+- [x] RED: render the reported long English title and prove the previous hero
+  did not opt into compact title typography.
+- [x] GREEN: keep the full title, classify visually long Latin/CJK strings, use
+  a compact responsive scale, and reserve half of the desktop hero for media.
+- [x] Verify the reported detail, a normal short-title detail, the 391x844
+  layout, full frontend checks, and the refreshed 5175 preview.
+
 ## Validation Commands
 
 ```powershell

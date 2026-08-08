@@ -54,6 +54,15 @@ function formatLanguage(code: string | null): string | null {
   return names[normalized] ?? names[normalized.split("-")[0]] ?? null;
 }
 
+function titleDensity(title: string): "standard" | "compact" {
+  const wideCharacter = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+  const visualLength = Array.from(title).reduce(
+    (length, character) => length + (wideCharacter.test(character) ? 2 : 1),
+    0,
+  );
+  return visualLength > 44 ? "compact" : "standard";
+}
+
 export function VideoDetailView({
   item,
   transcriptPages,
@@ -70,6 +79,7 @@ export function VideoDetailView({
   transcriptError = false,
 }: VideoDetailViewProps) {
   const savedContext = parseWhySaved(item.why_saved);
+  const title = item.title?.trim() || "视频信息尚未准备好";
   const [editingReason, setEditingReason] = useState(false);
   const [reason, setReason] = useState(savedContext.reason);
   const blocks = transcriptPages.flatMap((page) => page.blocks);
@@ -105,7 +115,7 @@ export function VideoDetailView({
         </div>
         <div className="detail-heading">
           <span className={`status-pill status-pill--${item.lifecycle}`}>{lifecycleCopy[item.lifecycle].label}</span>
-          <h1>{item.title?.trim() || "视频信息尚未准备好"}</h1>
+          <h1 className="detail-title" data-title-density={titleDensity(title)}>{title}</h1>
           <p className="detail-meta">
             {item.author ? <span>{item.author}</span> : null}
             {item.duration_sec !== null ? <span>{formatDuration(item.duration_sec)}</span> : null}

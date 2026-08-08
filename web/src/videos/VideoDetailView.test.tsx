@@ -37,6 +37,25 @@ const transcript: TranscriptPage = {
 };
 
 describe("video detail", () => {
+  it("keeps a long title complete while opting into compact hero typography", () => {
+    const longTitle = "How to practice effectively...for just about anything";
+    render(
+      <VideoDetailView
+        item={{ ...item, title: longTitle, cover_url: "https://i.ytimg.com/vi/example/hqdefault.jpg" }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    const heading = screen.getByRole("heading", { name: longTitle });
+    expect(heading).toHaveTextContent(longTitle);
+    expect(heading).toHaveAttribute("data-title-density", "compact");
+  });
+
   it("shows chapters and original transcript without pretending description is a summary", () => {
     const { container } = render(
       <VideoDetailView

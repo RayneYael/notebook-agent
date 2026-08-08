@@ -49,6 +49,9 @@ remains an ordinary validated hashtag inside `why_saved`.
   keystroke; choosing one reuses the existing search submission.
 - Search suggestions close on Escape or an outside pointer interaction and can
   be reopened by clicking a still-focused input with an unchanged query.
+- Video-detail heroes keep the complete source title, but long Latin or CJK
+  titles use a compact responsive type scale and the desktop cover retains
+  roughly half of the available hero width.
 - All additions match the existing pale editorial UI, remain usable at
   390x844, expose programmatic labels, and never rely on color alone.
 
@@ -88,3 +91,6 @@ remains an ordinary validated hashtag inside `why_saved`.
 - [x] Search tests and browser smoke prove local title/author/collection/reason
   suggestions, no per-keystroke request, reliable suggestion clicks, outside
   dismissal, reopening, and narrow-screen containment.
+- [x] Detail tests and browser smoke prove long titles remain complete, select
+  compact typography, keep the cover visually dominant, and avoid desktop or
+  mobile horizontal overflow without shrinking ordinary titles unnecessarily.
