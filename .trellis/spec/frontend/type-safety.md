@@ -1,51 +1,58 @@
 # Type Safety
 
-> Type safety patterns in this project.
+> How Python API schemas become browser TypeScript types.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's type safety conventions here.
-
-Questions to answer:
-- What type system do you use?
-- How are types organized?
-- What validation library do you use?
-- How do you handle type inference?
--->
-
-(To be filled by the team)
+TypeScript runs in strict mode. FastAPI Pydantic response and request models are the canonical browser contract. `openapi-typescript` generates the tracked `schema.d.ts`; frontend code imports small aliases from `contracts.ts`.
 
 ---
 
 ## Type Organization
 
-<!-- Where types are defined, shared types vs local types -->
+- `app/api/*_schemas.py`: canonical request and response DTOs.
+- `scripts/export_web_openapi.py`: deterministic, side-effect-free OpenAPI export.
+- `web/src/api/openapi.json`: tracked generated schema.
+- `web/src/api/schema.d.ts`: tracked generated TypeScript declarations.
+- `web/src/api/contracts.ts`: semantic aliases such as `LibraryItem`, `TranscriptPage`, and `LoginChannel`.
+- Component-only prop interfaces remain next to the component.
 
-(To be filled by the team)
+Never duplicate lifecycle, login-channel, batch-status, or transcript response unions by hand.
 
 ---
 
 ## Validation
 
-<!-- Runtime validation patterns (Zod, Yup, io-ts, etc.) -->
+The server is the runtime validation boundary. Pydantic uses strict extra-field rejection for browser requests and emits fixed safe validation errors. The client does not maintain a second handwritten Zod response schema.
 
-(To be filled by the team)
+Client-side checks may improve form feedback, such as the 1–10 URL limit, but they do not replace server validation.
 
 ---
 
 ## Common Patterns
 
-<!-- Type utilities, generics, type guards -->
+```ts
+import type { components } from "./schema";
 
-(To be filled by the team)
+type Schemas = components["schemas"];
+export type LibraryItem = Schemas["LibraryItemResponse"];
+export type LibraryLifecycle = LibraryItem["lifecycle"];
+```
+
+- Use `import type` for erased imports.
+- Narrow unknown errors by behavior rather than using `any`.
+- Use generated nullable fields exactly as returned by the API.
+- Treat transcript cursors and public IDs as opaque strings.
 
 ---
 
 ## Forbidden Patterns
 
-<!-- any, type assertions, etc. -->
-
-(To be filled by the team)
+- Editing `schema.d.ts` directly.
+- Casting API responses to unrelated interfaces.
+- Adding `any` to bypass a contract mismatch.
+- Declaring a second handwritten `LibraryItem` or lifecycle union.
+- Using ORM/model types in React.
+- Assuming optional summary data exists when the schema says null is valid.

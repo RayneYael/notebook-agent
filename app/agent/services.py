@@ -162,6 +162,7 @@ class KnowledgeServices:
                     .where(
                         ContentItem.user_id == self._tenant.app_user_id,
                         ContentItem.deleted_at.is_(None),
+                        ContentItem.archived_at.is_(None),
                         Segment.id.in_(segment_ids),
                     )
                 ).all()
@@ -236,6 +237,7 @@ class KnowledgeServices:
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
             ).one_or_none()
             if anchor is None:
@@ -243,8 +245,11 @@ class KnowledgeServices:
             segment, item = anchor
             neighbors = db.scalars(
                 select(Segment)
+                .join(ContentItem, Segment.item_id == ContentItem.id)
                 .where(
                     Segment.item_id == item.id,
+                    ContentItem.user_id == self._tenant.app_user_id,
+                    ContentItem.archived_at.is_(None),
                     Segment.seq.between(segment.seq - radius, segment.seq + radius),
                 )
                 .order_by(Segment.seq)
@@ -260,6 +265,7 @@ class KnowledgeServices:
                     ContentItem.id == item_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
             )
             if item is None:
@@ -285,6 +291,7 @@ class KnowledgeServices:
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
             ).one_or_none()
             if row is None:

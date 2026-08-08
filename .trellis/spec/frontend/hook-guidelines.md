@@ -1,51 +1,48 @@
 # Hook Guidelines
 
-> How hooks are used in this project.
+> How React and TanStack Query hooks are used.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's hook conventions here.
-
-Questions to answer:
-- What custom hooks do you have?
-- How do you handle data fetching?
-- What are the naming conventions?
-- How do you share stateful logic?
--->
-
-(To be filled by the team)
+TanStack Query owns remote server state. React `useState` owns short-lived form and disclosure state. Effects are reserved for browser APIs and transitions that cannot be expressed as render state.
 
 ---
 
 ## Custom Hook Patterns
 
-<!-- How to create and structure custom hooks -->
+The current MVP does not add custom hooks merely to hide a few lines. Extract a hook only when it expresses a stable product behavior used by more than one component or needs isolated lifecycle testing.
 
-(To be filled by the team)
+Pure logic should remain a pure function. `shouldPollLibrary()` is a function, not a hook, because it only derives a boolean from lifecycle data.
 
 ---
 
 ## Data Fetching
 
-<!-- How data fetching is handled (React Query, SWR, etc.) -->
-
-(To be filled by the team)
+- Use `useQuery` for session, list, and detail reads.
+- Use `useInfiniteQuery` for cursor-based transcript pages.
+- Use `useMutation` for add, archive, restore, retry, edit, exchange, and logout.
+- Query keys begin with the resource boundary: `session`, `library`, `library-item`, `transcript`, or `login-challenge`.
+- Invalidate `library` after any item mutation. Update the exact detail cache from the mutation response.
+- Poll only when a visible item is `queued` or `processing`. Terminal states stop polling.
+- Login challenge polling stops when approved or when the request errors.
+- API errors do not trigger unbounded retries. A 401 immediately clears the private cache.
 
 ---
 
 ## Naming Conventions
 
-<!-- Hook naming rules (use*, etc.) -->
-
-(To be filled by the team)
+- Hook names begin with `use` only when they call hooks.
+- Query results are named after the resource (`library`, `item`, `transcript`, `session`).
+- Mutation variables describe the action rather than exposing HTTP method details.
 
 ---
 
 ## Common Mistakes
 
-<!-- Hook-related mistakes your team has made -->
-
-(To be filled by the team)
+- Polling every item independently instead of refreshing one library page.
+- Polling ready, failed, needs-action, or archived items.
+- Keeping a browser login secret in an effect-independent global or Web Storage.
+- Using an effect to duplicate query-derived state.
+- Forgetting to stop an interval when a challenge is approved.

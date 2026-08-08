@@ -1,4 +1,5 @@
 from dataclasses import replace
+from datetime import UTC, datetime
 import time
 
 from kombu import Connection
@@ -10,6 +11,8 @@ from app.ingest.submission import (
     EmptyBatch,
     IngestSubmissionService,
     ItemReference,
+    MAX_SAVE_BATCH_SIZE,
+    PreparedItem,
     normalize_item_reference,
     prepare_submission,
 )
@@ -59,7 +62,7 @@ def test_batch_size_is_checked_before_item_normalization(monkeypatch):
         return ItemReference("youtube", "dQw4w9WgXcQ", url)
 
     monkeypatch.setattr("app.ingest.submission.normalize_item_reference", normalize)
-    urls = [f"https://example.test/{index}" for index in range(10)]
+    urls = [f"https://example.test/{index}" for index in range(MAX_SAVE_BATCH_SIZE)]
 
     assert len(prepare_submission(urls).items) == 10
     assert calls == urls
@@ -76,6 +79,43 @@ def test_batch_size_is_checked_before_item_normalization(monkeypatch):
     assert calls == []
 
 
+def test_ten_url_broker_outage_obeys_one_total_publish_budget(monkeypatch):
+    store = FakeStore([None] * MAX_SAVE_BATCH_SIZE)
+    observed_budgets = []
+    clock = [100.0]
+    monkeypatch.setattr(
+        "app.ingest.submission.time.monotonic",
+        lambda: clock[0],
+    )
+
+    def unavailable(_dispatch_id, *, remaining_budget_seconds):
+        observed_budgets.append(remaining_budget_seconds)
+        clock[0] += remaining_budget_seconds + 0.01
+        raise TimeoutError("private broker timeout")
+
+    service = IngestSubmissionService(store.session, unavailable)
+    urls = [
+        f"https://www.youtube.com/watch?v=budget{i:05d}"
+        for i in range(MAX_SAVE_BATCH_SIZE)
+    ]
+
+    started = time.monotonic()
+    result = service.submit_urls(
+        TenantContext(57, 9, "wechat", "account", "external"),
+        urls,
+        why_saved=None,
+        request_key="web:whole-batch-budget",
+        publish_budget_seconds=0.05,
+    )
+    elapsed = time.monotonic() - started
+
+    assert [value.status for value in result.results] == [
+        "queue_unavailable"
+    ] * MAX_SAVE_BATCH_SIZE
+    assert len(observed_budgets) == 1
+    assert elapsed < 0.2
+
+
 def test_youtube_marker_on_an_untrusted_host_is_not_supported():
     prepared = prepare_submission(
         ["https://example.test/youtu.be/dQw4w9WgXcQ"]
@@ -89,6 +129,7 @@ class FakeStore:
         self.scalar_results = list(scalar_results)
         self.items = []
         self.dispatches = []
+        self.statements = []
 
     def session(self):
         return FakeSession(self)
@@ -105,6 +146,7 @@ class FakeSession:
         return None
 
     def scalar(self, _statement):
+        self.store.statements.append(_statement)
         return self.store.scalar_results.pop(0)
 
     def add(self, value):
@@ -132,6 +174,114 @@ class FakeSession:
                 None,
             )
         return None
+
+
+@pytest.mark.parametrize(
+    "quota_name",
+    (
+        "max_active_per_tenant",
+        "daily_new_item_limit",
+        "max_items_per_tenant",
+        "max_active_global",
+        "daily_new_item_limit_global",
+        "daily_dispatch_limit_per_tenant",
+        "daily_dispatch_limit_global",
+    ),
+)
+@pytest.mark.parametrize("invalid_value", (0, -1))
+def test_ingest_quota_configuration_rejects_non_positive_limits(
+    quota_name,
+    invalid_value,
+):
+    with pytest.raises(ValueError, match=rf"^{quota_name} must be positive$"):
+        IngestSubmissionService(
+            FakeStore([]).session,
+            lambda _dispatch_id: "task-id",
+            **{quota_name: invalid_value},
+        )
+
+
+def test_archived_failed_item_with_new_key_is_already_exists_without_retry():
+    existing = ContentItem(
+        id=41,
+        public_id="archived-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="failed",
+        fail_reason="ingestion_failed",
+        archived_at=datetime.now(UTC),
+    )
+    store = FakeStore([existing])
+    published = []
+
+    result = IngestSubmissionService(
+        store.session,
+        lambda dispatch_id: published.append(dispatch_id) or "task",
+    ).submit_urls(
+        TenantContext(57, 9, "telegram", "account", "external"),
+        [existing.url],
+        why_saved=None,
+        request_key="new-request-key",
+    )
+
+    assert result.results[0].status == "already_exists"
+    assert result.results[0].state == "failed"
+    assert result.results[0].item_public_id == "archived-public"
+    assert result.results[0].archived is True
+    assert existing.state == "failed"
+    assert existing.fail_reason == "ingestion_failed"
+    assert store.dispatches == []
+    assert published == []
+    assert len(store.statements) == 1
+
+
+def test_conflict_recovery_checks_same_request_dispatch_before_already_exists():
+    existing = ContentItem(
+        id=41,
+        public_id="item-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="pending",
+    )
+    replay = IngestDispatch(
+        id=71,
+        public_id="dispatch-public",
+        item_id=41,
+        request_key="same-request",
+        attempt=1,
+        state="failed",
+        error_code="queue_unavailable",
+    )
+    store = FakeStore([existing, replay])
+    service = IngestSubmissionService(store.session, lambda _value: "task")
+    prepared = PreparedItem(
+        input_index=0,
+        reference=ItemReference(
+            "youtube",
+            "dQw4w9WgXcQ",
+            existing.url,
+        ),
+    )
+
+    result = service._result_after_conflict(
+        TenantContext(57, 9, "telegram", "account", "external"),
+        prepared,
+        prepared.reference,
+        request_key="same-request",
+    )
+
+    assert result.status == "queue_unavailable"
+    assert result.safe_error_code == "queue_unavailable"
+    assert len(store.statements) == 2
+    assert "content_item.user_id" in str(store.statements[0])
+    assert "ingest_dispatch.request_key" in str(store.statements[1])
+    assert "ingest_dispatch.item_id" in str(store.statements[1])
 
 
 def test_submission_is_tenant_bound_async_and_partial():
@@ -165,12 +315,15 @@ def test_submission_is_tenant_bound_async_and_partial():
     ]
     assert [value.input_index for value in result.results] == [0, 1, 2]
     assert result.results[0].item_id == 41
+    assert result.results[0].item_public_id == store.items[0].public_id
     assert result.results[2].item_id == 42
+    assert result.results[2].item_public_id == store.items[1].public_id
     assert result.results[2].safe_error_code == "queue_unavailable"
     assert "private broker detail" not in repr(result)
     assert published == [71, 72]
 
     assert [item.user_id for item in store.items] == [57, 57]
+    assert all(item.public_id for item in store.items)
     assert [item.state for item in store.items] == ["pending", "pending"]
     assert all(item.title is None for item in store.items)
     assert all(
@@ -307,6 +460,7 @@ def test_existing_item_replays_same_request_and_does_not_republish():
     assert replay.results[0].status == "queued"
     assert repeated.results[0].status == "already_exists"
     assert repeated.results[0].item_id == first.results[0].item_id
+    assert repeated.results[0].item_public_id == first.results[0].item_public_id
     assert len(store.items) == 1
     assert len(store.dispatches) == 1
     assert published == [71]

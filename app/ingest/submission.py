@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+import inspect
+import time
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -13,10 +15,14 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.channels.types import TenantContext
+from app.channels.types import TenantContext, UserScope
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
-from app.models import ContentItem, IngestDispatch
+from app.models import AppUser, ContentItem, IngestDispatch
+
+
+MAX_SAVE_BATCH_SIZE = 10
+MIN_REMAINING_PUBLISH_BUDGET_SECONDS = 0.01
 
 
 class BatchValidationError(ValueError):
@@ -64,15 +70,202 @@ class SaveItemResult:
         "invalid_url",
         "queue_unavailable",
         "create_failed",
+        "quota_exceeded",
     ]
     item_id: int | None = None
+    item_public_id: str | None = None
     state: str | None = None
+    archived: bool = False
     safe_error_code: str | None = None
 
 
 @dataclass(frozen=True)
 class BatchSaveResult:
     results: tuple[SaveItemResult, ...]
+
+
+_INGEST_ADMISSION_LOCK_ID = 0x4E_4F_54_45_49_4E_47
+
+
+class IngestQuotaExceeded(Exception):
+    """Internal admission rejection with no private capacity details."""
+
+
+@dataclass(frozen=True)
+class IngestQuotaPolicy:
+    """Atomic PostgreSQL admission policy shared by submit and retry paths."""
+
+    max_active_per_tenant: int | None = None
+    daily_new_item_limit: int | None = None
+    max_items_per_tenant: int | None = None
+    max_active_global: int | None = None
+    daily_new_item_limit_global: int | None = None
+    daily_dispatch_limit_per_tenant: int | None = None
+    daily_dispatch_limit_global: int | None = None
+
+    def __post_init__(self) -> None:
+        for name, value in (
+            ("max_active_per_tenant", self.max_active_per_tenant),
+            ("daily_new_item_limit", self.daily_new_item_limit),
+            ("max_items_per_tenant", self.max_items_per_tenant),
+            ("max_active_global", self.max_active_global),
+            (
+                "daily_new_item_limit_global",
+                self.daily_new_item_limit_global,
+            ),
+            (
+                "daily_dispatch_limit_per_tenant",
+                self.daily_dispatch_limit_per_tenant,
+            ),
+            (
+                "daily_dispatch_limit_global",
+                self.daily_dispatch_limit_global,
+            ),
+        ):
+            if value is not None and value <= 0:
+                raise ValueError(f"{name} must be positive")
+
+    @property
+    def enabled(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.max_active_per_tenant,
+                self.daily_new_item_limit,
+                self.max_items_per_tenant,
+                self.max_active_global,
+                self.daily_new_item_limit_global,
+                self.daily_dispatch_limit_per_tenant,
+                self.daily_dispatch_limit_global,
+            )
+        )
+
+    def acquire_locks(self, db: Session, app_user_id: int) -> bool:
+        """Acquire global then tenant locks in one stable deadlock-free order."""
+
+        if not self.enabled:
+            return True
+        bind = db.get_bind()
+        if self._global_limits_enabled and bind.dialect.name == "postgresql":
+            db.execute(select(func.pg_advisory_xact_lock(_INGEST_ADMISSION_LOCK_ID)))
+        user_id = db.scalar(
+            select(AppUser.id)
+            .where(AppUser.id == app_user_id)
+            .with_for_update()
+        )
+        return user_id is not None
+
+    def enforce(
+        self,
+        db: Session,
+        app_user_id: int,
+        *,
+        include_new_item_limits: bool,
+    ) -> None:
+        if not self.enabled:
+            return
+        if self.max_active_global is not None:
+            active_global = db.scalar(
+                select(func.count(IngestDispatch.id)).where(
+                    IngestDispatch.state.in_(("pending", "enqueued", "running"))
+                )
+            ) or 0
+            if active_global >= self.max_active_global:
+                raise IngestQuotaExceeded
+        if self.max_active_per_tenant is not None:
+            active_tenant = db.scalar(
+                select(func.count(IngestDispatch.id))
+                .join(ContentItem, ContentItem.id == IngestDispatch.item_id)
+                .where(
+                    ContentItem.user_id == app_user_id,
+                    IngestDispatch.state.in_(("pending", "enqueued", "running")),
+                )
+            ) or 0
+            if active_tenant >= self.max_active_per_tenant:
+                raise IngestQuotaExceeded
+        if not include_new_item_limits:
+            self._enforce_daily_dispatch_limits(db, app_user_id)
+            return
+        now = datetime.now(UTC)
+        day_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        self._enforce_daily_dispatch_limits(
+            db,
+            app_user_id,
+            day_start=day_start,
+        )
+        if self.daily_new_item_limit_global is not None:
+            daily_global = db.scalar(
+                select(func.count(ContentItem.id)).where(
+                    ContentItem.saved_at >= day_start
+                )
+            ) or 0
+            if daily_global >= self.daily_new_item_limit_global:
+                raise IngestQuotaExceeded
+        if self.daily_new_item_limit is not None:
+            daily_tenant = db.scalar(
+                select(func.count(ContentItem.id)).where(
+                    ContentItem.user_id == app_user_id,
+                    ContentItem.saved_at >= day_start,
+                )
+            ) or 0
+            if daily_tenant >= self.daily_new_item_limit:
+                raise IngestQuotaExceeded
+        if self.max_items_per_tenant is not None:
+            total = db.scalar(
+                select(func.count(ContentItem.id)).where(
+                    ContentItem.user_id == app_user_id
+                )
+            ) or 0
+            if total >= self.max_items_per_tenant:
+                raise IngestQuotaExceeded
+
+    def _enforce_daily_dispatch_limits(
+        self,
+        db: Session,
+        app_user_id: int,
+        *,
+        day_start: datetime | None = None,
+    ) -> None:
+        if (
+            self.daily_dispatch_limit_per_tenant is None
+            and self.daily_dispatch_limit_global is None
+        ):
+            return
+        if day_start is None:
+            now = datetime.now(UTC)
+            day_start = now.replace(
+                hour=0,
+                minute=0,
+                second=0,
+                microsecond=0,
+            )
+        if self.daily_dispatch_limit_global is not None:
+            daily_global = db.scalar(
+                select(func.count(IngestDispatch.id)).where(
+                    IngestDispatch.created_at >= day_start
+                )
+            ) or 0
+            if daily_global >= self.daily_dispatch_limit_global:
+                raise IngestQuotaExceeded
+        if self.daily_dispatch_limit_per_tenant is not None:
+            daily_tenant = db.scalar(
+                select(func.count(IngestDispatch.id))
+                .join(ContentItem, ContentItem.id == IngestDispatch.item_id)
+                .where(
+                    ContentItem.user_id == app_user_id,
+                    IngestDispatch.created_at >= day_start,
+                )
+            ) or 0
+            if daily_tenant >= self.daily_dispatch_limit_per_tenant:
+                raise IngestQuotaExceeded
+
+    @property
+    def _global_limits_enabled(self) -> bool:
+        return (
+            self.max_active_global is not None
+            or self.daily_new_item_limit_global is not None
+            or self.daily_dispatch_limit_global is not None
+        )
 
 
 @dataclass(frozen=True)
@@ -119,7 +312,7 @@ def prepare_submission(urls: list[str]) -> PreparedBatch:
     values = list(urls)
     if not values:
         raise EmptyBatch()
-    if len(values) > 10:
+    if len(values) > MAX_SAVE_BATCH_SIZE:
         raise BatchTooLarge()
 
     items: list[PreparedItem] = []
@@ -161,9 +354,16 @@ class IngestSubmissionService:
     def __init__(
         self,
         session_factory: Callable[[], Session],
-        publisher: Callable[[int], str | None],
+        publisher: Callable[..., str | None],
         *,
         retention_days: int | None = None,
+        max_active_per_tenant: int | None = None,
+        daily_new_item_limit: int | None = None,
+        max_items_per_tenant: int | None = None,
+        max_active_global: int | None = None,
+        daily_new_item_limit_global: int | None = None,
+        daily_dispatch_limit_per_tenant: int | None = None,
+        daily_dispatch_limit_global: int | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
@@ -175,18 +375,46 @@ class IngestSubmissionService:
         if retention_days <= 0:
             raise ValueError("retention_days must be positive")
         self._retention = timedelta(days=int(retention_days))
+        self._quota_policy = IngestQuotaPolicy(
+            max_active_per_tenant=max_active_per_tenant,
+            daily_new_item_limit=daily_new_item_limit,
+            max_items_per_tenant=max_items_per_tenant,
+            max_active_global=max_active_global,
+            daily_new_item_limit_global=daily_new_item_limit_global,
+            daily_dispatch_limit_per_tenant=daily_dispatch_limit_per_tenant,
+            daily_dispatch_limit_global=daily_dispatch_limit_global,
+        )
+        try:
+            signature = inspect.signature(publisher)
+            self._publisher_accepts_budget = (
+                "remaining_budget_seconds" in signature.parameters
+                or any(
+                    value.kind is inspect.Parameter.VAR_KEYWORD
+                    for value in signature.parameters.values()
+                )
+            )
+        except (TypeError, ValueError):
+            self._publisher_accepts_budget = False
 
     def submit_urls(
         self,
-        tenant: TenantContext,
+        tenant: UserScope,
         urls: list[str],
         *,
         why_saved: str | None,
         request_key: str,
+        publish_budget_seconds: float | None = None,
     ) -> BatchSaveResult:
         if not request_key.strip():
             raise ValueError("request key is required")
         prepared = prepare_submission(urls)
+        deadline = (
+            time.monotonic() + float(publish_budget_seconds)
+            if publish_budget_seconds is not None
+            else None
+        )
+        if publish_budget_seconds is not None and publish_budget_seconds <= 0:
+            raise ValueError("publish budget must be positive")
         results: list[SaveItemResult] = []
         for item in prepared.items:
             if item.failure is not None:
@@ -198,17 +426,19 @@ class IngestSubmissionService:
                     item,
                     why_saved=why_saved,
                     request_key=request_key,
+                    publish_deadline=deadline,
                 )
             )
         return BatchSaveResult(tuple(results))
 
     def _submit_reference(
         self,
-        tenant: TenantContext,
+        tenant: UserScope,
         prepared: PreparedItem,
         *,
         why_saved: str | None,
         request_key: str,
+        publish_deadline: float | None,
     ) -> SaveItemResult:
         reference = prepared.reference
         if reference is None:
@@ -216,6 +446,10 @@ class IngestSubmissionService:
         result_id = f"A{prepared.input_index + 1}"
         try:
             with self._session_factory() as db:
+                if not self._quota_policy.acquire_locks(
+                    db, tenant.app_user_id
+                ):
+                    raise RuntimeError("tenant does not exist")
                 existing = db.scalar(
                     select(ContentItem).where(
                         ContentItem.user_id == tenant.app_user_id,
@@ -245,6 +479,7 @@ class IngestSubmissionService:
                         existing.purge_claimed_at = None
                         existing.purge_attempts = 0
                         existing.purge_error_code = None
+                        existing.archived_at = None
                         restored_from_trash = True
                         if why_saved is not None:
                             existing.why_saved = " ".join(why_saved.split())[:500] or None
@@ -257,8 +492,11 @@ class IngestSubmissionService:
                                 input_index=prepared.input_index,
                                 status="restored",
                                 item_id=existing.id,
+                                item_public_id=existing.public_id,
                                 state=existing.state,
                             )
+                    if existing.archived_at is not None:
+                        return self._already_exists(prepared, existing)
                     replay = db.scalar(
                         select(IngestDispatch).where(
                             IngestDispatch.item_id == existing.id,
@@ -288,12 +526,23 @@ class IngestSubmissionService:
                         if restored_from_trash:
                             db.commit()
                         return self._already_exists(prepared, existing)
+                    self._enforce_ingest_quota(
+                        db,
+                        tenant.app_user_id,
+                        include_new_item_limits=False,
+                    )
                     content = existing
                     content.state = "pending"
                     content.fail_reason = None
                     attempt = (latest.attempt + 1) if latest is not None else 1
                 else:
+                    self._enforce_ingest_quota(
+                        db,
+                        tenant.app_user_id,
+                        include_new_item_limits=True,
+                    )
                     content = ContentItem(
+                        public_id=uuid4().hex,
                         user_id=tenant.app_user_id,
                         platform=reference.platform,
                         platform_id=reference.platform_id,
@@ -315,11 +564,22 @@ class IngestSubmissionService:
                 db.add(dispatch)
                 db.flush()
                 item_id = content.id
+                item_public_id = content.public_id
                 dispatch_id = dispatch.id
                 db.commit()
+        except IngestQuotaExceeded:
+            return SaveItemResult(
+                result_id=result_id,
+                input_index=prepared.input_index,
+                status="quota_exceeded",
+                safe_error_code="quota_exceeded",
+            )
         except IntegrityError:
             return self._result_after_conflict(
-                tenant, prepared, reference
+                tenant,
+                prepared,
+                reference,
+                request_key=request_key,
             )
         except Exception:
             return SaveItemResult(
@@ -329,8 +589,24 @@ class IngestSubmissionService:
                 safe_error_code="create_failed",
             )
 
+        remaining_budget = (
+            publish_deadline - time.monotonic()
+            if publish_deadline is not None
+            else None
+        )
         try:
-            task_id = self._publisher(dispatch_id)
+            if (
+                remaining_budget is not None
+                and remaining_budget <= MIN_REMAINING_PUBLISH_BUDGET_SECONDS
+            ):
+                raise TimeoutError("broker_publish_timeout")
+            if self._publisher_accepts_budget and remaining_budget is not None:
+                task_id = self._publisher(
+                    dispatch_id,
+                    remaining_budget_seconds=remaining_budget,
+                )
+            else:
+                task_id = self._publisher(dispatch_id)
         except Exception:
             self._set_dispatch_state(
                 dispatch_id,
@@ -342,6 +618,7 @@ class IngestSubmissionService:
                 input_index=prepared.input_index,
                 status="queue_unavailable",
                 item_id=item_id,
+                item_public_id=item_public_id,
                 state="pending",
                 safe_error_code="queue_unavailable",
             )
@@ -356,6 +633,7 @@ class IngestSubmissionService:
             input_index=prepared.input_index,
             status="queued",
             item_id=item_id,
+            item_public_id=item_public_id,
             state="pending",
         )
 
@@ -385,12 +663,26 @@ class IngestSubmissionService:
         result_id = "A1"
         try:
             with self._session_factory() as db:
+                if not self._quota_policy.acquire_locks(
+                    db, tenant.app_user_id
+                ):
+                    return SaveItemResult(
+                        result_id,
+                        0,
+                        "retry_not_allowed",
+                        item_id=item_id,
+                        safe_error_code="item_not_found",
+                    )
                 item = db.scalar(
                     select(ContentItem)
                     .where(ContentItem.id == item_id, ContentItem.user_id == tenant.app_user_id)
                     .with_for_update()
                 )
-                if item is None or getattr(item, "deleted_at", None) is not None:
+                if (
+                    item is None
+                    or getattr(item, "deleted_at", None) is not None
+                    or getattr(item, "archived_at", None) is not None
+                ):
                     return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, safe_error_code="item_not_found")
                 replay = db.scalar(
                     select(IngestDispatch).where(
@@ -426,6 +718,11 @@ class IngestSubmissionService:
                     return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
                 if latest is not None and latest.state in {"pending", "enqueued", "running"}:
                     return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+                self._enforce_ingest_quota(
+                    db,
+                    tenant.app_user_id,
+                    include_new_item_limits=False,
+                )
                 item.state = "pending"
                 item.fail_reason = None
                 dispatch = IngestDispatch(
@@ -439,6 +736,14 @@ class IngestSubmissionService:
                 db.flush()
                 dispatch_id = dispatch.id
                 db.commit()
+        except IngestQuotaExceeded:
+            return SaveItemResult(
+                result_id,
+                0,
+                "quota_exceeded",
+                item_id=item_id,
+                safe_error_code="quota_exceeded",
+            )
         except IntegrityError:
             with self._session_factory() as db:
                 item = db.get(ContentItem, item_id)
@@ -526,6 +831,27 @@ class IngestSubmissionService:
 
     retry_item_ingestion = retry_item
 
+    @property
+    def _quotas_enabled(self) -> bool:
+        return self._quota_policy.enabled
+
+    @property
+    def quota_policy(self) -> IngestQuotaPolicy:
+        return self._quota_policy
+
+    def _enforce_ingest_quota(
+        self,
+        db: Session,
+        app_user_id: int,
+        *,
+        include_new_item_limits: bool,
+    ) -> None:
+        self._quota_policy.enforce(
+            db,
+            app_user_id,
+            include_new_item_limits=include_new_item_limits,
+        )
+
     @staticmethod
     def _already_exists(
         prepared: PreparedItem, content: ContentItem
@@ -535,7 +861,9 @@ class IngestSubmissionService:
             input_index=prepared.input_index,
             status="already_exists",
             item_id=content.id,
+            item_public_id=content.public_id,
             state=content.state,
+            archived=content.archived_at is not None,
         )
 
     def _existing_result(
@@ -555,6 +883,7 @@ class IngestSubmissionService:
                 input_index=prepared.input_index,
                 status="queue_unavailable",
                 item_id=content.id,
+                item_public_id=content.public_id,
                 state=content.state,
                 safe_error_code="queue_unavailable",
             )
@@ -563,14 +892,17 @@ class IngestSubmissionService:
             input_index=prepared.input_index,
             status="queued",
             item_id=content.id,
+            item_public_id=content.public_id,
             state=content.state,
         )
 
     def _result_after_conflict(
         self,
-        tenant: TenantContext,
+        tenant: UserScope,
         prepared: PreparedItem,
         reference: ItemReference,
+        *,
+        request_key: str,
     ) -> SaveItemResult:
         try:
             with self._session_factory() as db:
@@ -582,6 +914,18 @@ class IngestSubmissionService:
                     )
                 )
                 if existing is not None:
+                    replay = db.scalar(
+                        select(IngestDispatch).where(
+                            IngestDispatch.item_id == existing.id,
+                            IngestDispatch.request_key == request_key,
+                        )
+                    )
+                    if replay is not None:
+                        return self._existing_result(
+                            prepared,
+                            existing,
+                            replay,
+                        )
                     return self._already_exists(prepared, existing)
         except Exception:
             pass

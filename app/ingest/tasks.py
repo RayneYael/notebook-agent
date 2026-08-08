@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import math
 import os
 import time
 from collections.abc import Callable
@@ -12,9 +11,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-import boto3
-from botocore.exceptions import ClientError
-from botocore.config import Config as BotoConfig
 from celery import Celery, Task
 from kombu import Producer
 from sqlalchemy import delete, func, select
@@ -28,6 +24,7 @@ from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import guard_transcript
 from app.models import AppUser, ContentItem, IngestDispatch, Segment
 from app.agent.management import RecycleBinPurgeService
+from app.object_store import RawObjectStore
 from app.tls import configure_trusted_ca
 
 
@@ -98,97 +95,6 @@ def _bounded_publish_options(
     }
 
 
-class RawObjectStore:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self.bucket = settings.minio_bucket
-        timeout = max(1.0, float(settings.trash_purge_object_timeout_seconds))
-        self._client_kwargs = {
-            "endpoint_url": settings.minio_endpoint_url,
-            "aws_access_key_id": settings.minio_access_key,
-            "aws_secret_access_key": settings.minio_secret_key,
-        }
-        self._base_config = BotoConfig(
-            connect_timeout=timeout,
-            read_timeout=timeout,
-            retries={"total_max_attempts": 1, "mode": "standard"},
-        )
-        self.client = boto3.client("s3", config=self._base_config, **self._client_kwargs)
-
-    def put(self, key: str, body: bytes, content_type: str) -> None:
-        try:
-            self.client.head_bucket(Bucket=self.bucket)
-        except ClientError:
-            self.client.create_bucket(Bucket=self.bucket)
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=content_type)
-
-    def _client_for_timeout(self, timeout_seconds: float | None):
-        if timeout_seconds is None:
-            return self.client, False
-        try:
-            timeout = float(timeout_seconds)
-        except (TypeError, ValueError):
-            raise TimeoutError("object_delete_timeout") from None
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise TimeoutError("object_delete_timeout")
-        # Reserve a fraction for client construction, TLS teardown and the
-        # caller's post-delete claim transaction. Botocore exposes separate
-        # connect/read budgets rather than one total operation deadline, so
-        # their sum is deliberately below the remaining sweep budget.
-        overhead_reserve = min(0.05, timeout * 0.1)
-        available = timeout - overhead_reserve
-        minimum_stage = 0.001
-        if available < minimum_stage * 2:
-            raise TimeoutError("object_delete_timeout")
-        connect_timeout = max(minimum_stage, available * 0.25)
-        read_timeout = available - connect_timeout
-        if read_timeout < minimum_stage:
-            read_timeout = minimum_stage
-            connect_timeout = available - read_timeout
-        if connect_timeout <= 0 or read_timeout <= 0:
-            raise TimeoutError("object_delete_timeout")
-        # Botocore has no per-request timeout argument for S3 operations. A
-        # short-lived client with a merged Config is the provider-supported
-        # way to enforce the purge sweep's remaining wall-clock budget.
-        config = self._base_config.merge(
-            BotoConfig(
-                connect_timeout=connect_timeout,
-                read_timeout=read_timeout,
-            )
-        )
-        return boto3.client("s3", config=config, **self._client_kwargs), True
-
-    def delete_object(
-        self, key: str, *, timeout_seconds: float | None = None
-    ) -> None:
-        """Idempotently delete one raw object.
-
-        S3 delete is itself idempotent.  A missing object and a missing bucket
-        are treated as already-cleaned; other failures are propagated so the
-        purge row remains retryable.  The key is never included in an error.
-        """
-
-        client, temporary = self._client_for_timeout(timeout_seconds)
-        try:
-            try:
-                client.delete_object(Bucket=self.bucket, Key=key)
-            except ClientError as exc:
-                code = str((exc.response or {}).get("Error", {}).get("Code", ""))
-                if code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}:
-                    return
-                raise RuntimeError("object_delete_failed") from None
-        finally:
-            if temporary:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    close()
-
-    # Keep the adapter compatible with purge fakes/older callers that use a
-    # generic ``delete`` method while preserving the per-call timeout contract.
-    def delete(self, key: str, *, timeout_seconds: float | None = None) -> None:
-        self.delete_object(key, timeout_seconds=timeout_seconds)
-
-
 def _connector(url: str) -> YouTubeConnector:
     connector = YouTubeConnector()
     if connector.match(url):
@@ -222,6 +128,7 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
                 db.commit()
             return existing.id
         item = ContentItem(
+            public_id=uuid4().hex,
             user_id=user_id,
             platform=connector.platform,
             platform_id=platform_id,
@@ -367,11 +274,18 @@ def fetch_text_task(self, dispatch_id: int) -> str:
     )
 
 
-def publish_ingest_dispatch(dispatch_id: int) -> str:
+def publish_ingest_dispatch(
+    dispatch_id: int,
+    *,
+    remaining_budget_seconds: float | None = None,
+) -> str:
     """Publish only the durable internal dispatch identifier."""
 
     settings = get_settings()
-    options = _bounded_publish_options(settings)
+    options = _bounded_publish_options(
+        settings,
+        budget_seconds=remaining_budget_seconds,
+    )
     # These are read by Celery when it acquires the producer connection.  Keep
     # transport options scoped to the broker publish path; worker task retry /
     # backoff settings above remain unchanged.

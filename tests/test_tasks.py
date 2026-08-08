@@ -234,6 +234,7 @@ def test_cli_ingestion_fetches_metadata_exactly_once():
         ("text", "dQw4w9WgXcQ"),
     ]
     assert store.item.title == "one fetch"
+    assert store.item.public_id
 
 
 def test_celery_task_passes_only_dispatch_and_current_task_id(monkeypatch):

@@ -48,13 +48,22 @@ class ChannelEnvelope:
 
 
 @dataclass(frozen=True)
-class TenantContext:
+class UserScope:
     app_user_id: int
+
+    def __post_init__(self) -> None:
+        if self.app_user_id <= 0:
+            raise ValueError("tenant identifiers must be positive")
+
+
+@dataclass(frozen=True)
+class TenantContext(UserScope):
     channel_identity_id: int
     channel: str
     account_id: str
     external_user_id: str
 
     def __post_init__(self) -> None:
-        if self.app_user_id <= 0 or self.channel_identity_id <= 0:
+        super().__post_init__()
+        if self.channel_identity_id <= 0:
             raise ValueError("tenant identifiers must be positive")

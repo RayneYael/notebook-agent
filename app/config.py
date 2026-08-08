@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+from urllib.parse import urlsplit
 
 from dotenv import load_dotenv
 
@@ -49,6 +50,19 @@ def _env_bool(name: str, default: bool) -> bool:
     if normalized in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"{name} must be a boolean")
+
+
+def _env_channels(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+    value = os.environ.get(name)
+    if value is None:
+        return default
+    channels = tuple(
+        dict.fromkeys(part.strip().lower() for part in value.split(",") if part.strip())
+    )
+    unsupported = set(channels) - {"telegram", "wechat"}
+    if not channels or unsupported:
+        raise ValueError(f"{name} must contain only telegram and/or wechat")
+    return channels
 
 
 def _require(name: str) -> str:
@@ -117,6 +131,36 @@ class Settings:
     )
     broker_publish_max_retries: int = field(
         default_factory=lambda: _env_int("BROKER_PUBLISH_MAX_RETRIES", 1)
+    )
+    # Tenant-level cost guardrails apply to both Web and channel saves.  They
+    # bound durable queue work and long-term storage; per-request batch limits
+    # alone are not sufficient because a caller can submit many batches.
+    ingest_max_active_per_user: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_ACTIVE_PER_USER", 10)
+    )
+    ingest_daily_new_item_limit: int = field(
+        default_factory=lambda: _env_int("INGEST_DAILY_NEW_ITEM_LIMIT", 50)
+    )
+    ingest_max_items_per_user: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_ITEMS_PER_USER", 1000)
+    )
+    ingest_max_active_global: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_ACTIVE_GLOBAL", 100)
+    )
+    ingest_daily_new_item_limit_global: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_DAILY_NEW_ITEM_LIMIT_GLOBAL", 300
+        )
+    )
+    ingest_daily_dispatch_limit_per_user: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_DAILY_DISPATCH_LIMIT_PER_USER", 100
+        )
+    )
+    ingest_daily_dispatch_limit_global: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_DAILY_DISPATCH_LIMIT_GLOBAL", 1000
+        )
     )
 
     # --- MinIO (S3-compatible object storage) ---
@@ -212,11 +256,79 @@ class Settings:
         default_factory=lambda: _env_bool("MCP_URL_TOKEN_MODE", False)
     )
 
+    # --- Same-origin Web auth ---
+    web_auth_secret: str | None = field(
+        default_factory=lambda: _env("WEB_AUTH_SECRET")
+    )
+    web_auth_challenge_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_CHALLENGE_TTL_SECONDS", 600)
+    )
+    web_auth_session_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_SESSION_TTL_SECONDS", 2592000)
+    )
+    web_auth_attempt_limit: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_ATTEMPT_LIMIT", 5)
+    )
+    web_auth_rate_window_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_RATE_WINDOW_SECONDS", 60)
+    )
+    web_auth_rate_limit_per_requester: int = field(
+        default_factory=lambda: _env_int(
+            "WEB_AUTH_RATE_LIMIT_PER_REQUESTER", 5
+        )
+    )
+    web_auth_global_rate_limit: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_GLOBAL_RATE_LIMIT", 100)
+    )
+    web_auth_active_challenge_limit: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_ACTIVE_CHALLENGE_LIMIT", 3)
+    )
+    web_auth_challenge_retention_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "WEB_AUTH_CHALLENGE_RETENTION_SECONDS", 86400
+        )
+    )
+    web_auth_session_retention_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "WEB_AUTH_SESSION_RETENTION_SECONDS", 604800
+        )
+    )
+    web_cookie_secure: bool = field(
+        default_factory=lambda: _env_bool("WEB_COOKIE_SECURE", True)
+    )
+    web_origin: str | None = field(default_factory=lambda: _env("WEB_ORIGIN"))
+    web_login_channels: tuple[str, ...] = field(
+        default_factory=lambda: _env_channels(
+            "WEB_LOGIN_CHANNELS", ("telegram", "wechat")
+        )
+    )
+    web_host: str = field(
+        default_factory=lambda: _env("WEB_HOST", "127.0.0.1") or "127.0.0.1"
+    )
+    web_port: int = field(
+        default_factory=lambda: _env_int("WEB_PORT", 8000)
+    )
+    web_static_dir: str = field(
+        default_factory=lambda: _env("WEB_STATIC_DIR", "web/dist") or "web/dist"
+    )
+    web_publish_budget_seconds: float = field(
+        default_factory=lambda: _env_float("WEB_PUBLISH_BUDGET_SECONDS", 5.0)
+    )
+    web_forwarded_allow_ips: str = field(
+        default_factory=lambda: _env("WEB_FORWARDED_ALLOW_IPS", "127.0.0.1")
+        or "127.0.0.1"
+    )
+
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
-        if self.notebook_agent_log_retrieval_content and self.notebook_agent_env != "development":
-            raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
+        if (
+            self.notebook_agent_log_retrieval_content
+            and self.notebook_agent_env != "development"
+        ):
+            raise ValueError(
+                "retrieval content logging requires NOTEBOOK_AGENT_ENV=development"
+            )
         if not self.mcp_host.strip():
             raise ValueError("MCP_HOST must not be empty")
         if self.mcp_port < 1 or self.mcp_port > 65535:
@@ -227,7 +339,9 @@ class Settings:
             or "?" in self.mcp_path
             or "#" in self.mcp_path
         ):
-            raise ValueError("MCP_PATH must be an absolute path without query or fragment")
+            raise ValueError(
+                "MCP_PATH must be an absolute path without query or fragment"
+            )
         if self.mcp_path != "/" and self.mcp_path.endswith("/"):
             raise ValueError("MCP_PATH must not have a trailing slash")
         if self.agent_composer_max_tokens <= 0:
@@ -252,6 +366,78 @@ class Settings:
                 "AGENT_COMPOSER_MAX_TOKENS multiplied by the Composer request "
                 "limit must not exceed AGENT_OUTPUT_TOKEN_LIMIT"
             )
+
+    def validate_web_auth(self) -> None:
+        if self.web_auth_secret is None or len(self.web_auth_secret) < 32:
+            raise ValueError("WEB_AUTH_SECRET must contain at least 32 characters")
+        if self.web_auth_challenge_ttl_seconds <= 0:
+            raise ValueError("WEB_AUTH_CHALLENGE_TTL_SECONDS must be positive")
+        if self.web_auth_session_ttl_seconds <= 0:
+            raise ValueError("WEB_AUTH_SESSION_TTL_SECONDS must be positive")
+        if self.web_auth_attempt_limit <= 0:
+            raise ValueError("WEB_AUTH_ATTEMPT_LIMIT must be positive")
+        if min(
+            self.web_auth_rate_window_seconds,
+            self.web_auth_rate_limit_per_requester,
+            self.web_auth_global_rate_limit,
+            self.web_auth_active_challenge_limit,
+            self.web_auth_challenge_retention_seconds,
+            self.web_auth_session_retention_seconds,
+        ) <= 0:
+            raise ValueError("Web auth rate and retention limits must be positive")
+        if (
+            self.web_auth_challenge_retention_seconds
+            < self.web_auth_rate_window_seconds
+        ):
+            raise ValueError(
+                "WEB_AUTH_CHALLENGE_RETENTION_SECONDS must cover the rate window"
+            )
+        if not self.web_host.strip():
+            raise ValueError("WEB_HOST must not be blank")
+        if not (1 <= self.web_port <= 65535):
+            raise ValueError("WEB_PORT must be between 1 and 65535")
+        if not self.web_static_dir.strip():
+            raise ValueError("WEB_STATIC_DIR must not be blank")
+        if self.web_publish_budget_seconds <= 0:
+            raise ValueError("WEB_PUBLISH_BUDGET_SECONDS must be positive")
+        if min(
+            self.ingest_max_active_per_user,
+            self.ingest_daily_new_item_limit,
+            self.ingest_max_items_per_user,
+            self.ingest_max_active_global,
+            self.ingest_daily_new_item_limit_global,
+            self.ingest_daily_dispatch_limit_per_user,
+            self.ingest_daily_dispatch_limit_global,
+        ) <= 0:
+            raise ValueError("Ingest tenant limits must be positive")
+        forwarded_sources = {
+            value.strip()
+            for value in self.web_forwarded_allow_ips.split(",")
+            if value.strip()
+        }
+        if not forwarded_sources or "*" in forwarded_sources:
+            raise ValueError(
+                "WEB_FORWARDED_ALLOW_IPS must list explicit trusted proxies"
+            )
+        if self.web_origin is not None:
+            origin = self.web_origin.strip()
+            parsed = urlsplit(origin)
+            loopback_http = (
+                parsed.scheme == "http"
+                and parsed.hostname in {"localhost", "127.0.0.1", "::1"}
+            )
+            if (
+                (parsed.scheme != "https" and not loopback_http)
+                or not parsed.hostname
+                or parsed.username is not None
+                or parsed.password is not None
+                or parsed.path
+                or parsed.query
+                or parsed.fragment
+            ):
+                raise ValueError("WEB_ORIGIN must be HTTPS or a loopback HTTP origin")
+            if origin.endswith("/"):
+                raise ValueError("WEB_ORIGIN must not include a trailing slash")
 
 
 def _build_database_url() -> str:

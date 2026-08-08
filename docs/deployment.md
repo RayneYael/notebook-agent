@@ -1,7 +1,8 @@
 # Notebook Agent 启动与部署手册
 
-本文覆盖当前 P1 的受支持部署方式：PostgreSQL/pgvector、Redis、MinIO、
-Notebook Agent gateway，以及 LangBot 4.10.6 的 Telegram/微信 adapter 与薄桥接插件。
+本文覆盖当前 P1 与首个 Web MVP 的受支持部署方式：PostgreSQL/pgvector、Redis、MinIO、
+Notebook Agent gateway、同源 FastAPI + React 视频资料库，以及 LangBot 4.10.6 的
+Telegram/微信 adapter 与薄桥接插件。
 真实平台验收步骤另见 Trellis 任务中的 `manual-acceptance.md`。
 
 如果当前目标只是配置 `.env`、MCP 或可选 LangBot bridge，请先阅读
@@ -29,6 +30,11 @@ WeChat ----------/             |
                              Redis queue -> Celery worker
                                                   |
                                  MinIO + embedding API
+
+Browser -> HTTPS reverse proxy -> Notebook Agent web-server (127.0.0.1:8000)
+                                  |-- FastAPI /api/v1
+                                  |-- React production assets
+                                  `-- same PostgreSQL/Redis/MinIO services
 ```
 
 安全边界有一个重要限制：`gateway-server` 只允许绑定 `127.0.0.1`、`::1` 或
@@ -50,6 +56,7 @@ loopback 检查。
 ## 2. 运行要求
 
 - Python 3.11。
+- Node.js >=22.22.2 与 pnpm，用于生成 OpenAPI 类型、测试和构建 React production assets。
 - Docker + Docker Compose，用于项目自带的 PostgreSQL 17/pgvector、Redis、MinIO。
 - 一个监听 `ingest` queue 的兼容 Celery worker；保存功能不得由 gateway 同步抓取。
 - LangBot 4.10.6 与 `langbot-plugin` 0.4.13。
@@ -104,6 +111,10 @@ python3.11 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev]'
 cp .env.example .env
+cd web
+corepack pnpm install --frozen-lockfile
+corepack pnpm build
+cd ..
 ```
 
 不要从这份长手册逐项猜测 `.env`。先打开
@@ -113,6 +124,45 @@ cp .env.example .env
 - 完整 MCP：再加入 Redis、MinIO、Celery worker/beat 和 management feature flags。
 - Streamable HTTP / MiXer：配置 MCP listener、TLS proxy 和每用户 grant。
 - LangBot：额外配置 gateway，以及安装插件目录中的独立私有 `.env`。
+- Web MVP：在完整服务基础上配置精确的 `WEB_ORIGIN`、安全 cookie、loopback `web-server`
+  和同源 TLS reverse proxy；前端 production build 由 `WEB_STATIC_DIR` 提供。
+
+前端部署优先核对以下 Web 和共享依赖变量；完整环境 profile 与变量字典仍以
+[环境配置指南](environment-configuration.md)为准：
+
+| 配置 | 必需 | 说明 |
+| --- | --- | --- |
+| `POSTGRES_PASSWORD` | 是 | PostgreSQL 密码，不能保留示例值 |
+| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | 是 | 原始文本对象存储凭据 |
+| `ZHIPU_API_KEY` | 生产检索需要 | query 与 segment embedding |
+| `TLS_CA_BUNDLE` | 可选 | gateway 与 Celery worker embedding 共用的可读 PEM bundle；保持证书/hostname 校验 |
+| `AGENT_MODEL` | 是 | PydanticAI 模型名 |
+| `AGENT_API_KEY` | 视 provider | 模型凭据 |
+| `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
+| `AGENT_TOOL_TIMEOUT_SECONDS` | 是 | 单次 Agent tool 上限；必须小于外层 `AGENT_TIMEOUT_SECONDS` |
+| `AGENT_OUTPUT_TOKEN_LIMIT` | 是 | 每个独立阶段的模型输出上限：检索规划与无工具回答 composer 分别从新计数开始；不要通过简单提高该值修复检索收敛 |
+| `AGENT_COMPOSER_MAX_TOKENS` | 是 | 每次回答 Composer 请求真正发给 provider 的生成上限，默认 `1000`；每个完整或压缩 attempt 最多两次结构化输出请求，因此该值乘以 2 不得超过该 attempt 的 `AGENT_OUTPUT_TOKEN_LIMIT`。DeepSeek Composer 同时关闭 thinking；输出预算/截断时会在同一总超时内以全新 usage 预算用压缩证据重试一次，整个 workflow 最多四次 provider 请求，按默认值合计 provider cap 最多 4000 输出 tokens |
+| `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
+| `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
+| `INGEST_MAX_ACTIVE_PER_USER` / `INGEST_MAX_ACTIVE_GLOBAL` | 是 | 同时执行的 per-user 与全局入库上限；默认 10 / 100 |
+| `INGEST_DAILY_NEW_ITEM_LIMIT` / `INGEST_DAILY_NEW_ITEM_LIMIT_GLOBAL` | 是 | 每个 UTC 日新增内容的 per-user 与全局成本保险丝；默认 50 / 300 |
+| `INGEST_DAILY_DISPATCH_LIMIT_PER_USER` / `INGEST_DAILY_DISPATCH_LIMIT_GLOBAL` | 是 | 每个 UTC 日创建 dispatch 的 per-user 与全局上限，失败重试也计数；默认 100 / 1000 |
+| `INGEST_MAX_ITEMS_PER_USER` | 是 | 包含 archived 内容的每用户存储硬上限；默认 1000 |
+| `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true`。它控制 channel 与 Web 的新保存/失败重试，不关闭 Web 的 why/archive/restore |
+| `AGENT_ITEM_MANAGEMENT_ENABLED` | 是 | Agent inventory/update/restore/retry/delete tools 的 rollout flag；关闭时这些 tools 不注册，但 deleted-content filters 和 Web archive/restore 仍生效 |
+| `TRASH_RETENTION_DAYS` | 是 | 回收站保留天数，默认 30；必须为正数 |
+| `TRASH_PURGE_INTERVAL_SECONDS` | 是 | purge sweep 周期，默认 3600 秒 |
+| `TRASH_PURGE_BATCH_SIZE` | 是 | 每轮最多 claim 100 个条目，默认 20 |
+| `TRASH_PURGE_CLAIM_TIMEOUT_SECONDS` | 是 | stale purge claim 可重试的超时，默认 1800 秒 |
+| `TRASH_PURGE_MAX_DURATION_SECONDS` | 是 | 单轮 purge wall-clock 上限，默认 30 秒；超出批次会释放 claim 并延后 |
+| `TRASH_PURGE_OBJECT_TIMEOUT_SECONDS` | 是 | 单个 MinIO delete 的 connect/read timeout，默认 10 秒 |
+| `CHANNEL_GATEWAY_SECRET` | 是 | 至少 32 字符的随机共享密钥 |
+| `WEB_AUTH_SECRET` | Web 必需 | 独立的至少 32 字符随机密钥；不得复用 gateway secret |
+| `WEB_ORIGIN` | Web 必需 | 浏览器看到的精确 HTTPS origin，不含末尾 `/` 或路径 |
+| `WEB_COOKIE_SECURE` | Web 必需 | 保持 `true`；`__Host-` session/CSRF cookie 依赖它 |
+| `WEB_AUTH_RATE_*` / `WEB_AUTH_*_RETENTION_SECONDS` | Web 必需 | 登录 challenge 的请求者/全局/活动数限流和有界过期清理；保留期不得短于限流窗口 |
+| `WEB_HOST` / `WEB_PORT` | Web 必需 | 默认仅绑定 `127.0.0.1:8000`，由本机 TLS proxy 转发 |
+| `WEB_STATIC_DIR` | Web 必需 | React production build；默认 `web/dist` |
 
 指南后半部分是完整变量字典，标明消费者、默认值、适用场景、secret 属性和重启范围。
 根 `.env`、stdio 的进程级 `MCP_TOKEN`、LangBot plugin 私有 `.env` 是三个不同边界，
@@ -213,6 +263,52 @@ PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gat
 ```bash
 .venv/bin/python -m app.cli gateway-server
 ```
+
+### 6.3 同源 Web 视频资料库
+
+Web 前端必须先完成 production build，并与 FastAPI 从同一个 browser origin 提供：
+
+```bash
+cd web
+corepack pnpm install --frozen-lockfile
+corepack pnpm check:api
+corepack pnpm test
+corepack pnpm typecheck
+corepack pnpm lint
+corepack pnpm build
+cd ..
+.venv/bin/python -m app.cli web-server
+```
+
+`web-server` 默认只监听 `127.0.0.1:8000`。生产只把公网 `443` 反向代理到该端口；
+`8765` channel gateway 继续保持 loopback-only，绝不能一起暴露。TLS proxy 必须保留原始
+`Host`/`Origin`，并只从 `WEB_FORWARDED_ALLOW_IPS` 中列出的本机代理接受 forwarded headers。
+
+`WEB_ORIGIN` 必须与浏览器地址完全一致，例如 `https://kb.example.com`。不要配置 wildcard
+CORS，也不要把 React assets 放到另一个 origin。Session cookie 是 `Secure`、`HttpOnly`、
+`SameSite=Strict` 的 `__Host-kb_session`；CSRF cookie 是同样 Secure/SameSite 的
+`__Host-kb_csrf`，前端只把它复制到 `X-CSRF-Token`，两者都不进入 Web Storage。
+登录 challenge 只保存受信任客户端地址的 HMAC，不保存原始地址；创建接口同时执行
+per-requester、全局和活动 challenge 上限，命中时返回统一 `rate_limited`，不会暴露是哪一条
+容量规则。`WEB_FORWARDED_ALLOW_IPS` 必须逐项列出本机受信任代理，不得使用 `*`。
+入库的 per-user 与全局配额在 PostgreSQL 中先取得全局 admission lock、再锁 tenant 行，
+commit 后才调用 broker。重复请求和已有内容不消耗新增配额；`:retry` 也受 active 配额约束。
+每日 dispatch 上限同时约束新内容和失败重试，防止仅靠更换 idempotency key 重复消耗 worker。
+当前渠道身份仍可自动注册新 tenant，因此这些全局上限是必要的成本保险丝，不应把系统描述成
+invite-only。
+应用关闭了 Uvicorn 默认 access log，避免资料库搜索词随 query string 写入日志。TLS
+反向代理也必须使用不含 query string 的访问日志格式，并且不得记录 Cookie、Authorization、
+CSRF header、请求体、URL 列表或 `why_saved`。
+
+启动后检查：
+
+```bash
+curl -fsS https://kb.example.com/api/v1/health
+curl -fsS https://kb.example.com/api/v1/capabilities
+```
+
+`/login`、`/library` 和 `/videos/<public-id>` 刷新必须返回 React shell；任意不存在的
+`/api/...` 必须仍返回 JSON 404，不能被 SPA fallback 吞掉。
 
 另一个终端检查：
 
@@ -441,13 +537,14 @@ curl --fail -H 'Authorization: Bearer <LangBot-admin-token>' \
 2. 保持 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false`，备份后执行 `alembic upgrade head` 并确认 current/check。
 3. 部署并启动兼容 Celery worker，确认它监听 `ingest,maintenance`，并启动单一 beat 实例；CA/Redis/MinIO 均 ready。
 4. 部署并启动 Notebook Agent `gateway-server`，检查 loopback health 与只读检索 smoke。
-5. 设置 `AGENT_SAVE_ENABLED=true` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=true` 并重启 gateway；不得重置 channel login、identity 或 content。
-6. 确认已应用 TLS/readiness patch；保留已证实的默认登录/轮询路径。仅有企业 CA 需求或明确
+5. 构建并启动 `web-server`，从精确 HTTPS origin 检查登录、资料库和详情页。
+6. 设置 `AGENT_SAVE_ENABLED=true` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=true`，重启 gateway 与 `web-server`；不得重置 channel login、identity 或 content。
+7. 确认已应用 TLS/readiness patch；保留已证实的默认登录/轮询路径。仅有企业 CA 需求或明确
    诊断时，在 LangBot 进程中设置 `tls_ca_bundle` 或 `TLS_CA_BUNDLE`。不要禁用 TLS verification。
-7. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
-8. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
+8. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
+9. 启动 LangBot core。patched core 会先连接 runtime、检查 bridge plugin 为
    `initialized`，**之后**才启动每个 enabled adapter；不要手工改变这个顺序。
-9. 检查 readiness；自动化验证通过后，Telegram 完整 E2E 与微信保存 smoke 仍由人工执行。
+10. 检查 readiness；自动化验证通过后，Telegram 完整 E2E 与微信保存 smoke 仍由人工执行。
 
 readiness 检查不使用“等待 N 秒”。在 LangBot 进程日志中确认
 `Required plugins initialized; message adapters may start.`，再确认：
@@ -467,7 +564,7 @@ LangBot。不要先启动 adapter 试图“等它自己恢复”。
 
 1. 停 LangBot adapters/core，停止接收新消息。
 2. 停 plugin runtime。
-3. 关闭 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED` 并重启/停止 Notebook Agent gateway，阻止新 submission/management calls；保留 maintenance worker/beat 以继续安全清理，或按需暂停 beat。
+3. 设置 `AGENT_SAVE_ENABLED=false`，并按需设置 `AGENT_ITEM_MANAGEMENT_ENABLED=false` 后重启/停止 Notebook Agent gateway：前者阻止 channel 与 Web 的新保存/失败重试，后者只注销 Agent management tools。若要完全冻结 Web archive/restore 等写入，必须同时停止 `web-server`，或在反向代理处隔离全部 Web 写请求；保留 maintenance worker/beat 以继续安全清理，或按需暂停 beat。
 4. 让 active ingestion 完成；需要立即止损时再停止 Celery worker。
 5. 确认没有 ingestion 工作后，再按需停止 Redis、MinIO 与 PostgreSQL。
 
@@ -695,11 +792,13 @@ WHERE deleted_at IS NOT NULL;
 3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false` 并安装新的 Python 依赖。
 4. 执行 `alembic upgrade head`，确认 revision `e5f6a7b8c9d0`。
 5. 先启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
-6. 再启动 gateway 并检查 health、schema 与 CLI ask。
-7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway，再启动 plugin/LangBot。
+6. 再启动 gateway 与 `web-server` 并检查 health、schema、CLI ask 和 Web 只读路径。
+7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway 与 `web-server`，再启动 plugin/LangBot。
 
-保存路径异常时先把 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false` 并重启 gateway。这会保留只读检索，同时
-阻止新的 pending action、ContentItem 和 dispatch；不要删除或重绑用户数据。已在运行的 worker
+保存路径异常时先设置 `AGENT_SAVE_ENABLED=false` 并重启 gateway 与 `web-server`；这会保留只读检索和
+Web why/archive/restore，同时阻止 channel 与 Web 创建新的 pending action、ContentItem 和 dispatch。
+`AGENT_ITEM_MANAGEMENT_ENABLED=false` 只注销 Agent management tools，不能冻结 Web 写入；若故障处理要求
+完全只读，必须停止 `web-server` 或在反向代理处隔离全部 Web 写请求。不要删除或重绑用户数据。已在运行的 worker
 任务可以安全完成；若出现 tenant mismatch 或无界重复 enqueue，再停止 worker intake，并保留
 `ingest_dispatch` / `pending_channel_action` rows 供审计。
 

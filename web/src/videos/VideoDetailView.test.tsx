@@ -1,0 +1,184 @@
+import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { describe, expect, it, vi } from "vitest";
+
+import type { LibraryItem, TranscriptPage } from "../api/contracts";
+import { VideoDetailView } from "./VideoDetailView";
+
+const item: LibraryItem = {
+  public_id: "video-public",
+  platform: "youtube",
+  kind: "video",
+  url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+  title: "如何把信息变成理解",
+  author: "Notebook Studio",
+  published_at: "2026-08-01T00:00:00Z",
+  duration_sec: 620,
+  lang: "zh",
+  description: "原视频作者提供的简介，不是 AI 摘要。",
+  tags: [],
+  chapters: [{ title: "重新定义记录", start_sec: 0 }, { title: "建立联系", start_sec: 185 }],
+  cover_url: null,
+  saved_at: "2026-08-07T10:00:00Z",
+  why_saved: "整理知识管理方法",
+  text_source: "youtube_captions",
+  lifecycle: "ready",
+  error_code: null,
+  available_actions: ["archive", "edit_why_saved", "open_source"],
+  latest_dispatch_public_id: "dispatch-public",
+};
+
+const transcript: TranscriptPage = {
+  blocks: [
+    { ordinal: 0, start_sec: 0, end_sec: 10, text: "记录不是终点，理解才是。", source_url: "https://youtu.be/x?t=0" },
+    { ordinal: 1, start_sec: 10, end_sec: 22, text: "先把材料放进自己的问题里。", source_url: "https://youtu.be/x?t=10" },
+  ],
+  next_cursor: "next-page",
+};
+
+describe("video detail", () => {
+  it("shows chapters and original transcript without pretending description is a summary", () => {
+    const { container } = render(
+      <VideoDetailView
+        item={{ ...item, cover_url: "https://i.ytimg.com/vi/example/hqdefault.jpg" }}
+        transcriptPages={[transcript]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "章节" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "原始全文" })).toBeInTheDocument();
+    expect(screen.getByText("记录不是终点，理解才是。")).toBeInTheDocument();
+    expect(screen.getByText("原视频作者提供的简介，不是 AI 摘要。")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: /摘要/ })).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续加载全文" })).toBeInTheDocument();
+    expect(container.querySelector("img")).toHaveAttribute("width", "960");
+    expect(container.querySelector("img")).toHaveAttribute("height", "540");
+    expect(container.querySelector("img")).toHaveAttribute("fetchpriority", "high");
+  });
+
+  it("renders an existing non-empty backend summary without generating one", () => {
+    render(
+      <VideoDetailView
+        item={{ ...item, summary: "这是此前已经存储的摘要。" }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("heading", { name: "已有摘要" })).toBeInTheDocument();
+    expect(screen.getByText("这是此前已经存储的摘要。")).toBeInTheDocument();
+  });
+
+  it("exposes retry only when the backend lists it", () => {
+    const { rerender } = render(
+      <VideoDetailView
+        item={{ ...item, lifecycle: "failed", available_actions: ["retry", "archive"] }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+    expect(screen.getByRole("button", { name: "重新处理" })).toBeInTheDocument();
+
+    rerender(
+      <VideoDetailView
+        item={{ ...item, lifecycle: "processing", available_actions: ["archive"] }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
+  });
+
+  it("distinguishes transcript and action failures from genuinely empty content", () => {
+    const retryTranscript = vi.fn();
+    render(
+      <VideoDetailView
+        item={item}
+        transcriptPages={[]}
+        transcriptError
+        actionError
+        onLoadMore={vi.fn()}
+        onRetryTranscript={retryTranscript}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByRole("alert", { name: "视频操作失败" })).toHaveTextContent(
+      "操作没有完成",
+    );
+    expect(screen.getByRole("alert", { name: "全文加载失败" })).toHaveTextContent(
+      "全文暂时无法加载",
+    );
+    expect(screen.queryByText("这段视频没有可显示的字幕。")).not.toBeInTheDocument();
+    screen.getByRole("button", { name: "重新加载全文" }).click();
+    expect(retryTranscript).toHaveBeenCalledOnce();
+  });
+
+  it("shows a loading state before deciding that a ready transcript is empty", () => {
+    render(
+      <VideoDetailView
+        item={item}
+        transcriptPages={[]}
+        transcriptInitialPending
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("正在加载原始全文…")).toBeInTheDocument();
+    expect(screen.queryByText("这段视频没有可显示的字幕。")).not.toBeInTheDocument();
+  });
+
+  it("closes why-saved editing only after the update succeeds", async () => {
+    const user = userEvent.setup();
+    const updateWhySaved = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("network unavailable"))
+      .mockResolvedValueOnce(undefined);
+    render(
+      <VideoDetailView
+        item={item}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={updateWhySaved}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    const input = screen.getByRole("textbox", { name: "为什么保存" });
+    await user.clear(input);
+    await user.type(input, "新的保存原因");
+    await user.click(screen.getByRole("button", { name: "保存说明" }));
+    expect(await screen.findByRole("textbox", { name: "为什么保存" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "保存说明" }));
+    expect(screen.queryByRole("textbox", { name: "为什么保存" })).not.toBeInTheDocument();
+    expect(updateWhySaved).toHaveBeenCalledTimes(2);
+  });
+});

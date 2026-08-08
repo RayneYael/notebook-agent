@@ -23,7 +23,13 @@ from app.models import (
 
 @pytest.fixture
 def pending_factory():
-    engine = get_engine()
+    try:
+        engine = get_engine()
+    except Exception as exc:
+        pytest.skip(
+            "PostgreSQL configuration unavailable: "
+            f"{type(exc).__name__}"
+        )
     schema = f"test_pending_{uuid4().hex}"
     tables = [
         AppUser.__table__,
@@ -31,15 +37,28 @@ def pending_factory():
         ConversationThread.__table__,
         PendingChannelAction.__table__,
     ]
-    with engine.begin() as connection:
-        connection.execute(text(f'CREATE SCHEMA "{schema}"'))
-        connection.execute(
-            text(f'SET LOCAL search_path TO "{schema}", public')
-        )
-        Base.metadata.create_all(
-            connection,
-            tables=tables,
-            checkfirst=False,
+    try:
+        with engine.begin() as connection:
+            connection.execute(text(f'CREATE SCHEMA "{schema}"'))
+            connection.execute(
+                text(f'SET LOCAL search_path TO "{schema}", public')
+            )
+            Base.metadata.create_all(
+                connection,
+                tables=tables,
+                checkfirst=False,
+            )
+    except Exception as exc:
+        try:
+            with engine.begin() as connection:
+                connection.execute(
+                    text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE')
+                )
+        except Exception:
+            pass
+        pytest.skip(
+            "isolated PostgreSQL schema unavailable: "
+            f"{type(exc).__name__}"
         )
 
     def factory():

@@ -178,6 +178,88 @@ class ChannelLinkToken(Base):
     __table_args__ = (Index("ix_channel_link_token_user", "app_user_id"),)
 
 
+class WebLoginChallenge(Base):
+    """Short-lived channel-assisted login approval without plaintext secrets."""
+
+    __tablename__ = "web_login_challenge"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    code_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    browser_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    requester_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    target_channel: Mapped[str] = mapped_column(Text, nullable=False)
+    approved_app_user_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+    )
+    approved_by_identity_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("channel_identity.id", ondelete="SET NULL"),
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancelled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempt_count: Mapped[int] = mapped_column(
+        Integer, nullable=False, server_default="0"
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        Index("ix_web_login_challenge_expires_at", "expires_at"),
+        Index("ix_web_login_challenge_created_at", "created_at"),
+        Index(
+            "ix_web_login_challenge_requester_created",
+            "requester_hash",
+            created_at.desc(),
+        ),
+        Index(
+            "ix_web_login_challenge_approved_user",
+            "approved_app_user_id",
+            postgresql_where=text("approved_app_user_id IS NOT NULL"),
+        ),
+    )
+
+
+class WebSession(Base):
+    """Opaque server-side Web session with a session-bound CSRF secret."""
+
+    __tablename__ = "web_session"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False, unique=True)
+    csrf_token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    app_user_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("app_user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    login_channel: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_web_session_user_expires", "app_user_id", "expires_at"),
+        Index("ix_web_session_expires_at", "expires_at"),
+        Index(
+            "ix_web_session_revoked_at",
+            "revoked_at",
+            postgresql_where=text("revoked_at IS NOT NULL"),
+        ),
+    )
+
+
 class ConversationThread(Base):
     """One recoverable logical conversation inside a trusted channel chat."""
 
@@ -289,6 +371,12 @@ class ContentItem(Base):
     __tablename__ = "content_item"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        unique=True,
+        server_default=text("replace(gen_random_uuid()::text, '-', '')"),
+    )
     user_id: Mapped[int] = mapped_column(
         BigInteger, ForeignKey("app_user.id"), nullable=False
     )
@@ -311,6 +399,7 @@ class ContentItem(Base):
     saved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     why_saved: Mapped[str | None] = mapped_column(Text)
     watch_state: Mapped[str | None] = mapped_column(Text, server_default="unwatched")
     watch_pos_sec: Mapped[int | None] = mapped_column(Integer)
@@ -363,6 +452,13 @@ class ContentItem(Base):
             id,
             postgresql_where=text("deleted_at IS NOT NULL"),
         ),
+        Index("ix_content_item_saved_at", saved_at.desc()),
+        Index(
+            "ix_content_item_user_archived_saved_at",
+            "user_id",
+            "archived_at",
+            saved_at.desc(),
+        ),
         Index(
             "ix_content_item_content_hash",
             "content_hash",
@@ -412,6 +508,11 @@ class IngestDispatch(Base):
             postgresql_where=text(
                 "state IN ('pending', 'enqueued', 'running')"
             ),
+        ),
+        Index(
+            "ix_ingest_dispatch_created_item",
+            created_at.desc(),
+            "item_id",
         ),
     )
 
