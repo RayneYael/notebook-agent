@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useRef } from "react";
 import { Link } from "react-router";
 
 import type { LoginChannel } from "../api/contracts";
@@ -12,6 +12,19 @@ interface AppShellProps {
 
 export function AppShell({ children, loginChannel, onLogout, logoutPending = false }: AppShellProps) {
   const loginChannelLabel = loginChannel === "telegram" ? "Telegram" : "微信";
+  const accountMenuRef = useRef<HTMLDetailsElement>(null);
+
+  useEffect(() => {
+    function closeAccountMenu(event: PointerEvent) {
+      const menu = accountMenuRef.current;
+      if (!menu || !(event.target instanceof Node) || menu.contains(event.target)) return;
+      menu.removeAttribute("open");
+    }
+
+    document.addEventListener("pointerdown", closeAccountMenu);
+    return () => document.removeEventListener("pointerdown", closeAccountMenu);
+  }, []);
+
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">跳到主要内容</a>
@@ -21,7 +34,7 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
             <span className="wordmark__sigil" aria-hidden="true">N</span>
             <span>Notebook Agent</span>
           </Link>
-          <details className="account-menu">
+          <details className="account-menu" ref={accountMenuRef}>
             <summary aria-label={`打开账户菜单，当前登录方式：${loginChannelLabel}`}>
               <svg aria-hidden="true" viewBox="0 0 24 24">
                 <circle cx="12" cy="8" r="3.25" />

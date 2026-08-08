@@ -67,3 +67,17 @@
   form became internally scrollable, and neither page nor token region overflowed
   horizontally. Port 5175 remains live with the refreshed build and two sample
   URL tags visible for review.
+
+## 2026-08-09 account-menu click-away follow-up
+
+- Owner remained `/root`; full checks and the existing 5175 preview were run
+  serially without touching 5173 or 5174.
+- TDD RED showed the native details element stayed open after clicking a
+  control outside the header menu. The minimal implementation retains native
+  summary toggling and removes `open` only for document pointerdown events whose
+  target lies outside the menu ref.
+- Final verification: 13 test files / 53 tests passed; TypeScript, ESLint,
+  OpenAPI stale check, Vite build, and diff check passed. In the refreshed
+  browser, opening the menu set `open`, clicking the Telegram text inside kept
+  it open, and clicking the library heading removed `open`. The 5175 deliverable
+  tab is left open with the account popover expanded for direct user review.

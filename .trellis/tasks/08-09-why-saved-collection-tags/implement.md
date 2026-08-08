@@ -43,6 +43,14 @@
 - [x] Verify multiline paste, link wrapping/growth, desktop/mobile overflow,
   full frontend checks, and the refreshed isolated preview.
 
+## Gate 6 - Account-menu click-away follow-up
+
+- [x] RED: opening the native details menu and clicking a control outside it
+  leaves the old implementation incorrectly expanded.
+- [x] GREEN: close only when document pointerdown falls outside the menu ref.
+- [x] Run the shell regression test, full frontend checks, rebuild 5175, and
+  verify outside/inside clicks in the browser before committing.
+
 ## Validation Commands
 
 ```powershell

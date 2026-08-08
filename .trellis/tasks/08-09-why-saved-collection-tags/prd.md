@@ -32,6 +32,8 @@ remains an ordinary validated hashtag inside `why_saved`.
   reserving a large empty textarea.
 - Collection tags and ordinary save-reason copy are visually separated on
   library cards and video detail pages.
+- The account popover keeps its native summary toggle but also closes when a
+  pointer interaction occurs anywhere outside the account-menu boundary.
 - The library displays discovered collections as quiet filter chips. Choosing
   one uses the existing server-side `why_saved` search by querying its exact
   hashtag; choosing `全部视频` clears that collection filter.
@@ -67,3 +69,5 @@ remains an ordinary validated hashtag inside `why_saved`.
   390x844 without horizontal overflow.
 - [x] URL-entry tests and browser smoke prove compact initial height, per-link
   tags, individual removal, wrapped growth, and unchanged batch submission.
+- [x] Account-shell tests and browser smoke prove an outside click closes the
+  account popover without changing logout behavior.

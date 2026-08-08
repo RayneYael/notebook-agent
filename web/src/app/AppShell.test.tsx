@@ -29,4 +29,23 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(onLogout).toHaveBeenCalledOnce();
   });
+
+  it("closes the account menu when the user clicks outside it", async () => {
+    const user = userEvent.setup();
+    render(
+      <MemoryRouter>
+        <AppShell loginChannel="telegram" onLogout={() => undefined}>
+          <button type="button">资料库操作</button>
+        </AppShell>
+      </MemoryRouter>,
+    );
+
+    const trigger = screen.getByLabelText("打开账户菜单，当前登录方式：Telegram");
+    const menu = trigger.closest("details");
+    await user.click(trigger);
+    expect(menu).toHaveAttribute("open");
+
+    await user.click(screen.getByRole("button", { name: "资料库操作" }));
+    expect(menu).not.toHaveAttribute("open");
+  });
 });
