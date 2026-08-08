@@ -43,6 +43,12 @@ remains an ordinary validated hashtag inside `why_saved`.
 - The library displays discovered collections as quiet filter chips. Choosing
   one uses the existing server-side `why_saved` search by querying its exact
   hashtag; choosing `全部视频` clears that collection filter.
+- While a user types in library search, the UI suggests up to six de-duplicated
+  matches from the currently loaded titles, authors, collection tags, and save
+  reasons. Suggestions are computed locally and never trigger a request per
+  keystroke; choosing one reuses the existing search submission.
+- Search suggestions close on Escape or an outside pointer interaction and can
+  be reopened by clicking a still-focused input with an unchanged query.
 - All additions match the existing pale editorial UI, remain usable at
   390x844, expose programmatic labels, and never rely on color alone.
 
@@ -79,3 +85,6 @@ remains an ordinary validated hashtag inside `why_saved`.
   account popover without changing logout behavior.
 - [x] Library tests and browser smoke prove readable/work-item grouping, the
   absence of redundant explanatory copy, and the approximate progress indicator.
+- [x] Search tests and browser smoke prove local title/author/collection/reason
+  suggestions, no per-keystroke request, reliable suggestion clicks, outside
+  dismissal, reopening, and narrow-screen containment.

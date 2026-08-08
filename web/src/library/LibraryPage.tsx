@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import {
   getCapabilities,
@@ -12,6 +12,7 @@ import { AddVideosDialog } from "./AddVideosDialog";
 import { collectCollectionNames } from "./collections";
 import { LibraryEmptyState, LibraryErrorState, LibraryLoadingState } from "./LibraryStates";
 import { estimateWorkItemProgress, isLibraryWorkItem, shouldPollLibrary } from "./lifecycle";
+import { collectSearchSuggestions } from "./searchSuggestions";
 import { VideoCard } from "./VideoCard";
 
 interface LibraryPageProps {
@@ -26,9 +27,11 @@ export function LibraryPage({
   submitBatch = submitVideoBatch,
 }: LibraryPageProps) {
   const queryClient = useQueryClient();
+  const searchFormRef = useRef<HTMLFormElement>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [suggestionsOpen, setSuggestionsOpen] = useState(false);
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [knownCollections, setKnownCollections] = useState<string[]>([]);
   const [lifecycle, setLifecycle] = useState("");
@@ -68,6 +71,16 @@ export function LibraryPage({
         : next;
     });
   }, [library.data]);
+  useEffect(() => {
+    if (!suggestionsOpen) return;
+    const closeOnOutsidePointer = (event: PointerEvent) => {
+      if (event.target instanceof Node && !searchFormRef.current?.contains(event.target)) {
+        setSuggestionsOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    return () => document.removeEventListener("pointerdown", closeOnOutsidePointer);
+  }, [suggestionsOpen]);
   const collectionOptions = collectCollectionNames([
     ...knownCollections.map((name) => `#${name}`),
     selectedCollection ? `#${selectedCollection}` : null,
@@ -76,6 +89,16 @@ export function LibraryPage({
   const readableItems = library.data?.items.filter((item) => !isLibraryWorkItem(item)) ?? [];
   const workItems = library.data?.items.filter(isLibraryWorkItem) ?? [];
   const workProgress = estimateWorkItemProgress(workItems);
+  const searchSuggestions = collectSearchSuggestions(library.data?.items ?? [], searchDraft);
+
+  function submitSearch(value: string) {
+    const nextSearch = value.trim();
+    setSelectedCollection(null);
+    setSearchDraft(nextSearch);
+    setSearch(nextSearch);
+    setSuggestionsOpen(false);
+    setPage(1);
+  }
 
   function changeFilter(next: string) {
     setLifecycle(next);
@@ -108,12 +131,48 @@ export function LibraryPage({
 
       <section className="library-toolbar" aria-label="资料库筛选">
         <form
+          ref={searchFormRef}
           className="search-box"
           role="search"
-          onSubmit={(event) => { event.preventDefault(); setSelectedCollection(null); setSearch(searchDraft.trim()); setPage(1); }}
+          onBlur={(event) => {
+            if (!event.currentTarget.contains(event.relatedTarget)) setSuggestionsOpen(false);
+          }}
+          onSubmit={(event) => { event.preventDefault(); submitSearch(searchDraft); }}
         >
           <label className="sr-only" htmlFor="library-search">搜索标题、作者或保存说明</label>
-          <input id="library-search" name="search" type="search" autoComplete="off" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索标题、作者或保存说明" />
+          <input
+            id="library-search"
+            name="search"
+            type="search"
+            autoComplete="off"
+            value={searchDraft}
+            aria-autocomplete="list"
+            aria-controls={searchSuggestions.length > 0 ? "library-search-suggestions" : undefined}
+            aria-expanded={suggestionsOpen && searchSuggestions.length > 0}
+            onChange={(event) => { setSearchDraft(event.target.value); setSuggestionsOpen(true); }}
+            onClick={() => setSuggestionsOpen(true)}
+            onFocus={() => setSuggestionsOpen(true)}
+            onKeyDown={(event) => { if (event.key === "Escape") setSuggestionsOpen(false); }}
+            placeholder="搜索标题、作者或保存说明"
+          />
+          {suggestionsOpen && searchSuggestions.length > 0 ? (
+            <ul id="library-search-suggestions" className="search-suggestions" aria-label="搜索建议">
+              {searchSuggestions.map((suggestion) => (
+                <li key={`${suggestion.kind}:${suggestion.value.toLocaleLowerCase()}`}>
+                  <button
+                    type="button"
+                    title={suggestion.value}
+                    aria-label={`${suggestion.kind} ${suggestion.value}`}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => submitSearch(suggestion.value)}
+                  >
+                    <span>{suggestion.kind}</span>
+                    <strong>{suggestion.value}</strong>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : null}
           <button type="submit">搜索</button>
         </form>
         <label className="select-field">

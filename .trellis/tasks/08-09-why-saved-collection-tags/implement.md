@@ -69,6 +69,18 @@
 - [x] Re-run the full frontend checks, rebuild 5175, and confirm the copy is
   absent with no horizontal overflow.
 
+## Gate 9 - Local search suggestions follow-up
+
+- [x] RED: prove a typed loaded-library keyword renders no matching suggestion
+  list in the previous implementation.
+- [x] GREEN: collect at most six local, de-duplicated title, author, collection,
+  and save-reason matches without issuing a request per keystroke.
+- [x] Lock the two browser-discovered pointer regressions: suggestion mouse-down
+  must survive input blur, and outside dismissal must still allow a click on the
+  focused input to reopen unchanged suggestions.
+- [x] Run all frontend checks and desktop plus 391x844 browser smoke before the
+  local-only commit.
+
 ## Validation Commands
 
 ```powershell

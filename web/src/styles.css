@@ -87,10 +87,16 @@ h2 { line-height: 1.1; }
 .library-heading p:last-child { max-width: 40rem; color: var(--muted); line-height: 1.7; }
 .library-heading > .button { justify-self: start; }
 .library-toolbar { display: grid; grid-template-columns: 1fr 1fr; gap: 0.65rem; margin-bottom: 1.4rem; }
-.search-box { grid-column: 1 / -1; display: flex; min-height: 48px; border: 1px solid var(--line); border-radius: 999px; background: rgba(251, 248, 241, 0.8); }
+.search-box { position: relative; grid-column: 1 / -1; display: flex; min-height: 48px; border: 1px solid var(--line); border-radius: 999px; background: rgba(251, 248, 241, 0.8); }
 .search-box input { min-width: 0; flex: 1; border: 0; padding: 0 0 0 1rem; background: transparent; outline: none; }
 .search-box:focus-within { outline: 3px solid rgba(187, 75, 47, 0.42); outline-offset: 3px; }
 .search-box button { min-width: 64px; padding: 0 1rem; border: 0; border-radius: 999px; background: var(--ink); color: white; font-size: 0.82rem; font-weight: 800; }
+.search-suggestions { position: absolute; z-index: 16; top: calc(100% + 0.55rem); left: 0; right: 0; display: grid; gap: 0.18rem; margin: 0; padding: 0.42rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--paper); box-shadow: var(--shadow); list-style: none; }
+.search-suggestions li { min-width: 0; }
+.search-suggestions li button { width: 100%; min-width: 0; min-height: 42px; display: grid; grid-template-columns: 4.25rem minmax(0, 1fr); align-items: center; gap: 0.7rem; padding: 0.58rem 0.7rem; border-radius: 0.65rem; background: transparent; color: var(--ink); text-align: left; }
+.search-suggestions li button:hover, .search-suggestions li button:focus-visible { background: rgba(49, 94, 83, 0.08); }
+.search-suggestions span { color: var(--accent-dark); font-size: 0.68rem; font-weight: 900; letter-spacing: 0.08em; }
+.search-suggestions strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.82rem; }
 .select-field select { width: 100%; min-height: 44px; padding: 0 2.2rem 0 0.8rem; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); color: var(--ink); }
 .collection-filter { display: flex; min-width: 0; align-items: flex-start; gap: 0.8rem; margin: -0.35rem 0 1.5rem; }
 .collection-filter__label { flex: 0 0 auto; padding-top: 0.48rem; color: var(--muted); font-size: 0.75rem; font-weight: 800; }

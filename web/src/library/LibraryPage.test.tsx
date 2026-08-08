@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -177,5 +177,49 @@ describe("library page", () => {
     const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
     expect(within(dialog).getByRole("button", { name: "产品调研" })).toBeInTheDocument();
     expect(within(dialog).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
+  });
+
+  it("suggests matching loaded titles, authors, and save reasons while typing", async () => {
+    const searchableItem = {
+      ...readyItem,
+      title: "Eric 的用户访谈",
+      author: "Eric Migicovsky",
+      why_saved: "准备 Eric 访谈 #Eric资料",
+    };
+    const fetchItems = vi.fn().mockResolvedValue({
+      items: [searchableItem],
+      total: 1,
+      page: 1,
+      page_size: 20,
+      is_true_first_empty: false,
+    });
+    const user = userEvent.setup();
+    renderPage(fetchItems);
+
+    const searchbox = await screen.findByRole("searchbox", { name: "搜索标题、作者或保存说明" });
+    await user.type(searchbox, "Eric");
+
+    const suggestions = screen.getByRole("list", { name: "搜索建议" });
+    expect(within(suggestions).getByRole("button", { name: "标题 Eric 的用户访谈" })).toBeInTheDocument();
+    expect(within(suggestions).getByRole("button", { name: "作者 Eric Migicovsky" })).toBeInTheDocument();
+    expect(within(suggestions).getByRole("button", { name: "收藏夹 #Eric资料" })).toBeInTheDocument();
+    expect(within(suggestions).getByRole("button", { name: "保存说明 准备 Eric 访谈" })).toBeInTheDocument();
+    expect(fetchItems).toHaveBeenCalledTimes(1);
+
+    fireEvent.pointerDown(document.body);
+    expect(screen.queryByRole("list", { name: "搜索建议" })).not.toBeInTheDocument();
+    await user.click(searchbox);
+
+    const reopenedSuggestions = screen.getByRole("list", { name: "搜索建议" });
+    const authorSuggestion = within(reopenedSuggestions).getByRole("button", { name: "作者 Eric Migicovsky" });
+    const pointerPress = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    fireEvent(authorSuggestion, pointerPress);
+    expect(pointerPress.defaultPrevented).toBe(true);
+    await user.click(authorSuggestion);
+    await waitFor(() => expect(fetchItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: "Eric Migicovsky" }),
+    ));
+    expect(searchbox).toHaveValue("Eric Migicovsky");
+    expect(screen.queryByRole("list", { name: "搜索建议" })).not.toBeInTheDocument();
   });
 });

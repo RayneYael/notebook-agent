@@ -113,3 +113,25 @@
   ESLint, OpenAPI stale check, and the Vite production build passed. The
   refreshed 5175 browser showed the copy absent, a 16px title-to-grid gap,
   progress still present, and no horizontal overflow.
+
+## 2026-08-09 local search suggestions follow-up
+
+- User feedback requested immediate matching against existing targets such as
+  authors and titles while typing. The implementation derives suggestions only
+  from the authenticated library response already in memory: title, author,
+  parsed collection tag, and ordinary save reason. It caps output at six and
+  sends no request until a suggestion or explicit query is submitted.
+- TDD RED showed the previous search rendered no suggestion list. The first
+  browser pass then exposed a pointer-ordering bug: input blur unmounted a
+  suggestion before its click could apply. A regression test now requires the
+  suggestion mouse-down to prevent that blur. A second browser pass proved an
+  outside click should close the list; document pointer handling plus input
+  click reopening now cover that case without changing server search behavior.
+- Final verification: 13 frontend test files / 55 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, and the Vite production build passed. Desktop
+  browser smoke showed three `How` title matches, a single `David Kelley · TED`
+  author match, successful suggestion submission to one visible card, outside
+  dismissal, and click-to-reopen. At 391x844 the 357px suggestion panel stayed
+  within the viewport and the page had no horizontal overflow.
+- Port 5175 remains live and the desktop preview is left with `How` suggestions
+  open for direct review. Ports 5173 and 5174 were not touched.
