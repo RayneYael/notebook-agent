@@ -90,6 +90,15 @@
 - [x] Verify the reported detail, a normal short-title detail, the 391x844
   layout, full frontend checks, and the refreshed 5175 preview.
 
+## Gate 11 - Add-dialog note label follow-up
+
+- [x] RED: update the dialog contract to `备注（可选）` and prove the previous
+  label no longer satisfies it.
+- [x] GREEN: replace only the visible label while preserving the `why-saved`
+  field name, request shape, validation, and storage behavior.
+- [x] Run all frontend checks, rebuild 5175, and confirm the open dialog copy in
+  the authenticated browser fixture.
+
 ## Validation Commands
 
 ```powershell

@@ -254,7 +254,7 @@ export function AddVideosDialog({
         </fieldset>
         <div className="field">
           <span className="field-label-row">
-            <label htmlFor="why-saved">为什么保存（可选）</label>
+            <label htmlFor="why-saved">备注（可选）</label>
             <small>{whySaved.length} / {WHY_SAVED_MAX_LENGTH}</small>
           </span>
           <textarea

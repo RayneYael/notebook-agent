@@ -37,7 +37,7 @@ describe("add videos dialog", () => {
       within(dialog).getByLabelText("YouTube 链接，每行一个"),
       "https://youtu.be/dQw4w9WgXcQ\nhttps://example.com/nope",
     );
-    await user.type(within(dialog).getByLabelText("为什么保存（可选）"), "准备周末精读");
+    await user.type(within(dialog).getByLabelText("备注（可选）"), "准备周末精读");
     await user.click(within(dialog).getByRole("button", { name: "添加并整理" }));
 
     expect(submit).toHaveBeenCalledWith({
@@ -55,7 +55,7 @@ describe("add videos dialog", () => {
     );
     expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("name", "urls");
     expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("autocomplete", "off");
-    expect(within(dialog).getByLabelText("为什么保存（可选）")).toHaveAttribute("name", "why-saved");
+    expect(within(dialog).getByLabelText("备注（可选）")).toHaveAttribute("name", "why-saved");
   });
 
   it("adds an existing collection tag without changing the request contract", async () => {
@@ -71,7 +71,7 @@ describe("add videos dialog", () => {
     );
 
     await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
-    await user.type(screen.getByLabelText("为什么保存（可选）"), "准备周末精读");
+    await user.type(screen.getByLabelText("备注（可选）"), "准备周末精读");
     await user.click(screen.getByRole("button", { name: "产品调研" }));
     expect(screen.getByRole("button", { name: "产品调研" })).toHaveAttribute("aria-pressed", "true");
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
@@ -116,7 +116,7 @@ describe("add videos dialog", () => {
   it("uses a multiline reason field with a native vertical resize affordance", () => {
     render(<AddVideosDialog open onClose={() => undefined} />);
 
-    const reason = screen.getByLabelText("为什么保存（可选）");
+    const reason = screen.getByLabelText("备注（可选）");
     expect(reason.tagName).toBe("TEXTAREA");
     expect(reason).toHaveClass("why-saved-textarea");
     expect(reason).toHaveAttribute("maxlength", "500");
@@ -174,7 +174,7 @@ describe("add videos dialog", () => {
     );
 
     await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
-    await user.type(screen.getByLabelText("为什么保存（可选）"), "准备周末精读");
+    await user.type(screen.getByLabelText("备注（可选）"), "准备周末精读");
     await user.click(screen.getByRole("button", { name: "添加并整理" }));
     expect(await screen.findByText("已添加，等待整理")).toBeInTheDocument();
 
@@ -183,7 +183,7 @@ describe("add videos dialog", () => {
     rerender(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
 
     expect(screen.getByLabelText("YouTube 链接，每行一个")).toHaveValue("");
-    expect(screen.getByLabelText("为什么保存（可选）")).toHaveValue("");
+    expect(screen.getByLabelText("备注（可选）")).toHaveValue("");
     expect(screen.queryByText("已添加，等待整理")).not.toBeInTheDocument();
   });
 

@@ -152,3 +152,14 @@
   horizontal overflow. At 391x844 the cover measured 339x191, the title used
   32px type, and no horizontal overflow appeared. The 5175 preview is restored
   to the reported desktop detail for review; ports 5173 and 5174 were untouched.
+
+## 2026-08-09 add-dialog note label follow-up
+
+- User selected `为什么保存（可选）` in the Add Video dialog and requested the
+  shorter utility label `备注`. TDD RED produced four expected dialog failures;
+  the single production-copy replacement returned all nine focused tests to
+  green without changing the internal `why-saved` field or submission payload.
+- Final verification: 13 frontend test files / 56 tests passed; TypeScript,
+  ESLint, and Vite build passed. The refreshed 5175 dialog reports
+  `备注（可选）`, retains field name `why-saved`, remains open for review, and
+  has no horizontal overflow. Ports 5173 and 5174 were untouched.

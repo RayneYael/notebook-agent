@@ -25,7 +25,9 @@ remains an ordinary validated hashtag inside `why_saved`.
 - The final combined `why_saved` value must not exceed the upstream-compatible
   500-character limit.
 - The ordinary save reason is a multiline textarea with native vertical resize
-  affordance, a practical maximum height, and a visible character count.
+  affordance, a practical maximum height, and a visible character count. The
+  Add Video dialog labels this optional utility field `备注（可选）` while the
+  persisted `why_saved` contract remains unchanged.
 - The URL entry starts as a compact one-row input. Enter or a multiline
   paste confirms URL drafts into individually distinguishable removable tags;
   the tag container wraps and grows with its actual contents instead of
