@@ -36,25 +36,25 @@ including unrelated uncommitted MCP work.
 
 ## Acceptance Criteria
 
-- [ ] GitHub `main` contains the reviewed competition-deployment commit and no
+- [x] GitHub `main` contains the reviewed competition-deployment commit and no
       unrelated uncommitted working-tree changes.
-- [ ] A Git-connected Vercel project automatically builds that branch and has a
+- [x] A Git-connected Vercel project automatically builds that branch and has a
       stable HTTPS URL.
-- [ ] The competition Neon database exists, has `vector` and `pg_trgm`
+- [x] The competition Neon database exists, has `vector` and `pg_trgm`
       available, and reports the repository's committed Alembic head.
-- [ ] The deployed health endpoint returns HTTP 200 with redacted JSON showing
+- [x] The deployed health endpoint returns HTTP 200 with redacted JSON showing
       both application and database readiness.
-- [ ] An invalid or unavailable database returns a bounded HTTP 503 response
+- [x] An invalid or unavailable database returns a bounded HTTP 503 response
       without leaking secrets or internal exception text.
-- [ ] Vercel uses the pooled Neon URL at runtime; migrations are run through a
+- [x] Vercel uses the pooled Neon URL at runtime; migrations are run through a
       direct URL outside the Vercel build.
-- [ ] A subsequent Git push to `main` is demonstrably connected to
+- [x] A subsequent Git push to `main` is demonstrably connected to
       a Vercel deployment, without manually uploading local files.
-- [ ] Local tests for response shape, redaction, and failure behavior pass, and
+- [x] Local tests for response shape, redaction, and failure behavior pass, and
       the Vercel build completes within the standard Python bundle limit.
-- [ ] Existing Tencent Cloud/Hermes services and all unrelated local uncommitted
+- [x] Existing Tencent Cloud/Hermes services and all unrelated local uncommitted
       files are unchanged.
-- [ ] The handoff records the Vercel URL, Git branch, deployed commit, Neon
+- [x] The handoff records the Vercel URL, Git branch, deployed commit, Neon
       project/branch identifiers, migration revision, and any remaining manual
       account/billing action without recording credentials.
 
