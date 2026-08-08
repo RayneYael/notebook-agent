@@ -73,6 +73,11 @@ The public reverse proxy must:
   SPA shell;
 - disable CDN caching for `/api/v1/*` and HTML, while allowing immutable caching
   for fingerprinted `/assets/*` files;
+- apply the same browser security policy that bundled mode adds in
+  `app/api/app.py` to static HTML and assets: HTTPS/HSTS, `nosniff`, a restrictive
+  `Referrer-Policy` and `Permissions-Policy`, frame blocking, and a CSP whose
+  `connect-src` remains `'self'` and whose image allowlist is limited to the
+  YouTube thumbnail hosts used by the application;
 - keep the channel gateway private and never expose its loopback port.
 
 Do not put the frontend at one browser origin and call a second public API
@@ -94,6 +99,11 @@ monorepo. Configure that project as a Vite application with:
 - an external rewrite from `/api/v1/:path*` to the concrete backend HTTPS
   origin, preserving the `/api/v1/` prefix;
 - no caching for the proxied authenticated API.
+
+Configure equivalent security headers on the Vercel project as well. In split
+mode the Python middleware no longer serves the SPA response, so its CSP,
+anti-framing, MIME-sniffing, referrer, permissions, and HSTS headers do not
+automatically protect `index.html` or `/assets/*`.
 
 Do not commit a placeholder external destination. Add the rewrite only after
 the team has selected the actual backend origin, then validate it in a preview

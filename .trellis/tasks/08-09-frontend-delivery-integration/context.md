@@ -47,3 +47,55 @@
   Vercel project boundaries, proxy/caching rules, verification, and rollback.
 - Fresh focused verification: 16 tests passed across Web runtime/auth/CLI;
   `compileall app` and `git diff --check` passed.
+
+## 2026-08-09 source integration and audit
+
+- The active Web task finished cleanly and handed off commits
+  `36d37d4c7ccf8d9d743070c5e798e2c84a578c21` and
+  `0283811d4b184f4f80f634c96bc7b2055f5356b9`. They were integrated as
+  `792b782` and `47c517d`; the focused 20-test frontend slice passed after the
+  behavior merge.
+- The Showcase source commit was already contained by the integrated history,
+  so it was not cherry-picked a second time. Its unrelated source-worktree
+  `uv.lock` remained untouched.
+- Static review found no product use of unsafe HTML injection, browser-stored
+  authentication tokens, console leakage, or a second package consumer that
+  would justify extracting a reusable npm library. Large page components remain
+  cohesive page-level owners; splitting them now would add indirection without
+  a second responsibility or consumer.
+- One deployment-documentation gap was fixed: when static assets are served by
+  a separate frontend service, that service must reproduce the browser security
+  headers previously added by the Python middleware. This includes CSP,
+  anti-framing, MIME-sniffing, referrer, permissions, and HSTS policy.
+
+## 2026-08-09 verification evidence
+
+- Backend Web suite excluding the environment-gated PostgreSQL file:
+  `90 passed, 9 skipped`. The two PostgreSQL cases were not run because this
+  machine has no isolated `POSTGRES_PASSWORD`; the unconfigured run reported
+  exactly those two fixture errors and no product-test failure.
+- Frontend: 13 Vitest files / 59 tests passed; typecheck, ESLint, frozen OpenAPI
+  contract check, and production Vite build all passed. The build emitted
+  52.06 kB CSS (11.19 kB gzip) and 321.30 kB JavaScript (100.69 kB gzip).
+- Python compilation passed and Alembic reported the single expected head
+  `f6a7b8c9d0e1`.
+- A task-owned Vite server ran only on `127.0.0.1:5176`. Desktop and exact
+  390x844 browser smoke covered Showcase, login, an isolated logged-in library
+  fixture, add dialog, and the long-title detail page. Evidence confirmed no
+  horizontal overflow, three distinct loaded Showcase covers, configured login
+  choices, correct per-region counts, collection filters, approximate progress,
+  search suggestions, outside-click account-menu dismissal, tokenized URL
+  input, vertically resizable notes, compact long-title layout, personalized
+  descriptions, and an independently scrolling chapter region with separators.
+  Browser logs contained only Vite connection and React development notices.
+- The isolated browser fixture existed only inside the disposable verification
+  tab; it did not alter repository files or production behavior. The tab was
+  finalized and the owned 5176 process tree was stopped. Existing 5173/5175
+  services were not inspected or changed.
+
+## 2026-08-09 handoff decision
+
+- The existing upstream PR is `deequoique/notebook-agent#2`, sourced from the
+  user's fork branch `codex/web-video-library-mvp`. To avoid a duplicate PR, the
+  verified integration head will fast-forward that fork branch and update the
+  same PR. No merge is authorized or planned.
