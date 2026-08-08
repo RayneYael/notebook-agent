@@ -47,7 +47,7 @@ alembic upgrade head
 alembic current
 ```
 
-The committed deployment currently expects revision `d4e5f6a7b8c9`. Update
+The committed deployment currently expects revision `e5f6a7b8c9d0`. Update
 `EXPECTED_DATABASE_REVISION` in `vercel.json` in the same commit as every future
 migration. Never run Alembic from a Vercel build or function import.
 
@@ -119,7 +119,7 @@ https://<project-domain>/api/health
 Expected body:
 
 ```json
-{"status":"ok","environment":"competition","database":{"status":"ok","revision":"d4e5f6a7b8c9"}}
+{"status":"ok","environment":"competition","database":{"status":"ok","revision":"e5f6a7b8c9d0"}}
 ```
 
 Missing credentials, a direct/non-TLS runtime URL, database downtime, or schema
@@ -144,4 +144,4 @@ Fill this section with non-secret identifiers after the live deployment:
 - Neon project ID: `raspy-river-64327139`
 - Neon branch ID: `br-morning-dust-auqbf4i2`
 - Verified deployment commit: `3de5d7abe480e411254db64f2cd0f3b40ed3b8ae`
-- Alembic revision: `d4e5f6a7b8c9`
+- Alembic revision: `e5f6a7b8c9d0`
