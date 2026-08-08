@@ -123,6 +123,30 @@ describe("add videos dialog", () => {
     expect(screen.getByText("0 / 500")).toBeInTheDocument();
   });
 
+  it("starts with a compact URL input and turns confirmed links into removable tags", async () => {
+    const user = userEvent.setup();
+    render(<AddVideosDialog open onClose={() => undefined} />);
+
+    const input = screen.getByLabelText("YouTube 链接，每行一个");
+    expect(input).toHaveAttribute("rows", "1");
+    expect(input).toHaveClass("url-draft-input");
+
+    await user.type(input, "https://youtu.be/first");
+    await user.keyboard("{Enter}");
+    const links = screen.getByRole("list", { name: "已添加的 YouTube 链接" });
+    expect(within(links).getByText("https://youtu.be/first")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+
+    await user.type(input, "https://www.youtube.com/watch?v=second");
+    await user.keyboard("{Enter}");
+    expect(within(links).getByText("https://www.youtube.com/watch?v=second")).toBeInTheDocument();
+    expect(screen.getByText("2 / 10")).toBeInTheDocument();
+
+    await user.click(within(links).getByRole("button", { name: "移除链接 1" }));
+    expect(within(links).queryByText("https://youtu.be/first")).not.toBeInTheDocument();
+    expect(within(links).getByText("https://www.youtube.com/watch?v=second")).toBeInTheDocument();
+  });
+
   it("blocks more than ten non-empty URLs before a network call", async () => {
     const submit = vi.fn();
     const user = userEvent.setup();

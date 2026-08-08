@@ -32,8 +32,16 @@
 - [x] Full frontend test, typecheck, lint, build, and API stale check.
 - [x] Desktop and 390x844 browser smoke in an isolated preview port.
 - [x] Review for accessibility, mobile overflow, privacy, and simpler designs.
-- [ ] Prepare a clean commit/patch for integration into
+- [x] Prepare a clean commit/patch for integration into
   `codex/web-video-library-mvp`; do not merge the PR automatically.
+
+## Gate 5 - Compact URL tags follow-up
+
+- [x] RED: compact one-row URL input and per-link removable tag behavior.
+- [x] GREEN: split URL draft state from confirmed URLs while preserving the
+  existing `{urls, why_saved}` submission contract.
+- [x] Verify multiline paste, link wrapping/growth, desktop/mobile overflow,
+  full frontend checks, and the refreshed isolated preview.
 
 ## Validation Commands
 

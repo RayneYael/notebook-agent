@@ -43,3 +43,27 @@
 - Remaining integration boundary: commit this isolated branch, then integrate
   it into `codex/web-video-library-mvp` only after that shared worktree's
   unrelated Showcase/chapter WIP is cleanly separated. Do not auto-merge.
+
+## 2026-08-09 compact URL follow-up
+
+- Owner remains `/root`; no other agent may run or interpret this task's build,
+  browser smoke, port 5175, logs, or `web/dist` output.
+- User feedback requested a smaller URL input whose height follows real content
+  and confirmed URLs become visually distinct removable tags.
+- TDD RED proved the old `rows=6` textarea lacked the compact/tag behavior;
+  focused GREEN is 9/9 Add Video dialog tests.
+- Final commands run serially from `web/`: full Vitest, typecheck, ESLint,
+  OpenAPI stale check, production build, and diff check. Then only the existing
+  5175 fixture is restarted and checked at desktop plus calibrated mobile size.
+- Success: confirmed links wrap into distinct tags, removal and 10-item count
+  work, the input and dialog grow without horizontal overflow, and submission
+  remains `{urls, why_saved}`. Stop on a repeatable failure before committing.
+- Final follow-up verification: 13 test files / 52 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, Vite build, and diff check passed. Desktop browser
+  measurements were approximately 41px initial input height, 97px for a long
+  wrapped draft, and 193px for three confirmed tags. Individual removal updated
+  the list and `2 / 10` count. At the calibrated 391x844 viewport, two tags grew
+  the token region to about 149px, the dialog stayed within the viewport, its
+  form became internally scrollable, and neither page nor token region overflowed
+  horizontally. Port 5175 remains live with the refreshed build and two sample
+  URL tags visible for review.

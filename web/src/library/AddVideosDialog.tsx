@@ -36,7 +36,8 @@ export function AddVideosDialog({
   onSubmitted,
 }: AddVideosDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
-  const [rawUrls, setRawUrls] = useState("");
+  const [urls, setUrls] = useState<string[]>([]);
+  const [urlDraft, setUrlDraft] = useState("");
   const [whySaved, setWhySaved] = useState("");
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const [newCollection, setNewCollection] = useState("");
@@ -56,7 +57,8 @@ export function AddVideosDialog({
     }
     if (dialog.open) dialog.close();
     submissionGenerationRef.current += 1;
-    setRawUrls("");
+    setUrls([]);
+    setUrlDraft("");
     setWhySaved("");
     setSelectedCollection(null);
     setNewCollection("");
@@ -95,14 +97,31 @@ export function AddVideosDialog({
     setCollectionError(null);
   }
 
+  function addUrlTags(values: readonly string[]) {
+    const normalized = values.map((value) => value.trim()).filter(Boolean);
+    if (normalized.length === 0) return;
+    setUrls((current) => [...current, ...normalized]);
+    setError(null);
+  }
+
+  function commitUrlDraft() {
+    if (!urlDraft.trim()) return;
+    addUrlTags([urlDraft]);
+    setUrlDraft("");
+  }
+
+  function removeUrl(index: number) {
+    setUrls((current) => current.filter((_, currentIndex) => currentIndex !== index));
+  }
+
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    const urls = rawUrls.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
-    if (urls.length === 0) {
+    const submittedUrls = [...urls, urlDraft.trim()].filter(Boolean);
+    if (submittedUrls.length === 0) {
       setError("请至少粘贴一个 YouTube 链接。");
       return;
     }
-    if (urls.length > 10) {
+    if (submittedUrls.length > 10) {
       setError("一次最多添加 10 个链接。");
       return;
     }
@@ -112,10 +131,12 @@ export function AddVideosDialog({
       return;
     }
     setError(null);
+    setUrls(submittedUrls);
+    setUrlDraft("");
     setSubmitting(true);
     const submissionGeneration = ++submissionGenerationRef.current;
     try {
-      const nextResult = await submitBatch({ urls, why_saved: formattedWhySaved.value });
+      const nextResult = await submitBatch({ urls: submittedUrls, why_saved: formattedWhySaved.value });
       if (submissionGeneration !== submissionGenerationRef.current) return;
       setResult(nextResult);
       onSubmitted?.(nextResult);
@@ -145,17 +166,50 @@ export function AddVideosDialog({
           </div>
           <button className="icon-button" type="button" aria-label="关闭添加视频窗口" onClick={onClose}>×</button>
         </header>
-        <label className="field">
-          <span>YouTube 链接，每行一个</span>
-          <textarea
-            name="urls"
-            autoComplete="off"
-            spellCheck={false}
-            rows={6}
-            value={rawUrls}
-            onChange={(event) => setRawUrls(event.target.value)}
-          />
-        </label>
+        <div className="field url-field">
+          <span className="field-label-row">
+            <label htmlFor="url-draft">YouTube 链接，每行一个</label>
+            <small className="url-count" data-over-limit={urls.length > 10}>{urls.length} / 10</small>
+          </span>
+          <p className="field-help" id="url-draft-help">粘贴链接后按 Enter；也可以一次粘贴多行。</p>
+          <div className="url-token-input">
+            {urls.length > 0 ? (
+              <ol className="url-tag-list" aria-label="已添加的 YouTube 链接">
+                {urls.map((url, index) => (
+                  <li className="url-tag" key={`${url}-${index}`}>
+                    <span title={url}>{url}</span>
+                    <button type="button" aria-label={`移除链接 ${index + 1}`} onClick={() => removeUrl(index)}>×</button>
+                  </li>
+                ))}
+              </ol>
+            ) : null}
+            <textarea
+              id="url-draft"
+              className="url-draft-input"
+              name="urls"
+              aria-describedby="url-draft-help"
+              autoComplete="off"
+              spellCheck={false}
+              rows={1}
+              value={urlDraft}
+              placeholder={urls.length === 0 ? "粘贴 YouTube 链接" : "继续添加链接"}
+              onChange={(event) => {
+                const next = event.target.value;
+                if (/\r?\n/u.test(next)) {
+                  addUrlTags(next.split(/\r?\n/u));
+                  setUrlDraft("");
+                  return;
+                }
+                setUrlDraft(next);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "Enter") return;
+                event.preventDefault();
+                commitUrlDraft();
+              }}
+            />
+          </div>
+        </div>
         <fieldset className="collection-picker">
           <legend>保存到收藏夹（可选）</legend>
           <p className="field-help">选择已有收藏夹，或新建一个标签。未选择时保存为未归类。</p>

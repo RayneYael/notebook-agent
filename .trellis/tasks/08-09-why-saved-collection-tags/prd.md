@@ -26,6 +26,10 @@ remains an ordinary validated hashtag inside `why_saved`.
   500-character limit.
 - The ordinary save reason is a multiline textarea with native vertical resize
   affordance, a practical maximum height, and a visible character count.
+- The URL entry starts as a compact one-row input. Enter or a multiline
+  paste confirms URL drafts into individually distinguishable removable tags;
+  the tag container wraps and grows with its actual contents instead of
+  reserving a large empty textarea.
 - Collection tags and ordinary save-reason copy are visually separated on
   library cards and video detail pages.
 - The library displays discovered collections as quiet filter chips. Choosing
@@ -61,3 +65,5 @@ remains an ordinary validated hashtag inside `why_saved`.
   pass.
 - [x] Browser smoke proves the dialog and tag controls work at desktop and
   390x844 without horizontal overflow.
+- [x] URL-entry tests and browser smoke prove compact initial height, per-link
+  tags, individual removal, wrapped growth, and unchanged batch submission.
