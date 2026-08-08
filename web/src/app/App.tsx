@@ -13,6 +13,7 @@ import { getSession, logout, setUnauthorizedHandler } from "../api/client";
 import type { SessionInfo } from "../api/contracts";
 import { LoginPage } from "../auth/LoginPage";
 import { LibraryPage } from "../library/LibraryPage";
+import { ShowcasePage } from "../showcase/ShowcasePage";
 import { VideoDetailPage } from "../videos/VideoDetailPage";
 import { AppShell } from "./AppShell";
 
@@ -111,13 +112,14 @@ function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
   }, [client, navigate, rotateClient]);
   return (
     <Routes>
+      <Route path="/" element={<ShowcasePage />} />
+      <Route path="/showcase" element={<Navigate to="/" replace />} />
       <Route path="/login" element={<LoginRoute activateSession={rotateClient} />} />
       <Route element={<ProtectedLayout rotateClient={rotateClient} />}>
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/videos/:id" element={<VideoDetailPage />} />
-        <Route path="/" element={<Navigate to="/library" replace />} />
       </Route>
-      <Route path="*" element={<Navigate to="/library" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
