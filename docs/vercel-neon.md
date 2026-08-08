@@ -11,6 +11,10 @@ projects.
 | Git branch | `main` |
 | Vercel project | `notebook-agent` |
 | Neon project | `notebook-agent` |
+| Neon organization | `deequoique` |
+| Neon project ID | `raspy-river-64327139` |
+| Neon branch | `main` (`br-morning-dust-auqbf4i2`) |
+| Neon database | `notebook_agent` |
 | Environment marker | `competition` |
 | Public checks | `/`, `/health`, `/api/health` |
 
@@ -42,9 +46,48 @@ alembic upgrade head
 alembic current
 ```
 
-The committed deployment currently expects revision `c7e8a91b2d34`. Update
+The committed deployment currently expects revision `d4e5f6a7b8c9`. Update
 `EXPECTED_DATABASE_REVISION` in `vercel.json` in the same commit as every future
 migration. Never run Alembic from a Vercel build or function import.
+
+## Shared team development access
+
+Use Neon organization permissions rather than sharing a database password or
+the deprecated project-sharing workflow:
+
+1. In the Neon Console, open the `deequoique` organization and its **People**
+   page. Invite the teammate using the email address of their Neon account and
+   assign the organization role **Collaborator**.
+2. Open the `notebook-agent` project, then **Settings** → **Project
+   permissions**. Grant that teammate **Editor** on this project only.
+3. Verify the teammate appears with an explicit Editor grant. Revoke this grant
+   or remove the organization member when access is no longer required.
+
+After accepting the invitation, each teammate authenticates with their own
+Neon account and links their checkout without pulling secrets automatically:
+
+```bash
+npx neonctl auth
+npx neonctl link \
+  --project-id raspy-river-64327139 \
+  --branch-id br-morning-dust-auqbf4i2 \
+  --no-env-pull
+```
+
+Each teammate then obtains a connection string from the project's **Connect**
+dialog and stores it only in their ignored local `.env` file. For the local
+application, use the pooled hostname and the SQLAlchemy `psycopg` scheme:
+
+```dotenv
+DATABASE_URL=postgresql+psycopg://ROLE:PASSWORD@POOLED_HOST/notebook_agent?sslmode=require
+```
+
+Do not send connection strings in chat, issues, pull requests, or shell
+transcripts. The shared `main` database contains common development data, so
+destructive tests must use a separate Neon branch or a local database. Only one
+designated developer should run migrations at a time, using the direct URL,
+after the migration commit is present on GitHub `main`. Everyone else should
+pull `main` and confirm `alembic current` before continuing work.
 
 ## Vercel setup
 
@@ -73,7 +116,7 @@ https://<project-domain>/api/health
 Expected body:
 
 ```json
-{"status":"ok","environment":"competition","database":{"status":"ok","revision":"c7e8a91b2d34"}}
+{"status":"ok","environment":"competition","database":{"status":"ok","revision":"d4e5f6a7b8c9"}}
 ```
 
 Missing credentials, a direct/non-TLS runtime URL, database downtime, or schema
@@ -94,7 +137,7 @@ Fill this section with non-secret identifiers after the live deployment:
 
 - Public URL: pending
 - Vercel project ID: pending
-- Neon project ID: pending
-- Neon branch ID: pending
+- Neon project ID: `raspy-river-64327139`
+- Neon branch ID: `br-morning-dust-auqbf4i2`
 - Deployed Git commit: pending
-- Alembic revision: `c7e8a91b2d34`
+- Alembic revision: `d4e5f6a7b8c9`

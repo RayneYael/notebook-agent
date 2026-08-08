@@ -1,6 +1,9 @@
 import json
 from pathlib import Path
 
+from alembic.config import Config
+from alembic.script import ScriptDirectory
+
 from app.deployment_health import build_health_response, probe_database
 
 
@@ -144,6 +147,10 @@ def test_schema_mismatch_fails_closed_without_returning_actual_revision():
 def test_vercel_config_allowlists_health_routes_and_excludes_local_secrets():
     root = Path(__file__).resolve().parents[1]
     config = json.loads((root / "vercel.json").read_text())
+
+    alembic_config = Config(str(root / "alembic.ini"))
+    migration_head = ScriptDirectory.from_config(alembic_config).get_current_head()
+    assert config["env"]["EXPECTED_DATABASE_REVISION"] == migration_head
 
     assert config["routes"] == [
         {"src": "^/$", "dest": "/api/health"},

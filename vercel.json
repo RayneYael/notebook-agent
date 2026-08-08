@@ -2,7 +2,7 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "env": {
     "DEPLOYMENT_ENV": "competition",
-    "EXPECTED_DATABASE_REVISION": "c7e8a91b2d34"
+    "EXPECTED_DATABASE_REVISION": "d4e5f6a7b8c9"
   },
   "functions": {
     "api/health.py": {
