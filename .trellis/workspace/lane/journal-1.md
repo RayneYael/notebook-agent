@@ -112,3 +112,28 @@ Implemented provider-independent retrieval convergence, diversified evidence sel
 ### Status
 
 [OK] **Completed**
+
+
+## Session 5: Deploy competition environment on Vercel and Neon
+
+**Date**: 2026-08-08
+**Task**: Deploy competition environment on Vercel and Neon
+**Branch**: `codex/vercel-neon-main-sync`
+
+### Summary
+
+Connected Vercel Production to GitHub main, upgraded Neon to d4e5f6a7b8c9, documented organization-scoped team access and local DATABASE_URL setup, added migration-head drift checks, fixed static source disclosure, and verified public health and 404 routes.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `3dbc919` | (see git log) |
+| `0e13425` | (see git log) |
+| `72181b3` | (see git log) |
+| `3de5d7a` | (see git log) |
+| `c1599b4` | (see git log) |
+
+### Status
+
+[OK] **Completed**
