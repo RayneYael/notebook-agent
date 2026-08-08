@@ -189,3 +189,37 @@ Reorganized the root dotenv template and added scenario-first environment profil
 ### Status
 
 [OK] **Completed**
+
+
+## Session 8: Fix exact video reference and session routing
+
+**Date**: 2026-08-09
+**Task**: Fix exact video reference and session routing
+**Branch**: `main`
+
+### Summary
+
+Enforced deterministic bare-URL save confirmation and exact platform/video retrieval scopes so stale session history cannot route or cite the wrong saved video.
+
+### Main Changes
+
+- Added server-owned routing invariants for bare supported URL batches and explicit URL content questions.
+- Applied fail-closed exact video scope across lexical/vector retrieval, hydration, neighbors, details, timestamps, and citations.
+- Restricted management and save tools using only the current user message while preserving legitimate management follow-ups.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `105d0db` | (see git log) |
+
+### Testing
+
+- [OK] 26 passed: ingest submission and agent actions.
+- [OK] 45 passed: knowledge services, agent runtime, and exact video routing.
+- [OK] 35 passed, 16 skipped: multiuser integration and item management; compileall and Trellis validation passed.
+- [OK] Broader suite reached 244 passed, 34 skipped; remaining failures were environment-bound PostgreSQL/socket/composition checks.
+
+### Status
+
+[OK] **Completed**
