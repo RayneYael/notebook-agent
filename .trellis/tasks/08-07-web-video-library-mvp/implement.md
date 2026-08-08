@@ -96,11 +96,12 @@
   first-principles reviews; run a final official-guidance audit subagent.
 - [x] Resolve all P1/P2 findings and rerun affected evidence.
 - [x] Use the Lore commit workflow to create reviewable commits without `.omx/`.
-- [ ] Push only `codex/web-video-library-mvp` to `origin`.
-- [ ] Create a PR from the fork branch to `upstream/main`; do not update, merge,
+- [x] Push only `codex/web-video-library-mvp` to `origin`.
+- [x] Create a PR from the fork branch to `upstream/main`; do not update, merge,
   or push either repository's `main` branch.
-- [ ] Record commit/PR in task metadata and finish/archive task records only when
-  the implemented acceptance criteria are genuinely complete.
+- [x] Record the implementation commit and PR URL in task metadata.
+- [ ] Finish/archive task records only when the real PostgreSQL migration run
+  and live Telegram/WeChat acceptance criteria are genuinely complete.
 
 ## Validation Commands
 

@@ -65,13 +65,15 @@
   before the final suite and stopped by exact PID. No owned pytest, browser, or
   server process remains after validation.
 
-## Delivery boundary
+## Delivery status
 
-- Push only `codex/web-video-library-mvp` to the user's `origin` fork.
-- Open a ready-for-review PR from
+- Pushed only `codex/web-video-library-mvp` to the user's `origin` fork.
+- Opened ready-for-review PR
+  `https://github.com/deequoique/notebook-agent/pull/2` from
   `raederhans:codex/web-video-library-mvp` to
   `deequoique/notebook-agent:main`.
-- Never push either repository's `main` branch and never merge the PR.
+- Neither repository's `main` branch was pushed or modified, and the PR remains
+  unmerged for source-maintainer approval.
 - Keep this task in `review` after PR creation; do not archive it while the real
   PostgreSQL migration roundtrip and manual Telegram/WeChat acceptance remain
   outstanding.
