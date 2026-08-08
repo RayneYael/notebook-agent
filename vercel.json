@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "outputDirectory": "public",
   "env": {
     "DEPLOYMENT_ENV": "competition",
     "EXPECTED_DATABASE_REVISION": "d4e5f6a7b8c9"

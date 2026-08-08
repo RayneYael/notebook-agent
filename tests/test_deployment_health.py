@@ -151,6 +151,8 @@ def test_vercel_config_allowlists_health_routes_and_excludes_local_secrets():
     alembic_config = Config(str(root / "alembic.ini"))
     migration_head = ScriptDirectory.from_config(alembic_config).get_current_head()
     assert config["env"]["EXPECTED_DATABASE_REVISION"] == migration_head
+    assert config["outputDirectory"] == "public"
+    assert (root / "public" / ".gitkeep").is_file()
 
     assert config["routes"] == [
         {"src": "^/$", "dest": "/api/health"},

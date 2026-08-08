@@ -101,7 +101,9 @@ The repository pins Python 3.12. Vercel installs the committed
 uncompressed function limit. Non-runtime directories are excluded by
 `.vercelignore` and `functions.excludeFiles`. Public routing is a strict
 allowlist for `/`, `/health`, and `/api/health`; repository source paths and
-local environment files must return 404.
+local environment files must return 404 without returning file contents. The
+Vercel static output is pinned to the dedicated `public/` directory so the
+repository root can never become a static asset tree.
 
 ## Verification
 
