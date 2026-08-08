@@ -167,6 +167,14 @@ On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the
 .venv/bin/celery -A app.ingest.tasks.celery_app beat
 ```
 
+The worker and beat are also the durability boundary for terminal ingestion
+events. The producer declares a durable `ingest-completion` queue, but the
+existing worker must not consume that queue until a real idempotent completion
+consumer is deployed. Beat periodically repairs pending/stale outbox claims;
+check its counters and the queue backlog during rollout. The bundled Redis uses
+a persistent volume with AOF `appendfsync=always`; a remote broker must provide
+equivalent durability before acknowledging a published completion message.
+
 After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the gateway:
 
 ```bash

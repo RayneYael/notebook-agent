@@ -26,9 +26,14 @@ WeChat ----------/             |
                                                   |
                                     durable ingest dispatch
                                                   |
-                             Redis queue -> Celery worker
+                       Redis `ingest` queue -> Celery worker
                                                   |
                                  MinIO + embedding API
+
+                 terminal dispatch -> durable outbox row
+                                                  |
+                    Redis `ingest-completion` queue
+                 (future idempotent consumer only)
 ```
 
 安全边界有一个重要限制：`gateway-server` 只允许绑定 `127.0.0.1`、`::1` 或
@@ -135,7 +140,18 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `e5f6a7b8c9d0`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `f6a7b8c9d0e1`，`alembic check` 应显示没有新的 upgrade operation。
+
+本地 Compose Redis 使用持久卷、AOF 和 `appendfsync=always`，使 Celery 接收到的
+persistent 完成消息在确认 publish 前落盘。确认配置没有被覆盖：
+
+```bash
+docker compose exec -T redis redis-cli CONFIG GET appendonly
+docker compose exec -T redis redis-cli CONFIG GET appendfsync
+```
+
+期望分别返回 `yes` 和 `always`。远程 `REDIS_URL` 必须指向提供等价“写入确认前持久化”
+保证的托管实例；仅有高可用或定期 snapshot 不足以支撑完成事件的 at-least-once 合同。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -177,12 +193,15 @@ EMBEDDING_BATCH_SIZE=64
 ```bash
 docker compose ps
 docker compose exec -T redis redis-cli ping
+docker compose exec -T redis redis-cli CONFIG GET appendonly
+docker compose exec -T redis redis-cli CONFIG GET appendfsync
 curl --fail http://127.0.0.1:9000/minio/health/ready
 .venv/bin/alembic current
 ```
 
-通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG`、MinIO ready endpoint
-返回成功、schema 为 `e5f6a7b8c9d0 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG` 且本地实例报告
+`appendonly=yes`、`appendfsync=always`、MinIO ready endpoint
+返回成功、schema 为 `f6a7b8c9d0e1 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
 在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
@@ -191,7 +210,7 @@ worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 
 .venv/bin/celery -A app.ingest.tasks.celery_app worker \
   --loglevel=INFO --queues=ingest,maintenance
 
-# 只启动一个 beat 实例，定期投递有界 maintenance purge task。
+# 只启动一个 beat 实例；它同时投递 completion outbox 补偿和 purge task。
 .venv/bin/celery -A app.ingest.tasks.celery_app beat --loglevel=INFO
 ```
 
@@ -200,9 +219,15 @@ worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 
 ```bash
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect ping
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
+
+# Redis transport: inspect the durable completion backlog without consuming it.
+docker compose exec -T redis redis-cli LLEN ingest-completion
 ```
 
-至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest` 与 `maintenance`。worker 必须拥有
+至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest` 与 `maintenance`。
+`ingest-completion` 已由 producer 声明为 durable queue，但在真实通知/编排 consumer
+部署前，**不要**把它加入现有 worker 的 `--queues`；没有业务 handler 的 worker 会 ack
+并丢弃事件。worker 必须拥有
 PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gateway 请求进程内同步
 执行 metadata、字幕、MinIO、chunk 或 embedding。worker 的任务参数只应是内部 dispatch ID。
 
@@ -283,7 +308,7 @@ MiXer 等 URL-only 客户端只有在显式设置 `MCP_URL_TOKEN_MODE=true` 后�
 
 MCP 进程可用性不等于数据库、模型、embedding、Redis、MinIO、Celery 或 maintenance
 readiness。read-only 问答可以不启动 Redis/MinIO/worker；启用 full 的保存、重试和
-回收站操作前，必须检查相应依赖和 migration `e5f6a7b8c9d0 (head)`。
+回收站操作前，必须检查相应依赖和 migration `f6a7b8c9d0e1 (head)`。
 
 ## 7. 安装 LangBot 桥接（可选）
 
@@ -693,7 +718,7 @@ WHERE deleted_at IS NOT NULL;
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
 3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false` 并安装新的 Python 依赖。
-4. 执行 `alembic upgrade head`，确认 revision `e5f6a7b8c9d0`。
+4. 执行 `alembic upgrade head`，确认 revision `f6a7b8c9d0e1`。
 5. 先启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
 6. 再启动 gateway 并检查 health、schema 与 CLI ask。
 7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway，再启动 plugin/LangBot。
@@ -707,6 +732,11 @@ WHERE deleted_at IS NOT NULL;
 隔离恢复演练中确认安全且已有备份时才执行指定 revision downgrade；生产回滚不得用 destructive
 downgrade 删除 action/dispatch audit。回滚与重启都不得重置 Telegram/微信身份、微信扫码登录、
 conversation history、已有 content 或 MinIO 对象。
+
+Completion publisher/consumer 出现异常时，先停止 beat 的 completion 补偿与真实
+`ingest-completion` consumer，不停止 ingestion 真相写入；保留
+`ingest_completion_event` 的 pending/claimed rows。代码回滚也保留该表，恢复新 worker
+后再由 sweep 补发；不得通过清空 Redis queue 或删除 outbox 来“修复”重复消息。
 
 LangBot 版本升级必须重新验证：sender ID、bot UUID、conversation ID、平台 message
 ID、plugin event 顺序、monitoring 隐私补丁和两个 adapter 并发。不能假设 4.10.6

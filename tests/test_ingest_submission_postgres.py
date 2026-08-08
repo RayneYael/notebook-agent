@@ -1,4 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
+from datetime import UTC, datetime, timedelta
 from threading import Barrier, Event, Lock
 from uuid import uuid4
 
@@ -11,21 +12,36 @@ from app.connectors.base import TransientFetchError
 from app.db import get_engine
 from app.ingest.submission import IngestSubmissionService
 from app.ingest.tasks import (
+    IngestCompletionPublisher,
+    _claim_completion_event,
+    _complete_dispatch,
+    _mark_completion_enqueued,
     _mark_dispatch_failed,
     process_dispatch,
 )
-from app.models import AppUser, Base, ContentItem, IngestDispatch
+from app.models import (
+    AppUser,
+    Base,
+    ContentItem,
+    IngestCompletionEvent,
+    IngestDispatch,
+)
 
 
 @pytest.fixture
-def submission_factory():
+def submission_factory(monkeypatch):
     engine = get_engine()
     schema = f"test_save_{uuid4().hex}"
     tables = [
         AppUser.__table__,
         ContentItem.__table__,
         IngestDispatch.__table__,
+        IngestCompletionEvent.__table__,
     ]
+    monkeypatch.setattr(
+        "app.ingest.tasks.publish_ingest_completion_event",
+        lambda _event_id: "completion-task-id",
+    )
     try:
         with engine.begin() as connection:
             connection.execute(text(f'CREATE SCHEMA "{schema}"'))
@@ -329,10 +345,16 @@ def test_dispatch_worker_claim_retry_and_completion_are_conditional_pg(
     with submission_factory() as db:
         dispatch = db.get(IngestDispatch, dispatch_id)
         item = db.get(ContentItem, item_id)
+        event = db.scalar(
+            select(IngestCompletionEvent).where(
+                IngestCompletionEvent.dispatch_id == dispatch_id
+            )
+        )
         assert (dispatch.state, dispatch.task_id) == (
             "enqueued",
             "task-current",
         )
+        assert event is None
         assert item.state == "pending"
         assert item.user_id == tenant.app_user_id
 
@@ -346,12 +368,18 @@ def test_dispatch_worker_claim_retry_and_completion_are_conditional_pg(
     ) == "duplicate"
     assert attempts == [item_id]
 
+    def complete_ready(current_item_id):
+        assert current_item_id == item_id
+        with submission_factory() as db:
+            item = db.get(ContentItem, current_item_id)
+            item.state = "ready"
+            db.commit()
+        return "ready"
+
     assert process_dispatch(
         dispatch_id,
         task_id="task-current",
-        processor=lambda current_item_id: (
-            "ready" if current_item_id == item_id else "wrong_item"
-        ),
+        processor=complete_ready,
         session_factory=submission_factory,
     ) == "ready"
     assert process_dispatch(
@@ -365,8 +393,19 @@ def test_dispatch_worker_claim_retry_and_completion_are_conditional_pg(
     with submission_factory() as db:
         dispatch = db.get(IngestDispatch, dispatch_id)
         item = db.get(ContentItem, item_id)
+        event = db.scalar(
+            select(IngestCompletionEvent).where(
+                IngestCompletionEvent.dispatch_id == dispatch_id
+            )
+        )
         assert dispatch.state == "completed"
         assert dispatch.error_code is None
+        assert event is not None
+        assert (event.outcome, event.item_state, event.error_code) == (
+            "completed",
+            "ready",
+            None,
+        )
         assert item.user_id == tenant.app_user_id
 
 
@@ -402,11 +441,32 @@ def test_stale_task_failure_cannot_overwrite_current_delivery_pg(
         task_id="task-current",
         session_factory=submission_factory,
     )
+    _mark_dispatch_failed(
+        dispatch_id,
+        RuntimeError("private repeated failure hook"),
+        task_id="task-current",
+        session_factory=submission_factory,
+    )
     with submission_factory() as db:
         dispatch = db.get(IngestDispatch, dispatch_id)
         item = db.get(ContentItem, item_id)
+        events = list(
+            db.scalars(
+                select(IngestCompletionEvent).where(
+                    IngestCompletionEvent.dispatch_id == dispatch_id
+                )
+            )
+        )
+        assert len(events) == 1
+        event = events[0]
         assert dispatch.state == "failed"
         assert dispatch.error_code == "ingestion_failed"
+        assert event is not None
+        assert (event.outcome, event.item_state, event.error_code) == (
+            "failed",
+            "failed",
+            "ingestion_failed",
+        )
         assert item.state == "failed"
         assert item.fail_reason == "ingestion_failed"
         assert item.user_id == tenant.app_user_id
@@ -440,9 +500,301 @@ def test_generic_worker_failure_exposes_and_persists_only_safe_code_pg(
     with submission_factory() as db:
         dispatch = db.get(IngestDispatch, dispatch_id)
         item = db.get(ContentItem, item_id)
+        event = db.scalar(
+            select(IngestCompletionEvent).where(
+                IngestCompletionEvent.dispatch_id == dispatch_id
+            )
+        )
         assert dispatch.state == "failed"
         assert dispatch.task_id == "task-current"
         assert dispatch.error_code == "ingestion_failed"
+        assert event is not None
+        assert (event.outcome, event.item_state, event.error_code) == (
+            "failed",
+            "failed",
+            "ingestion_failed",
+        )
         assert item.state == "failed"
         assert item.fail_reason == "ingestion_failed"
         assert item.user_id == tenant.app_user_id
+
+
+def test_terminal_dispatch_and_completion_event_roll_back_together_pg(
+    submission_factory,
+    monkeypatch,
+):
+    tenant = _tenant(submission_factory, 73)
+    item_id, dispatch_id = _worker_dispatch(
+        submission_factory,
+        tenant,
+        suffix=4,
+        state="running",
+        task_id="task-current",
+    )
+    with submission_factory() as db:
+        item = db.get(ContentItem, item_id)
+        item.state = "ready"
+        db.commit()
+
+    def fail_event_insert(*_args, **_kwargs):
+        raise RuntimeError("simulated_event_insert_failure")
+
+    monkeypatch.setattr(
+        "app.ingest.tasks._ensure_completion_event", fail_event_insert
+    )
+
+    with pytest.raises(RuntimeError, match="simulated_event_insert_failure"):
+        _complete_dispatch(
+            dispatch_id,
+            "task-current",
+            process_state="ready",
+            session_factory=submission_factory,
+        )
+
+    with submission_factory() as db:
+        dispatch = db.get(IngestDispatch, dispatch_id)
+        event = db.scalar(
+            select(IngestCompletionEvent).where(
+                IngestCompletionEvent.dispatch_id == dispatch_id
+            )
+        )
+        assert dispatch.state == "running"
+        assert dispatch.error_code is None
+        assert event is None
+
+
+def test_late_failure_after_item_ready_converges_to_completed_event_pg(
+    submission_factory,
+):
+    tenant = _tenant(submission_factory, 74)
+    item_id, dispatch_id = _worker_dispatch(
+        submission_factory,
+        tenant,
+        suffix=5,
+        state="running",
+        task_id="task-current",
+    )
+    with submission_factory() as db:
+        item = db.get(ContentItem, item_id)
+        item.state = "ready"
+        db.commit()
+
+    _mark_dispatch_failed(
+        dispatch_id,
+        RuntimeError("late worker failure after ready commit"),
+        task_id="task-current",
+        session_factory=submission_factory,
+    )
+
+    with submission_factory() as db:
+        dispatch = db.get(IngestDispatch, dispatch_id)
+        item = db.get(ContentItem, item_id)
+        events = list(
+            db.scalars(
+                select(IngestCompletionEvent).where(
+                    IngestCompletionEvent.dispatch_id == dispatch_id
+                )
+            )
+        )
+        assert (dispatch.state, dispatch.error_code) == ("completed", None)
+        assert (item.state, item.fail_reason) == ("ready", None)
+        assert len(events) == 1
+        assert (events[0].outcome, events[0].item_state, events[0].error_code) == (
+            "completed",
+            "ready",
+            None,
+        )
+
+
+@pytest.mark.parametrize(
+    ("item_state", "suffix", "tenant_number"),
+    [
+        ("ready", 10, 80),
+        ("needs_extension", 11, 81),
+        ("needs_asr", 12, 82),
+    ],
+)
+def test_normal_terminal_states_create_completed_snapshots_pg(
+    submission_factory,
+    item_state,
+    suffix,
+    tenant_number,
+):
+    tenant = _tenant(submission_factory, tenant_number)
+    item_id, dispatch_id = _worker_dispatch(
+        submission_factory,
+        tenant,
+        suffix=suffix,
+        state="running",
+        task_id="task-current",
+    )
+    with submission_factory() as db:
+        item = db.get(ContentItem, item_id)
+        item.state = item_state
+        db.commit()
+
+    _complete_dispatch(
+        dispatch_id,
+        "task-current",
+        process_state=item_state,
+        session_factory=submission_factory,
+    )
+
+    with submission_factory() as db:
+        event = db.scalar(
+            select(IngestCompletionEvent).where(
+                IngestCompletionEvent.dispatch_id == dispatch_id
+            )
+        )
+        assert event is not None
+        assert (event.outcome, event.item_state, event.error_code) == (
+            "completed",
+            item_state,
+            None,
+        )
+
+
+def _pending_completion_event(
+    submission_factory,
+    *,
+    tenant_number,
+    suffix,
+    item_state="ready",
+):
+    tenant = _tenant(submission_factory, tenant_number)
+    item_id, dispatch_id = _worker_dispatch(
+        submission_factory,
+        tenant,
+        suffix=suffix,
+        state="running",
+        task_id="task-current",
+    )
+    with submission_factory() as db:
+        item = db.get(ContentItem, item_id)
+        item.state = item_state
+        db.commit()
+    event_id = _complete_dispatch(
+        dispatch_id,
+        "task-current",
+        process_state=item_state,
+        session_factory=submission_factory,
+    )
+    assert event_id is not None
+    return event_id
+
+
+def test_completion_sweep_recovers_stale_claim_and_isolates_peer_failure_pg(
+    submission_factory,
+):
+    failed_event_id = _pending_completion_event(
+        submission_factory,
+        tenant_number=83,
+        suffix=13,
+    )
+    stale_event_id = _pending_completion_event(
+        submission_factory,
+        tenant_number=84,
+        suffix=14,
+        item_state="needs_asr",
+    )
+    with submission_factory() as db:
+        stale = db.get(IngestCompletionEvent, stale_event_id)
+        stale.publish_state = "claimed"
+        stale.claim_token = "abandoned-claim"
+        stale.claimed_at = datetime.now(UTC) - timedelta(seconds=600)
+        db.commit()
+
+    published = []
+
+    def publish(event_id):
+        published.append(event_id)
+        if event_id == failed_event_id:
+            raise RuntimeError("one broker failure")
+        return f"completion-task-{event_id}"
+
+    result = IngestCompletionPublisher(
+        submission_factory,
+        publisher=publish,
+        batch_size=20,
+        claim_timeout_seconds=300,
+        max_duration_seconds=5,
+    ).sweep_once()
+
+    assert result.claimed == 2
+    assert (result.enqueued, result.failed) == (1, 1)
+    assert published == [failed_event_id, stale_event_id]
+    with submission_factory() as db:
+        failed_event = db.get(IngestCompletionEvent, failed_event_id)
+        stale_event = db.get(IngestCompletionEvent, stale_event_id)
+        assert failed_event.publish_state == "pending"
+        assert stale_event.publish_state == "enqueued"
+        assert stale_event.publish_task_id == f"completion-task-{stale_event_id}"
+
+
+def test_completion_ack_crash_republishes_same_stable_event_id_pg(
+    submission_factory,
+    monkeypatch,
+):
+    event_id = _pending_completion_event(
+        submission_factory,
+        tenant_number=85,
+        suffix=15,
+    )
+    published = []
+
+    def publish(current_event_id):
+        published.append(current_event_id)
+        return f"completion-task-{current_event_id}"
+
+    def crash_before_ack(*_args, **_kwargs):
+        raise RuntimeError("simulated_ack_crash")
+
+    monkeypatch.setattr(
+        "app.ingest.tasks._mark_completion_enqueued", crash_before_ack
+    )
+    first = IngestCompletionPublisher(
+        submission_factory,
+        publisher=publish,
+        max_duration_seconds=5,
+    ).sweep_once()
+    assert (first.enqueued, first.failed) == (0, 1)
+
+    monkeypatch.setattr(
+        "app.ingest.tasks._mark_completion_enqueued",
+        _mark_completion_enqueued,
+    )
+    second = IngestCompletionPublisher(
+        submission_factory,
+        publisher=publish,
+        max_duration_seconds=5,
+    ).sweep_once()
+
+    assert (second.enqueued, second.failed) == (1, 0)
+    assert published == [event_id, event_id]
+    with submission_factory() as db:
+        event = db.get(IngestCompletionEvent, event_id)
+        assert event.publish_state == "enqueued"
+
+
+def test_physical_item_purge_cascades_completion_event_before_late_publish_pg(
+    submission_factory,
+):
+    event_id = _pending_completion_event(
+        submission_factory,
+        tenant_number=86,
+        suffix=16,
+    )
+    with submission_factory() as db:
+        event = db.get(IngestCompletionEvent, event_id)
+        item_id = event.item_id
+        db.delete(db.get(ContentItem, item_id))
+        db.commit()
+
+    assert (
+        _claim_completion_event(
+            event_id,
+            session_factory=submission_factory,
+            claim_timeout_seconds=300,
+        )
+        is None
+    )

@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Use the backend spec index and active package contracts before changing worker, queue, model, and deployment code."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Keep the Alembic head, hosted expected revision, migration ordering, and isolated destructive validation synchronized."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Completion events and sweep diagnostics must expose only allow-listed internal metadata and safe counters."}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Preserve recycle-bin races, purge semantics, bounded maintenance sweeps, and late-worker behavior."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Trace the source transaction, broker queue, maintenance recovery, deployment, and future consumer boundaries together."}
+{"file": ".trellis/tasks/08-09-video-worker-completion-queue/research/current-completion-path.md", "reason": "Use the audited dispatch state machine, existing bounded publisher, and identified dual-write gap as the implementation baseline."}

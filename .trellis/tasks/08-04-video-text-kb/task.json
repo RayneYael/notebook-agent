@@ -20,7 +20,8 @@
   "subtasks": [],
   "children": [
     "08-05-knowledge-retrieval-agent",
-    "08-05-youtube-subtitle-track-reliability"
+    "08-05-youtube-subtitle-track-reliability",
+    "08-09-video-worker-completion-queue"
   ],
   "parent": null,
   "relatedFiles": [],

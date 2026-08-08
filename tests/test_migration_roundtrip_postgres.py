@@ -98,6 +98,7 @@ def test_agent_action_migration_upgrade_downgrade_upgrade_isolated():
             connection.commit()
 
             command.upgrade(alembic_config, "head")
+            assert inspect(connection).has_table("ingest_completion_event")
             rows = connection.execute(
                 text(
                     """
@@ -133,11 +134,13 @@ def test_agent_action_migration_upgrade_downgrade_upgrade_isolated():
             assert "error_code" not in columns
             assert "action_results" not in columns
             assert not inspect(connection).has_table("ingest_dispatch")
+            assert not inspect(connection).has_table("ingest_completion_event")
             assert not inspect(connection).has_table(
                 "pending_channel_action"
             )
 
             command.upgrade(alembic_config, "head")
+            assert inspect(connection).has_table("ingest_completion_event")
             columns = {
                 column["name"]
                 for column in inspect(connection).get_columns(
