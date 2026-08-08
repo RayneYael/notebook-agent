@@ -29,6 +29,9 @@ MAX_SOURCE_ITEMS = 5
 SEARCH_RESULT_LIMIT = 10
 SEARCH_CANDIDATE_POOL_LIMIT = 50
 ANSWER_REQUEST_LIMIT = 2
+COMPRESSED_EVIDENCE_LIMIT = 8
+COMPOSER_EVIDENCE_EXCERPT_CHARS = 360
+COMPRESSED_EVIDENCE_EXCERPT_CHARS = 180
 
 class AgentDeps:
     citations: dict[int, Citation]       # keyed by segment_id, insertion order
@@ -48,6 +51,10 @@ class AnswerSection(BaseModel):
 
 class AnswerDraft(BaseModel):
     sections: list[AnswerSection]
+
+class ComposerDeps:
+    citations: dict[int, Citation]       # prompt rows and validator allow-list
+    excerpt_chars: int
 ```
 
 `AGENT_REQUEST_LIMIT`, `AGENT_TOOL_CALLS_LIMIT`, and
@@ -55,6 +62,14 @@ class AnswerDraft(BaseModel):
 composer each receive a new `RunUsage`; the configured output-token limit is
 therefore per stage, not a cumulative allowance shared by planning and answer
 generation.
+
+`AGENT_COMPOSER_MAX_TOKENS` defaults to 1000 and is the real provider-side cap
+for each Composer request. It must be positive, and multiplied by
+`ANSWER_REQUEST_LIMIT` it must not exceed `AGENT_OUTPUT_TOKEN_LIMIT`. A full
+attempt and its optional compressed attempt each receive fresh `RunUsage`, but
+both remain inside one answer-stage wall-clock timeout. Because each attempt
+may perform one structured-output repair, the optional two-attempt workflow can
+make at most four provider requests (4000 capped output tokens at the default).
 
 ## 3. Contracts
 
@@ -93,12 +108,28 @@ generation.
   evidence, and at most five distinct cited item IDs. PydanticAI performs at
   most one output retry, against the same allow-list; it never starts a fresh
   search.
+- Every Composer request sends `AGENT_COMPOSER_MAX_TOKENS` as the provider's
+  actual `max_tokens` generation cap. For DeepSeek Chat Completions, the model
+  profile must retain DeepSeek response/tool semantics, map the field to
+  `max_tokens` rather than `max_completion_tokens`, and send
+  `thinking: {"type": "disabled"}` without `reasoning_effort=none`.
+  Other compatible Composer models request provider-neutral `thinking=False`
+  when supported. Retrieval model settings remain unchanged.
+- If a full Composer attempt exceeds its output-token usage limit, or captured
+  response messages prove provider truncation with `finish_reason=length`, the
+  server may retry exactly once with a local deterministic evidence view. The
+  view selects at most eight segments, gives each retained item one segment
+  before filling in retrieval order, and truncates prompt excerpts to 180
+  characters. The compressed prompt rows are also its entire citation
+  allow-list. Ordinary invalid citations, provider failures, and timeouts do
+  not trigger compression; already compact evidence skips a useless retry.
 - The application appends `[S<segment_id>]` markers after validating the
   structured draft, and source rendering owns titles and real URLs. Sources
   are grouped once per item in retrieval order, retain distinct timestamp
   evidence under the item, and never infer chapter titles.
-- Composer retry exhaustion, timeout, provider failure, or any usage-limit
-  failure discards every draft and returns `status=ok` evidence fallback. The
+- Composer retry exhaustion, timeout, provider failure, or a terminal
+  usage-limit failure after the optional compressed attempt discards every
+  draft and returns `status=ok` evidence fallback. The
   fallback begins with `自动总结未完成，以下是知识库中最相关的证据：` and contains only
   real grouped sources, timestamp links, and bounded excerpts.
 - Knowledge success and fallback persist only normalized user question plus
@@ -107,6 +138,9 @@ generation.
   drafts are never persisted.
 - Diagnostics use only fixed safe fields. Retrieval events carry
   `agent_phase=retrieval`; composer events carry `agent_phase=answer`.
+  `context_compressed` records only before/after counts, retry count, and a
+  fixed limit classification; a recovered full attempt is not terminal
+  `agent_failed`.
   `tool_outcome=skipped` is allowed. `ModelHTTPError` additionally projects
   its validated integer `http_status`. Production forbids its body and message;
   explicit development records its complete message/model/body for diagnosis.
@@ -123,7 +157,9 @@ generation.
 | planner timeout or usage limit after evidence | log retrieval phase/kind and compose from existing Citations |
 | planner timeout or usage limit without evidence | fail closed with phase-accurate wording |
 | answer draft has unknown IDs or six item IDs | one answer-only retry using the original allow-list |
-| answer retry, timeout, provider error, or output-token limit fails | `ok` deterministic evidence fallback, no draft persistence |
+| full answer output-token limit or captured `finish_reason=length` | one compressed attempt when the evidence view is smaller |
+| compressed answer succeeds | validate only compressed IDs, render normal `ok` answer, no terminal failure diagnostic |
+| answer retry, timeout, provider error, or compressed attempt fails | `ok` deterministic fallback from original evidence, no draft persistence |
 | provider HTTP request fails | preserve phase behavior; production logs safe status/class, development also logs full error details |
 | valid answer draft | server-rendered markers and grouped real sources, at most five items |
 | action succeeds, including a mixed tool batch | canonical action result wins and composer does not run |
@@ -156,8 +192,10 @@ generation.
   failures.
 - Cover valid composer answers, unknown-ID repair, over-five-item repair,
   second invalid draft fallback, timeout fallback, provider-error fallback,
-  and output-token fallback. Assert no repair starts retrieval and no invalid
-  model content reaches history.
+  provider-cap request serialization, output-token compression recovery,
+  captured-length recovery, compressed allow-list enforcement, shared timeout,
+  no-op compression, and second-limit fallback. Assert no repair starts
+  retrieval and no invalid model content reaches history.
 - Cover hybrid duplicate collapse, one-item crowding, six-item selection,
   distant same-item segments, public limit clamping, bounded candidate pool,
   and PostgreSQL tenant predicates during hydration.

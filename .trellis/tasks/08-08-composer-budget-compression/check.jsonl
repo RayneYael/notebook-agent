@@ -1,0 +1,3 @@
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Verify convergence, source, fallback, and privacy invariants"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify new compression diagnostics remain allow-listed and redacted"}
+{"file": ".trellis/tasks/08-08-composer-budget-compression/research/provider-controls.md", "reason": "Verify exact provider fields against primary-source findings"}
