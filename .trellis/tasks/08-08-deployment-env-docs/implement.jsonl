@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Keep MCP profile, grant, URL-token, process environment, and fail-closed readiness guidance exact."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Keep the optional LangBot core/plugin environment boundary and private plugin dotenv contract exact."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Document feature flags, worker dependencies, maintenance, and migration readiness without changing behavior."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Keep README, dotenv, deployment, runtime consumers, Compose, and plugin configuration consistent across layers."}

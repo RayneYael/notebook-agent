@@ -4,6 +4,10 @@
 Notebook Agent gateway，以及 LangBot 4.10.6 的 Telegram/微信 adapter 与薄桥接插件。
 真实平台验收步骤另见 Trellis 任务中的 `manual-acceptance.md`。
 
+如果当前目标只是配置 `.env`、MCP 或可选 LangBot bridge，请先阅读
+[环境配置指南](environment-configuration.md)。本手册保留拓扑、启动顺序、systemd、
+日志、备份、回滚和故障排查等运维流程。
+
 ## 1. 部署拓扑
 
 ```text
@@ -102,40 +106,17 @@ python3.11 -m venv .venv
 cp .env.example .env
 ```
 
-编辑 `.env` 后至少替换：
+不要从这份长手册逐项猜测 `.env`。先打开
+[环境配置指南](environment-configuration.md)，选择一个运行场景并复制对应的最小配置：
 
-| 配置 | 必需 | 说明 |
-| --- | --- | --- |
-| `POSTGRES_PASSWORD` | 是 | PostgreSQL 密码，不能保留示例值 |
-| `MINIO_ROOT_USER` / `MINIO_ROOT_PASSWORD` | 是 | 原始文本对象存储凭据 |
-| `ZHIPU_API_KEY` | 生产检索需要 | query 与 segment embedding |
-| `TLS_CA_BUNDLE` | 可选 | gateway 与 Celery worker embedding 共用的可读 PEM bundle；保持证书/hostname 校验 |
-| `AGENT_MODEL` | 是 | PydanticAI 模型名 |
-| `AGENT_API_KEY` | 视 provider | 模型凭据 |
-| `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
-| `AGENT_TOOL_TIMEOUT_SECONDS` | 是 | 单次 Agent tool 上限；必须小于外层 `AGENT_TIMEOUT_SECONDS` |
-| `AGENT_OUTPUT_TOKEN_LIMIT` | 是 | 每个独立阶段的模型输出上限：检索规划与无工具回答 composer 分别从新计数开始；不要通过简单提高该值修复检索收敛 |
-| `AGENT_COMPOSER_MAX_TOKENS` | 是 | 每次回答 Composer 请求真正发给 provider 的生成上限，默认 `1000`；每个完整或压缩 attempt 最多两次结构化输出请求，因此该值乘以 2 不得超过该 attempt 的 `AGENT_OUTPUT_TOKEN_LIMIT`。DeepSeek Composer 同时关闭 thinking；输出预算/截断时会在同一总超时内以全新 usage 预算用压缩证据重试一次，整个 workflow 最多四次 provider 请求，按默认值合计 provider cap 最多 4000 输出 tokens |
-| `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
-| `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
-| `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true` |
-| `AGENT_ITEM_MANAGEMENT_ENABLED` | 是 | inventory/update/restore/retry/delete rollout flag；关闭时 CRUD tools 不注册，但 deleted-content filters 仍生效 |
-| `TRASH_RETENTION_DAYS` | 是 | 回收站保留天数，默认 30；必须为正数 |
-| `TRASH_PURGE_INTERVAL_SECONDS` | 是 | purge sweep 周期，默认 3600 秒 |
-| `TRASH_PURGE_BATCH_SIZE` | 是 | 每轮最多 claim 100 个条目，默认 20 |
-| `TRASH_PURGE_CLAIM_TIMEOUT_SECONDS` | 是 | stale purge claim 可重试的超时，默认 1800 秒 |
-| `TRASH_PURGE_MAX_DURATION_SECONDS` | 是 | 单轮 purge wall-clock 上限，默认 30 秒；超出批次会释放 claim 并延后 |
-| `TRASH_PURGE_OBJECT_TIMEOUT_SECONDS` | 是 | 单个 MinIO delete 的 connect/read timeout，默认 10 秒 |
-| `CHANNEL_GATEWAY_SECRET` | 是 | 至少 32 字符的随机共享密钥 |
+- 本地只读/stdio MCP：PostgreSQL、embedding、Agent provider；不需要 Redis、MinIO 或 worker。
+- 完整 MCP：再加入 Redis、MinIO、Celery worker/beat 和 management feature flags。
+- Streamable HTTP / MiXer：配置 MCP listener、TLS proxy 和每用户 grant。
+- LangBot：额外配置 gateway，以及安装插件目录中的独立私有 `.env`。
 
-生成共享密钥时可使用系统密码管理器或：
-
-```bash
-openssl rand -hex 32
-```
-
-不要把生成结果粘贴到 shell 历史以外的公开位置。应用与 LangBot plugin runtime
-必须使用完全相同的值。
+指南后半部分是完整变量字典，标明消费者、默认值、适用场景、secret 属性和重启范围。
+根 `.env`、stdio 的进程级 `MCP_TOKEN`、LangBot plugin 私有 `.env` 是三个不同边界，
+不得互相复制整份内容。
 
 ## 4. 数据服务与 migration
 
@@ -154,7 +135,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `d4e5f6a7b8c9`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `e5f6a7b8c9d0`，`alembic check` 应显示没有新的 upgrade operation。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -201,7 +182,7 @@ curl --fail http://127.0.0.1:9000/minio/health/ready
 ```
 
 通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG`、MinIO ready endpoint
-返回成功、schema 为 `d4e5f6a7b8c9 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+返回成功、schema 为 `e5f6a7b8c9d0 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
 在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
@@ -267,10 +248,13 @@ LangBot SDK，删除 `integrations/` 不影响 MCP 或 CLI。
 
 ### 6.5.1 stdio 本地验收
 
-stdio 的 stdout 只能包含 MCP 协议字节，应用诊断会写入 stderr 和受限的私有日志：
+stdio 的 stdout 只能包含 MCP 协议字节，应用诊断会写入 stderr 和受限的私有日志。
+先为目标用户签发 grant，再把 raw token 只传给该 stdio 进程：
 
 ```bash
-.venv/bin/python -m app.cli mcp-server --transport stdio
+.venv/bin/python -m app.cli mcp-grant issue --user-id 12 --scope read --label local-stdio
+MCP_TOKEN='<raw-token>' \
+  .venv/bin/python -m app.cli mcp-server --transport stdio
 ```
 
 用官方 MCP client/Inspector 初始化后执行 `tools/list`，再调用
@@ -709,7 +693,7 @@ WHERE deleted_at IS NOT NULL;
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
 3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false` 并安装新的 Python 依赖。
-4. 执行 `alembic upgrade head`，确认 revision `d4e5f6a7b8c9`。
+4. 执行 `alembic upgrade head`，确认 revision `e5f6a7b8c9d0`。
 5. 先启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
 6. 再启动 gateway 并检查 health、schema 与 CLI ask。
 7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway，再启动 plugin/LangBot。

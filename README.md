@@ -116,8 +116,8 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
 cp .env.example .env
-# Edit .env and configure the database, embedding provider, and agent provider.
-# CHANNEL_GATEWAY_SECRET is needed only for the optional LangBot bridge.
+# Choose a runtime profile in docs/environment-configuration.md, then fill
+# only the database/provider/infrastructure values that profile requires.
 
 docker compose up -d
 alembic upgrade head
@@ -129,13 +129,15 @@ Notebook Agent can be evaluated without LangBot. Run the local protocol over
 stdio (stdout is reserved for MCP protocol bytes; diagnostics go to stderr):
 
 ```bash
-.venv/bin/python -m app.cli mcp-server --transport stdio
+.venv/bin/python -m app.cli mcp-grant issue --user-id <user-id> --scope read --label local-stdio
+MCP_TOKEN='<raw-token>' \
+  .venv/bin/python -m app.cli mcp-server --transport stdio
 ```
 
-For a local stdio client that should call the Agent, launch the subprocess
-with an operator-issued grant token in its private environment (for example
-`MCP_TOKEN=<raw-token>`); the process resolves that token through the same
-hash-only grant table. Schema inspection remains available without it.
+For a local stdio client, launch the subprocess with an operator-issued grant
+token in its private environment (`MCP_TOKEN=<raw-token>`). The process
+resolves that token through the same hash-only grant table before registering
+the scope-specific tools; missing or invalid tokens fail closed.
 
 For a hosted evaluator, use Streamable HTTP. It binds to `127.0.0.1:8000` and
 serves `/mcp` by default; put a public deployment behind TLS and a proxy that
@@ -171,7 +173,10 @@ After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the g
 .venv/bin/python -m app.cli gateway-server
 ```
 
-See the [deployment guide](docs/deployment.md) for local and single-host Linux deployments, backup, rollback, upgrades, and troubleshooting.
+Start with the [environment configuration guide](docs/environment-configuration.md)
+for copyable read-only, full, HTTP/MiXer, and optional LangBot profiles. See the
+[deployment guide](docs/deployment.md) for process ordering, Linux services,
+backup, rollback, upgrades, and troubleshooting.
 
 ## Try It Locally with the CLI
 
@@ -229,7 +234,7 @@ To connect LangBot:
 4. Apply [`integrations/langbot-4.10.6-redact-monitoring.patch`](integrations/langbot-4.10.6-redact-monitoring.patch) so monitoring paths do not copy private message bodies or external identities.
 5. Start the Notebook Agent gateway and plugin runtime before starting LangBot.
 
-See the [LangBot bridge section](docs/deployment.md#7-安装-langbot-桥接) of the deployment guide for configuration and readiness checks.
+See the [LangBot bridge section](docs/deployment.md#7-安装-langbot-桥接可选) of the deployment guide for configuration and readiness checks.
 
 ## Project Structure
 

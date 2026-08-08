@@ -112,7 +112,7 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
 cp .env.example .env
-# 编辑 .env，填写数据库、Embedding、Agent provider 和 CHANNEL_GATEWAY_SECRET
+# 先在 docs/environment-configuration.md 选择运行场景，再填写该场景需要的值
 
 docker compose up -d
 alembic upgrade head
@@ -121,11 +121,16 @@ alembic upgrade head
 ### 3. 启动核心 MCP 服务（无需 LangBot）
 
 核心评测入口使用官方 `mcp==2.0.0`，支持 stdio 与 Streamable HTTP；`app/` 不依赖
-LangBot。stdio 的 stdout 仅保留协议字节，诊断写入 stderr：
+LangBot。stdio 的 stdout 仅保留协议字节，诊断写入 stderr。先签发 grant，再把 raw
+token 只传给该 stdio 进程：
 
 ```bash
-.venv/bin/python -m app.cli mcp-server --transport stdio
+.venv/bin/python -m app.cli mcp-grant issue --user-id <user-id> --scope read --label local-stdio
+MCP_TOKEN='<raw-token>' \
+  .venv/bin/python -m app.cli mcp-server --transport stdio
 ```
+
+缺少或无效 token 会 fail closed，不会暴露一个固定全局用户。
 
 托管 HTTP 服务默认监听 `127.0.0.1:8000/mcp`，公开部署必须使用 TLS。优先使用
 `Authorization: Bearer <token>`；URL-only 的兼容路径 `/mcp/c/<opaque-token>` 只有在
@@ -140,7 +145,7 @@ LangBot。stdio 的 stdout 仅保留协议字节，诊断写入 stderr：
 首次部署时先保持 `.env` 中的 `AGENT_SAVE_ENABLED=false`，启动 ingestion worker：
 
 ```bash
-.venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest
+.venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest,maintenance
 ```
 
 确认 worker ready 后，将 `AGENT_SAVE_ENABLED` 改为 `true`，再启动 Gateway：
@@ -149,7 +154,9 @@ LangBot。stdio 的 stdout 仅保留协议字节，诊断写入 stderr：
 .venv/bin/python -m app.cli gateway-server
 ```
 
-完整的本地部署、Linux 单机部署、升级回滚、备份及故障排查说明见 [部署手册](docs/deployment.md)。
+先从[环境配置指南](docs/environment-configuration.md)选择可复制的只读、完整、
+HTTP/MiXer 或可选 LangBot profile。进程启动顺序、Linux 服务、升级回滚、备份及
+故障排查见[部署手册](docs/deployment.md)。
 
 ## 本地 CLI 体验
 
@@ -207,7 +214,7 @@ AGENT_BASE_URL=https://your-gateway.example/v1
 4. 应用 [`integrations/langbot-4.10.6-redact-monitoring.patch`](integrations/langbot-4.10.6-redact-monitoring.patch)，避免 monitoring 路径复制私聊正文与外部身份。
 5. 先启动 Notebook Agent Gateway 与 plugin runtime，再启动 LangBot。
 
-具体配置与 readiness 验证请参考 [部署手册](docs/deployment.md#7-安装-langbot-桥接)。
+具体配置与 readiness 验证请参考 [部署手册](docs/deployment.md#7-安装-langbot-桥接可选)。
 
 ## 项目结构
 

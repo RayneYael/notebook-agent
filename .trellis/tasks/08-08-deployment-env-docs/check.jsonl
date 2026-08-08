@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Verify MCP environment examples preserve authentication, transport, scope, and readiness contracts."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Verify root and installed-plugin dotenv files are not conflated and no secrets are exposed."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Verify full-profile flags, worker queues, maintenance, and current migration guidance remain accurate."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit all duplicated links, variable names, defaults, process consumers, and bilingual quick starts."}
