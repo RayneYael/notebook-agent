@@ -17,6 +17,7 @@ from app.ingest.tasks import (
     _complete_dispatch,
     _release_dispatch_for_retry,
     build_worker_embedder,
+    create_item,
     fetch_text_task,
     process_item,
     publish_ingest_dispatch,
@@ -235,6 +236,65 @@ def test_cli_ingestion_fetches_metadata_exactly_once():
     ]
     assert store.item.title == "one fetch"
     assert store.item.public_id
+
+
+def test_cli_resave_from_trash_clears_the_web_archive_marker(monkeypatch):
+    deleted_at = datetime(2026, 8, 7, tzinfo=UTC)
+    item = ContentItem(
+        id=41,
+        public_id="restored-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="ready",
+        archived_at=datetime(2026, 8, 6, tzinfo=UTC),
+        deleted_at=deleted_at,
+    )
+    scalar_results = [item, datetime(2026, 8, 8, tzinfo=UTC)]
+
+    class DB:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, model, object_id):
+            if model is AppUser and object_id == 57:
+                return object()
+            return None
+
+        def scalar(self, _statement):
+            return scalar_results.pop(0)
+
+        def commit(self):
+            return None
+
+    class Connector:
+        platform = "youtube"
+
+        def match(self, _url):
+            return "dQw4w9WgXcQ"
+
+    class SettingsProbe:
+        trash_retention_days = 30
+
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: SettingsProbe())
+
+    restored_id = create_item(
+        item.url,
+        user_id=item.user_id,
+        why_saved="restored",
+        connector=Connector(),
+        session_factory=lambda: DB(),
+    )
+
+    assert restored_id == item.id
+    assert item.deleted_at is None
+    assert item.archived_at is None
+    assert item.why_saved == "restored"
 
 
 def test_celery_task_passes_only_dispatch_and_current_task_id(monkeypatch):

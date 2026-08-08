@@ -52,6 +52,7 @@ def content(**overrides):
         "raw_object_key": "7/youtube/video/hash.json3",
         "content_hash": "content-v1",
         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "deleted_at": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -72,6 +73,7 @@ def test_tenant_validation_happens_before_object_io():
     assert caught.value.error_code == "not_found"
     assert store.calls == []
     assert "content_item.user_id" in str(db.statements[0])
+    assert "content_item.deleted_at IS NULL" in str(db.statements[0])
 
 
 def test_raw_key_must_have_authenticated_user_prefix_before_io():

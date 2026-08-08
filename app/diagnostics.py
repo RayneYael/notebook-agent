@@ -40,7 +40,7 @@ _ERRORS = frozenset({
     "-", "no_evidence", "embedding_unavailable", "retrieval_unavailable",
     "timeout", "limit", "answer_unavailable", "runtime_error", "not_found",
     "search_required", "empty_answer", "identity_error", "thread_missing",
-    "queue_unavailable", "invalid_envelope",
+    "queue_unavailable", "quota_exceeded", "invalid_envelope",
     "item_not_found", "invalid_cursor", "invalid_batch", "invalid_why_saved",
     "invalid_location", "invalid_filter", "management_failed", "object_delete_failed",
     "confirmation_required", "confirmation_missing", "confirmation_expired",

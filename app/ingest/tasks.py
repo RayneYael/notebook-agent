@@ -123,6 +123,7 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
                 existing.purge_claimed_at = None
                 existing.purge_attempts = 0
                 existing.purge_error_code = None
+                existing.archived_at = None
                 if why_saved is not None:
                     existing.why_saved = " ".join(why_saved.split())[:500] or None
                 db.commit()

@@ -249,6 +249,7 @@ class KnowledgeServices:
                 .where(
                     Segment.item_id == item.id,
                     ContentItem.user_id == self._tenant.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                     ContentItem.archived_at.is_(None),
                     Segment.seq.between(segment.seq - radius, segment.seq + radius),
                 )

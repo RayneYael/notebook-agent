@@ -148,8 +148,8 @@ cd ..
 | `INGEST_DAILY_NEW_ITEM_LIMIT` / `INGEST_DAILY_NEW_ITEM_LIMIT_GLOBAL` | 是 | 每个 UTC 日新增内容的 per-user 与全局成本保险丝；默认 50 / 300 |
 | `INGEST_DAILY_DISPATCH_LIMIT_PER_USER` / `INGEST_DAILY_DISPATCH_LIMIT_GLOBAL` | 是 | 每个 UTC 日创建 dispatch 的 per-user 与全局上限，失败重试也计数；默认 100 / 1000 |
 | `INGEST_MAX_ITEMS_PER_USER` | 是 | 包含 archived 内容的每用户存储硬上限；默认 1000 |
-| `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true`。它控制 channel 与 Web 的新保存/失败重试，不关闭 Web 的 why/archive/restore |
-| `AGENT_ITEM_MANAGEMENT_ENABLED` | 是 | Agent inventory/update/restore/retry/delete tools 的 rollout flag；关闭时这些 tools 不注册，但 deleted-content filters 和 Web archive/restore 仍生效 |
+| `AGENT_SAVE_ENABLED` | 是 | gateway 与 Web 共用的新保存/重试开关；关闭后 Web batch/retry 进入只读，但现有资料的备注、归档和恢复仍可写 |
+| `AGENT_ITEM_MANAGEMENT_ENABLED` | 是 | 仅控制 Agent inventory/update/trash/restore/retry/delete tools；关闭时这些 tools 不注册，但 Web 资料管理与 deleted-content filters 不受影响 |
 | `TRASH_RETENTION_DAYS` | 是 | 回收站保留天数，默认 30；必须为正数 |
 | `TRASH_PURGE_INTERVAL_SECONDS` | 是 | purge sweep 周期，默认 3600 秒 |
 | `TRASH_PURGE_BATCH_SIZE` | 是 | 每轮最多 claim 100 个条目，默认 20 |
@@ -188,7 +188,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `e5f6a7b8c9d0`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `f6a7b8c9d0e1`，`alembic check` 应显示没有新的 upgrade operation。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -235,7 +235,7 @@ curl --fail http://127.0.0.1:9000/minio/health/ready
 ```
 
 通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG`、MinIO ready endpoint
-返回成功、schema 为 `e5f6a7b8c9d0 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+返回成功、schema 为 `f6a7b8c9d0e1 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
 在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
@@ -382,7 +382,7 @@ MiXer 等 URL-only 客户端只有在显式设置 `MCP_URL_TOKEN_MODE=true` 后�
 
 MCP 进程可用性不等于数据库、模型、embedding、Redis、MinIO、Celery 或 maintenance
 readiness。read-only 问答可以不启动 Redis/MinIO/worker；启用 full 的保存、重试和
-回收站操作前，必须检查相应依赖和 migration `e5f6a7b8c9d0 (head)`。
+回收站操作前，必须检查相应依赖和 migration `f6a7b8c9d0e1 (head)`。
 
 ## 7. 安装 LangBot 桥接（可选）
 
@@ -567,7 +567,7 @@ LangBot。不要先启动 adapter 试图“等它自己恢复”。
 
 1. 停 LangBot adapters/core，停止接收新消息。
 2. 停 plugin runtime。
-3. 设置 `AGENT_SAVE_ENABLED=false`，并按需设置 `AGENT_ITEM_MANAGEMENT_ENABLED=false` 后重启/停止 Notebook Agent gateway：前者阻止 channel 与 Web 的新保存/失败重试，后者只注销 Agent management tools。若要完全冻结 Web archive/restore 等写入，必须同时停止 `web-server`，或在反向代理处隔离全部 Web 写请求；保留 maintenance worker/beat 以继续安全清理，或按需暂停 beat。
+3. 关闭 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED` 并重启 Notebook Agent gateway；这会阻止渠道保存、Agent 管理 tools 以及 Web 新 submission/retry。若还要冻结 Web 的备注、归档和恢复，必须停止或在反向代理隔离 `web-server`；两个 Agent 开关不会关闭这些既有资料操作。保留 maintenance worker/beat 以继续安全清理，或按需暂停 beat。
 4. 让 active ingestion 完成；需要立即止损时再停止 Celery worker。
 5. 确认没有 ingestion 工作后，再按需停止 Redis、MinIO 与 PostgreSQL。
 
@@ -796,8 +796,8 @@ WHERE deleted_at IS NOT NULL;
 
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
-3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false`，重启或停止 gateway 与 `web-server`，确认 Web capability 已进入只读模式，再安装新的 Python 依赖。
-4. 执行 `alembic upgrade head`，确认 revision `e5f6a7b8c9d0`。
+3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false`，重启 gateway 并停止 `web-server`，从而冻结全部 Web 写入，再安装新的 Python 依赖。仅重启而不停止 `web-server` 只能禁用 batch/retry，不能禁用备注、归档和恢复。
+4. 执行 `alembic upgrade head`，确认 revision `f6a7b8c9d0e1`。
 5. 在 `web/` 执行 `corepack pnpm install --frozen-lockfile`、`check:api`、`test`、
    `typecheck`、`lint` 与 `build`，禁止继续提供旧的 `web/dist`。
 6. 启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
@@ -807,10 +807,8 @@ WHERE deleted_at IS NOT NULL;
 9. 开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED` 并重启 gateway 与 `web-server`。
 10. 最后启动 plugin/LangBot，并按第 8 节验证 required-plugin 与 adapter readiness。
 
-保存路径异常时先设置 `AGENT_SAVE_ENABLED=false` 并重启 gateway 与 `web-server`；这会保留只读检索和
-Web why/archive/restore，同时阻止 channel 与 Web 创建新的 pending action、ContentItem 和 dispatch。
-`AGENT_ITEM_MANAGEMENT_ENABLED=false` 只注销 Agent management tools，不能冻结 Web 写入；若故障处理要求
-完全只读，必须停止 `web-server` 或在反向代理处隔离全部 Web 写请求。不要删除或重绑用户数据。已在运行的 worker
+保存或 Agent 条目管理路径异常时，先把 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false` 并重启 gateway 与 `web-server`。这会保留只读检索，同时
+阻止新的 pending action、ContentItem、dispatch 和 Agent management calls；若还要冻结 Web 的备注、归档与恢复，停止或在反向代理隔离 `web-server`。不要删除或重绑用户数据。已在运行的 worker
 任务可以安全完成；若出现 tenant mismatch 或无界重复 enqueue，再停止 worker intake，并保留
 `ingest_dispatch` / `pending_channel_action` rows 供审计。
 

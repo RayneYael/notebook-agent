@@ -290,7 +290,10 @@ class KnowledgeItemManagementService:
             now = _as_utc(now or db.scalar(select(func.now())) or datetime.now(UTC))
             stmt = select(ContentItem).where(ContentItem.user_id == tenant.app_user_id)
             if location == "library":
-                stmt = stmt.where(ContentItem.deleted_at.is_(None))
+                stmt = stmt.where(
+                    ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
+                )
                 if marker:
                     timestamp, item_id = marker
                     stmt = stmt.where(
@@ -345,6 +348,7 @@ class KnowledgeItemManagementService:
                     ContentItem.id == item_id,
                     ContentItem.user_id == tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
             )
             if item is None:
@@ -375,6 +379,7 @@ class KnowledgeItemManagementService:
                     ContentItem.id == item_id,
                     ContentItem.user_id == tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -400,6 +405,7 @@ class KnowledgeItemManagementService:
                         ContentItem.id.in_(ids),
                         ContentItem.user_id == tenant.app_user_id,
                         ContentItem.deleted_at.is_(None),
+                        ContentItem.archived_at.is_(None),
                     )
                     .with_for_update()
                 )
@@ -511,6 +517,7 @@ class KnowledgeItemManagementService:
                     # able from a missing item to callers.
                     raise ItemNotFound()
                 item.deleted_at = None
+                item.archived_at = None
                 item.delete_claim_token = uuid4().hex
                 item.purge_claimed_at = None
                 item.purge_attempts = 0

@@ -208,13 +208,15 @@ class ContentLibraryService:
             true_total = int(
                 db.scalar(
                     select(func.count(ContentItem.id)).where(
-                        ContentItem.user_id == scope.app_user_id
+                        ContentItem.user_id == scope.app_user_id,
+                        ContentItem.deleted_at.is_(None),
                     )
                 )
                 or 0
             )
             statement = select(ContentItem).where(
-                ContentItem.user_id == scope.app_user_id
+                ContentItem.user_id == scope.app_user_id,
+                ContentItem.deleted_at.is_(None),
             )
             if lifecycle == "archived":
                 statement = statement.where(ContentItem.archived_at.is_not(None))
@@ -321,6 +323,8 @@ class ContentLibraryService:
             ):
                 raise LibraryNotFound()
             item = self._owned_item(db, scope, item_public_id, lock=True)
+            if item.archived_at is not None:
+                raise LibraryConflict("retry_unavailable")
             replay = db.scalar(
                 select(IngestDispatch)
                 .join(ContentItem, ContentItem.id == IngestDispatch.item_id)
@@ -328,6 +332,7 @@ class ContentLibraryService:
                     IngestDispatch.item_id == item.id,
                     IngestDispatch.request_key == request_key,
                     ContentItem.user_id == scope.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                 )
             )
             if replay is not None:
@@ -405,6 +410,7 @@ class ContentLibraryService:
                 .join(ContentItem, IngestDispatch.item_id == ContentItem.id)
                 .where(
                     ContentItem.user_id == scope.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                     IngestDispatch.public_id == dispatch_public_id,
                 )
             ).one_or_none()
@@ -426,6 +432,7 @@ class ContentLibraryService:
         statement = select(ContentItem).where(
             ContentItem.user_id == scope.app_user_id,
             ContentItem.public_id == public_id,
+            ContentItem.deleted_at.is_(None),
         )
         if lock:
             statement = statement.with_for_update()
@@ -442,6 +449,7 @@ class ContentLibraryService:
             .where(
                 IngestDispatch.item_id == item_id,
                 ContentItem.user_id == user_id,
+                ContentItem.deleted_at.is_(None),
             )
             .order_by(IngestDispatch.attempt.desc(), IngestDispatch.id.desc())
             .limit(1)
@@ -459,6 +467,7 @@ class ContentLibraryService:
             .where(
                 IngestDispatch.item_id.in_(item_ids),
                 ContentItem.user_id == user_id,
+                ContentItem.deleted_at.is_(None),
             )
             .order_by(
                 IngestDispatch.item_id,
@@ -515,18 +524,29 @@ class ContentLibraryService:
         error_code: str | None = None,
     ) -> None:
         with self._session_factory() as db:
-            dispatch = db.scalar(
-                select(IngestDispatch)
+            row = db.execute(
+                select(IngestDispatch, ContentItem)
                 .join(ContentItem, ContentItem.id == IngestDispatch.item_id)
                 .where(
                     IngestDispatch.id == dispatch_id,
                     ContentItem.user_id == user_id,
                 )
-            )
-            if dispatch is None or dispatch.state != "pending":
+                .with_for_update()
+            ).one_or_none()
+            if row is None:
+                return
+            dispatch, item = row
+            if dispatch.state != "pending":
                 return
             dispatch.state = state
             dispatch.task_id = task_id
             dispatch.error_code = error_code
             dispatch.updated_at = datetime.now(UTC)
+            if (
+                state == "failed"
+                and error_code == "queue_unavailable"
+                and item.state == "pending"
+            ):
+                item.state = "failed"
+                item.fail_reason = "queue_unavailable"
             db.commit()

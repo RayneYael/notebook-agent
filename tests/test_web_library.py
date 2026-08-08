@@ -18,10 +18,25 @@ def item(**overrides):
         "id": 41,
         "public_id": "item-public",
         "user_id": 7,
+        "platform": "youtube",
+        "kind": "video",
         "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        "title": "Example video",
+        "author": "Example author",
+        "published_at": None,
+        "duration_sec": None,
+        "lang": None,
+        "description": None,
+        "tags": None,
+        "chapters": None,
+        "cover_url": None,
+        "saved_at": datetime.now(UTC),
+        "why_saved": None,
+        "text_source": "none",
         "state": "pending",
         "fail_reason": None,
         "archived_at": None,
+        "deleted_at": None,
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -88,6 +103,32 @@ class ScalarSession:
         return self.values.pop(0)
 
 
+class Result:
+    def __init__(self, values):
+        self.values = values
+
+    def all(self):
+        return self.values
+
+    def one_or_none(self):
+        return self.values
+
+
+class QuerySession(ScalarSession):
+    def __init__(self, scalar_values=(), scalars_values=(), execute_values=()):
+        super().__init__(scalar_values)
+        self.scalars_values = list(scalars_values)
+        self.execute_values = list(execute_values)
+
+    def scalars(self, statement):
+        self.statements.append(statement)
+        return Result(self.scalars_values.pop(0))
+
+    def execute(self, statement):
+        self.statements.append(statement)
+        return Result(self.execute_values.pop(0))
+
+
 def test_cross_tenant_public_id_is_indistinguishable_from_missing():
     db = ScalarSession([None])
     service = ContentLibraryService(lambda: db, lambda _dispatch_id: "task")
@@ -99,6 +140,7 @@ def test_cross_tenant_public_id_is_indistinguishable_from_missing():
     sql = str(db.statements[0])
     assert "content_item.user_id" in sql
     assert "content_item.public_id" in sql
+    assert "content_item.deleted_at IS NULL" in sql
 
 
 def test_latest_dispatch_lookup_repeats_the_tenant_predicate():
@@ -127,6 +169,70 @@ def test_latest_dispatch_lookup_repeats_the_tenant_predicate():
     latest_sql = str(db.statements[1])
     assert "content_item.user_id" in latest_sql
     assert "content_item.id = ingest_dispatch.item_id" in latest_sql
+    assert "content_item.deleted_at IS NULL" in latest_sql
+
+
+def test_list_count_items_and_latest_dispatches_share_deleted_and_tenant_fences():
+    db = QuerySession(
+        scalar_values=[1],
+        scalars_values=[[item()], [dispatch(state="enqueued")]],
+    )
+
+    page = ContentLibraryService(lambda: db, lambda _value: "task").list_items(
+        SimpleNamespace(app_user_id=7)
+    )
+
+    assert page.total == 1
+    assert page.is_true_first_empty is False
+    assert len(db.statements) == 3
+    count_sql, items_sql, latest_sql = (str(value) for value in db.statements)
+    assert "content_item.user_id" in count_sql
+    assert "content_item.deleted_at IS NULL" in count_sql
+    assert "content_item.user_id" in items_sql
+    assert "content_item.deleted_at IS NULL" in items_sql
+    assert "content_item.archived_at IS NULL" in items_sql
+    assert "content_item.user_id" in latest_sql
+    assert "content_item.deleted_at IS NULL" in latest_sql
+
+
+def test_archived_filter_remains_independent_from_deleted_visibility():
+    db = QuerySession(scalar_values=[0], scalars_values=[[]])
+
+    ContentLibraryService(lambda: db, lambda _value: "task").list_items(
+        SimpleNamespace(app_user_id=7), lifecycle="archived"
+    )
+
+    items_sql = str(db.statements[1])
+    assert "content_item.deleted_at IS NULL" in items_sql
+    assert "content_item.archived_at IS NOT NULL" in items_sql
+
+
+@pytest.mark.parametrize("action", ["archive", "restore"])
+def test_deleted_items_are_not_found_by_archive_actions(action):
+    db = ScalarSession([None])
+    service = ContentLibraryService(lambda: db, lambda _value: "task")
+
+    with pytest.raises(LibraryNotFound) as caught:
+        getattr(service, action)(SimpleNamespace(app_user_id=7), "deleted-item")
+
+    assert caught.value.error_code == "not_found"
+    sql = str(db.statements[0])
+    assert "content_item.user_id" in sql
+    assert "content_item.public_id" in sql
+    assert "content_item.deleted_at IS NULL" in sql
+
+
+def test_deleted_item_dispatch_is_not_found():
+    db = QuerySession(execute_values=[None])
+    service = ContentLibraryService(lambda: db, lambda _value: "task")
+
+    with pytest.raises(LibraryNotFound) as caught:
+        service.get_dispatch(SimpleNamespace(app_user_id=7), "deleted-dispatch")
+
+    assert caught.value.error_code == "not_found"
+    sql = str(db.statements[0])
+    assert "content_item.user_id" in sql
+    assert "content_item.deleted_at IS NULL" in sql
 
 
 def test_retry_rejects_active_dispatch_without_publishing():
@@ -143,6 +249,66 @@ def test_retry_rejects_active_dispatch_without_publishing():
 
     assert caught.value.error_code == "retry_unavailable"
     assert published == []
+
+
+def test_retry_rejects_archived_item_before_idempotency_replay():
+    class AcceptingQuota:
+        def acquire_locks(self, _db, _app_user_id):
+            return True
+
+        def enforce(self, *_args, **_kwargs):
+            pytest.fail("archived retry must not reach quota enforcement")
+
+    archived = item(state="failed", archived_at=datetime.now(UTC))
+    db = ScalarSession(
+        [archived, dispatch(state="failed"), dispatch(state="failed")]
+    )
+    published = []
+    service = ContentLibraryService(
+        lambda: db,
+        lambda value: published.append(value) or "task",
+        quota_policy=AcceptingQuota(),
+    )
+
+    with pytest.raises(LibraryConflict) as caught:
+        service.retry(
+            SimpleNamespace(app_user_id=7),
+            "item-public",
+            request_key="user:retry:archived",
+        )
+
+    assert caught.value.error_code == "retry_unavailable"
+    assert published == []
+
+
+def test_retry_treats_deleted_item_as_not_found_before_dispatch_lookup():
+    class AcceptingQuota:
+        def acquire_locks(self, _db, _app_user_id):
+            return True
+
+        def enforce(self, *_args, **_kwargs):
+            pytest.fail("deleted retry must not reach quota enforcement")
+
+    db = ScalarSession([None])
+    published = []
+    service = ContentLibraryService(
+        lambda: db,
+        lambda value: published.append(value) or "task",
+        quota_policy=AcceptingQuota(),
+    )
+
+    with pytest.raises(LibraryNotFound) as caught:
+        service.retry(
+            SimpleNamespace(app_user_id=7),
+            "deleted-item",
+            request_key="user:retry:deleted",
+        )
+
+    assert caught.value.error_code == "not_found"
+    assert published == []
+    sql = str(db.statements[0])
+    assert "content_item.user_id" in sql
+    assert "content_item.deleted_at IS NULL" in sql
 
 
 def test_retry_is_disabled_by_the_global_save_switch_before_database_access():
@@ -270,6 +436,41 @@ def test_retry_uses_the_shared_active_ingest_quota_before_publishing():
 
     assert caught.value.error_code == "quota_exceeded"
     assert published == []
+
+
+def test_retry_publish_failure_converges_even_if_delete_wins_the_race():
+    content = item(
+        state="pending",
+        deleted_at=datetime.now(UTC),
+    )
+    pending = dispatch(state="pending")
+
+    class TransitionSession(QuerySession):
+        def __init__(self):
+            super().__init__(execute_values=[(pending, content)])
+            self.committed = False
+
+        def commit(self):
+            self.committed = True
+
+    db = TransitionSession()
+    service = ContentLibraryService(lambda: db, lambda _value: "task")
+
+    service._set_dispatch(
+        pending.id,
+        content.user_id,
+        "failed",
+        error_code="queue_unavailable",
+    )
+
+    assert pending.state == "failed"
+    assert pending.error_code == "queue_unavailable"
+    assert content.state == "failed"
+    assert content.fail_reason == "queue_unavailable"
+    assert db.committed is True
+    convergence_sql = str(db.statements[0])
+    assert "content_item.user_id" in convergence_sql
+    assert "content_item.deleted_at IS NULL" not in convergence_sql
 
 
 def test_every_search_statement_excludes_archived_items():

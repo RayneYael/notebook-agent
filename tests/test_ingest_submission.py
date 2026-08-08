@@ -238,6 +238,97 @@ def test_archived_failed_item_with_new_key_is_already_exists_without_retry():
     assert len(store.statements) == 1
 
 
+@pytest.mark.parametrize("hidden_state", ("archived", "deleted"))
+def test_retry_refuses_archived_and_deleted_items(hidden_state):
+    existing = ContentItem(
+        id=41,
+        public_id="hidden-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="failed",
+        fail_reason="ingestion_failed",
+        archived_at=datetime.now(UTC) if hidden_state == "archived" else None,
+        deleted_at=datetime.now(UTC) if hidden_state == "deleted" else None,
+    )
+    store = FakeStore([existing])
+    published = []
+
+    result = IngestSubmissionService(
+        store.session,
+        lambda dispatch_id: published.append(dispatch_id) or "task",
+    ).retry_item(
+        TenantContext(57, 9, "telegram", "account", "external"),
+        existing.id,
+        request_key=f"retry:{hidden_state}",
+    )
+
+    assert result.status == "retry_not_allowed"
+    assert result.safe_error_code == "item_not_found"
+    assert store.dispatches == []
+    assert published == []
+
+
+def test_retry_forwards_remaining_publish_budget_and_public_id(monkeypatch):
+    item = ContentItem(
+        id=41,
+        public_id="retry-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="failed",
+        fail_reason="ingestion_failed",
+    )
+    latest = IngestDispatch(
+        id=71,
+        public_id="old-dispatch",
+        item_id=item.id,
+        request_key="old-request",
+        attempt=1,
+        state="failed",
+        error_code="ingestion_failed",
+    )
+    store = FakeStore([item, None, latest])
+    store.dispatches.append(latest)
+    observed = []
+    monkeypatch.setattr("app.ingest.submission.time.monotonic", lambda: 100.0)
+
+    def publish(dispatch_id, *, remaining_budget_seconds):
+        observed.append((dispatch_id, remaining_budget_seconds))
+        return "retry-task"
+
+    result = IngestSubmissionService(store.session, publish).retry_item(
+        TenantContext(57, 9, "telegram", "account", "external"),
+        item.id,
+        request_key="bounded-retry",
+        publish_budget_seconds=0.25,
+    )
+
+    assert result.status == "queued"
+    assert result.item_public_id == "retry-public"
+    assert observed == [(72, pytest.approx(0.25))]
+    assert store.dispatches[-1].state == "enqueued"
+
+
+def test_retry_rejects_non_positive_publish_budget_before_database_work():
+    store = FakeStore([])
+    service = IngestSubmissionService(store.session, lambda _dispatch_id: "task")
+
+    with pytest.raises(ValueError, match="publish budget must be positive"):
+        service.retry_item(
+            TenantContext(57, 9, "telegram", "account", "external"),
+            41,
+            request_key="invalid-budget",
+            publish_budget_seconds=0,
+        )
+
+    assert store.statements == []
+
+
 def test_conflict_recovery_checks_same_request_dispatch_before_already_exists():
     existing = ContentItem(
         id=41,

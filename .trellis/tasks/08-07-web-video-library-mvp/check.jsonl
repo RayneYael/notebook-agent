@@ -8,3 +8,4 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Require focused RED-GREEN evidence, full regressions, type checks, builds, and browser smoke"}
 {"file": ".trellis/spec/frontend/index.md", "reason": "Verify every frontend guide reflects actual implemented React conventions and accessibility behavior"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check login-to-library-to-worker-to-transcript behavior and safe partial failure end to end"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Verify archived/deleted precedence, all Web and Agent visibility predicates, restore behavior, and the Alembic merge graph"}

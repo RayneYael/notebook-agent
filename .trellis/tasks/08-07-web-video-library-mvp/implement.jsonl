@@ -8,4 +8,5 @@
 {"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Drive authentication, tenant, lifecycle, transcript, migration, and regression work with failing tests first"}
 {"file": ".trellis/spec/frontend/index.md", "reason": "Establish and later update the complete React frontend convention set in English"}
 {"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review channel approval, Web session, API, ingestion worker, object storage, and responsive UI as one lifecycle"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Preserve distinct Web archive and recycle-bin deletion semantics, tenant gates, restore convergence, and the merged migration head"}
 {"file": ".trellis/tasks/08-04-video-text-kb/design.md", "reason": "Preserve the parent content schema, asynchronous ingestion, and raw subtitle source-of-truth decisions"}

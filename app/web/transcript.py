@@ -128,6 +128,7 @@ class TranscriptService:
                 select(ContentItem).where(
                     ContentItem.user_id == scope.app_user_id,
                     ContentItem.public_id == item_public_id,
+                    ContentItem.deleted_at.is_(None),
                 )
             )
             if item is None:

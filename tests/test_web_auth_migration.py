@@ -5,15 +5,33 @@ from uuid import uuid4
 import pytest
 from alembic import command
 from alembic.config import Config
+from alembic.script import ScriptDirectory
 from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import make_url
 
 from app.config import get_settings
 
 
-def test_web_auth_migration_follows_current_head_and_is_additive():
+def test_web_auth_migration_branches_from_agent_save_and_is_additive():
     assert migration.revision == "d3f4a5b6c7d8"
     assert migration.down_revision == "c7e8a91b2d34"
+
+
+def test_web_and_mcp_branches_converge_on_one_merge_head():
+    script = ScriptDirectory.from_config(Config("alembic.ini"))
+
+    assert script.get_revision("d3f4a5b6c7d8").down_revision == (
+        "c7e8a91b2d34"
+    )
+    assert script.get_revision("d4e5f6a7b8c9").down_revision == (
+        "c7e8a91b2d34"
+    )
+    assert script.get_revision("e5f6a7b8c9d0").down_revision == "d4e5f6a7b8c9"
+    assert script.get_heads() == ["f6a7b8c9d0e1"]
+    assert script.get_revision("f6a7b8c9d0e1").down_revision == (
+        "d3f4a5b6c7d8",
+        "e5f6a7b8c9d0",
+    )
 
 
 def test_web_auth_migration_backfills_and_roundtrips_in_isolated_database():

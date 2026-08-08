@@ -107,7 +107,16 @@ def _item(value) -> LibraryItemResponse:
 
 
 def _batch_item(value) -> BatchItemResponse:
-    status = value.status
+    # Internal recycle-bin outcomes stay behind the stable browser contract.
+    # A restored item is already present again; an item whose purge has begun
+    # is a retryable add failure and must not leak an unsupported enum to the
+    # generated frontend schema.
+    if value.status == "restored":
+        status = "already_exists"
+    elif value.status == "purge_in_progress":
+        status = "create_failed"
+    else:
+        status = value.status
     if status == "queued":
         lifecycle = "queued"
     elif status in {"queue_unavailable", "create_failed"}:
@@ -132,7 +141,11 @@ def _batch_item(value) -> BatchItemResponse:
         status=status,
         item_public_id=value.item_public_id,
         lifecycle=lifecycle,
-        safe_error_code=value.safe_error_code,
+        safe_error_code=(
+            "create_failed"
+            if value.status == "purge_in_progress"
+            else value.safe_error_code
+        ),
     )
 
 

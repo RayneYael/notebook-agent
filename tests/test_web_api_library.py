@@ -135,6 +135,22 @@ class Submission:
                     "quota_exceeded",
                     safe_error_code="quota_exceeded",
                 ),
+                SaveItemResult(
+                    "A6",
+                    5,
+                    "restored",
+                    item_id=44,
+                    item_public_id="restored-public",
+                    state="ready",
+                ),
+                SaveItemResult(
+                    "A7",
+                    6,
+                    "purge_in_progress",
+                    item_id=45,
+                    state="failed",
+                    safe_error_code="purge_in_progress",
+                ),
             )
         )
 
@@ -253,11 +269,23 @@ def test_batch_is_bounded_partial_and_namespaces_hashed_idempotency_key():
         "already_exists",
         "already_exists",
         "quota_exceeded",
+        "already_exists",
+        "create_failed",
     ]
     assert response.json()["results"][0]["item_public_id"] == "item-public"
     assert response.json()["results"][2]["item_public_id"] == "needs-action-public"
     assert response.json()["results"][2]["lifecycle"] == "needs_action"
     assert response.json()["results"][3]["lifecycle"] == "archived"
+    assert response.json()["results"][5]["item_public_id"] == "restored-public"
+    assert response.json()["results"][5]["lifecycle"] == "ready"
+    assert response.json()["results"][6] == {
+        "result_id": "A7",
+        "input_index": 6,
+        "status": "create_failed",
+        "item_public_id": None,
+        "lifecycle": "failed",
+        "safe_error_code": "create_failed",
+    }
     assert response.json()["results"][4] == {
         "result_id": "A5",
         "input_index": 4,

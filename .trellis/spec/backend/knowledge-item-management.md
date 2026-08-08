@@ -49,6 +49,16 @@ items. It also covers ingestion work that races with deletion or restoration.
 
 ## Recycle bin, retrieval, and ingestion
 
+- `archived_at` and `deleted_at` are separate product states. Archive is a
+  reversible Web visibility choice that keeps segments and raw objects;
+  deletion enters the recycle-bin and always takes precedence when both fields
+  are non-null. Active Agent inventory, vector/BM25 hydration, neighbors,
+  detail, and open-at paths require both fields to be null. Trash inventory may
+  show deleted rows regardless of their former archive state.
+- Web detail, transcript, archive/unarchive, dispatch, and retry queries must
+  apply the tenant predicate and `deleted_at IS NULL` independently. Restoring
+  from trash or re-saving the same URL clears both deletion and archive state,
+  so a successful restore cannot remain hidden in the archive view.
 - Soft deletion sets `deleted_at` using PostgreSQL time. All vector, BM25,
   hydration, neighbor, detail, and open-at retrieval paths require
   `deleted_at IS NULL`; disabling management tools must not remove these gates.
@@ -84,6 +94,10 @@ items. It also covers ingestion work that races with deletion or restoration.
 - Downgrade must refuse while soft-deleted rows exist. Operational rollback
   requires management/Beat disablement, a backup, an explicit restore-or-purge
   decision, migration verification, and retrieval smoke tests.
+- When independently shipped feature migrations branch from the same released
+  revision, preserve both historical files and add a no-op Alembic merge
+  revision. Never rewrite a deployed sibling migration or re-parent another
+  branch after environments may already have applied it.
 
 ## Required validation
 
@@ -91,7 +105,8 @@ items. It also covers ingestion work that races with deletion or restoration.
   destructive confirmation replacement/cancel/consume/expiry races, duplicate
   delivery, effect lease recovery, and canonical cross-turn continuation.
 - Cover save auto-restore, broker failure and split-state retry repair, worker
-  delete-to-restore convergence, deleted-content retrieval gates, purge claim
+  delete-to-restore convergence, archived/deleted precedence, active and trash
+  visibility, deleted-content Web/Agent gates, merge-head topology, purge claim
   recovery, statement timeout SQL, object adapter capability, and deadline
   diagnostics.
 - Run SQLite/offline tests for deterministic state transitions and real

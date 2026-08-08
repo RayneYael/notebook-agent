@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.channels.types import TenantContext, UserScope
+from app.channels.types import UserScope
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
 from app.models import AppUser, ContentItem, IngestDispatch
@@ -639,10 +639,11 @@ class IngestSubmissionService:
 
     def retry_item(
         self,
-        tenant: TenantContext,
+        tenant: UserScope,
         item_id: int,
         *,
         request_key: str,
+        publish_budget_seconds: float | None = None,
     ) -> SaveItemResult:
         """Queue one stable failed item for its next durable attempt.
 
@@ -660,7 +661,15 @@ class IngestSubmissionService:
             raise ValueError("retry requires item id and request key") from None
         if item_id <= 0:
             raise ValueError("retry requires item id and request key")
+        if publish_budget_seconds is not None and publish_budget_seconds <= 0:
+            raise ValueError("publish budget must be positive")
+        publish_deadline = (
+            time.monotonic() + float(publish_budget_seconds)
+            if publish_budget_seconds is not None
+            else None
+        )
         result_id = "A1"
+        item_public_id: str | None = None
         try:
             with self._session_factory() as db:
                 if not self._quota_policy.acquire_locks(
@@ -684,6 +693,7 @@ class IngestSubmissionService:
                     or getattr(item, "archived_at", None) is not None
                 ):
                     return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, safe_error_code="item_not_found")
+                item_public_id = item.public_id
                 replay = db.scalar(
                     select(IngestDispatch).where(
                         IngestDispatch.item_id == item.id,
@@ -715,9 +725,9 @@ class IngestSubmissionService:
                     item.state = "failed"
                     item.fail_reason = "queue_unavailable"
                 if item.state != "failed":
-                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, item_public_id=item.public_id, state=item.state, safe_error_code="retry_not_allowed")
                 if latest is not None and latest.state in {"pending", "enqueued", "running"}:
-                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, item_public_id=item.public_id, state=item.state, safe_error_code="retry_not_allowed")
                 self._enforce_ingest_quota(
                     db,
                     tenant.app_user_id,
@@ -742,6 +752,7 @@ class IngestSubmissionService:
                 0,
                 "quota_exceeded",
                 item_id=item_id,
+                item_public_id=item_public_id,
                 safe_error_code="quota_exceeded",
             )
         except IntegrityError:
@@ -753,12 +764,28 @@ class IngestSubmissionService:
                 )
                 if item is not None and dispatch is not None:
                     return self._retry_result(item, dispatch)
-            return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, safe_error_code="retry_not_allowed")
+            return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, item_public_id=item_public_id, safe_error_code="retry_not_allowed")
         except Exception:
-            return SaveItemResult(result_id, 0, "create_failed", item_id=item_id, safe_error_code="create_failed")
+            return SaveItemResult(result_id, 0, "create_failed", item_id=item_id, item_public_id=item_public_id, safe_error_code="create_failed")
 
+        remaining_budget = (
+            publish_deadline - time.monotonic()
+            if publish_deadline is not None
+            else None
+        )
         try:
-            task_id = self._publisher(dispatch_id)
+            if (
+                remaining_budget is not None
+                and remaining_budget <= MIN_REMAINING_PUBLISH_BUDGET_SECONDS
+            ):
+                raise TimeoutError("broker_publish_timeout")
+            if self._publisher_accepts_budget and remaining_budget is not None:
+                task_id = self._publisher(
+                    dispatch_id,
+                    remaining_budget_seconds=remaining_budget,
+                )
+            else:
+                task_id = self._publisher(dispatch_id)
         except Exception:
             if not self._mark_retry_publish_failed(dispatch_id):
                 # The broker failed and the state transition could not be
@@ -769,19 +796,20 @@ class IngestSubmissionService:
                     0,
                     "create_failed",
                     item_id=item_id,
+                    item_public_id=item_public_id,
                     safe_error_code="create_failed",
                 )
-            return SaveItemResult(result_id, 0, "queue_unavailable", item_id=item_id, state="failed", safe_error_code="queue_unavailable")
+            return SaveItemResult(result_id, 0, "queue_unavailable", item_id=item_id, item_public_id=item_public_id, state="failed", safe_error_code="queue_unavailable")
         self._set_dispatch_state(dispatch_id, state="enqueued", task_id=task_id)
-        return SaveItemResult(result_id, 0, "queued", item_id=item_id, state="pending")
+        return SaveItemResult(result_id, 0, "queued", item_id=item_id, item_public_id=item_public_id, state="pending")
 
     @staticmethod
     def _retry_result(item: ContentItem, dispatch: IngestDispatch) -> SaveItemResult:
         if dispatch.state in {"pending", "enqueued", "running"}:
-            return SaveItemResult("A1", 0, "queued", item_id=item.id, state=item.state)
+            return SaveItemResult("A1", 0, "queued", item_id=item.id, item_public_id=item.public_id, state=item.state)
         if dispatch.state == "failed" and dispatch.error_code == "queue_unavailable":
-            return SaveItemResult("A1", 0, "queue_unavailable", item_id=item.id, state=item.state, safe_error_code="queue_unavailable")
-        return SaveItemResult("A1", 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+            return SaveItemResult("A1", 0, "queue_unavailable", item_id=item.id, item_public_id=item.public_id, state=item.state, safe_error_code="queue_unavailable")
+        return SaveItemResult("A1", 0, "retry_not_allowed", item_id=item.id, item_public_id=item.public_id, state=item.state, safe_error_code="retry_not_allowed")
 
     @staticmethod
     def _repair_retry_split_state(
