@@ -1,0 +1,12 @@
+.env
+.env.*
+.git/
+.github/
+.runtime/
+.trellis/
+.venv/
+docs/
+integrations/
+tests/
+__pycache__/
+*.pyc

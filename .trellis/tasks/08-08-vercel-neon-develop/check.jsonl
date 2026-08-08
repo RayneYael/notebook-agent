@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Review endpoint correctness and test coverage"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Review secret redaction and failure contract"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review migration and pooled/direct connection boundaries"}
+{"file": ".trellis/tasks/08-08-vercel-neon-develop/research/platform-contract.md", "reason": "Check implementation against official platform constraints"}

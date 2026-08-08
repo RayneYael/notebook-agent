@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Backend safety and validation conventions for the health endpoint"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Redacted and bounded health failure behavior"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Repository database and migration conventions"}
+{"file": ".trellis/tasks/08-08-vercel-neon-develop/research/platform-contract.md", "reason": "Official Vercel and Neon runtime constraints"}

@@ -1,0 +1,23 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "env": {
+    "DEPLOYMENT_ENV": "competition",
+    "EXPECTED_DATABASE_REVISION": "d4e5f6a7b8c9"
+  },
+  "functions": {
+    "api/health.py": {
+      "maxDuration": 30,
+      "excludeFiles": "{.trellis,docs,integrations,tests}/**"
+    }
+  },
+  "rewrites": [
+    {
+      "source": "/",
+      "destination": "/api/health"
+    },
+    {
+      "source": "/health",
+      "destination": "/api/health"
+    }
+  ]
+}
