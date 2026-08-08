@@ -25,5 +25,13 @@ class UsedLinkToken(InvalidLinkToken):
     pass
 
 
+class WrongChannelLinkToken(InvalidLinkToken):
+    pass
+
+
+class LinkMergeBusy(IdentityError):
+    pass
+
+
 class IdentityConflict(IdentityError):
     pass

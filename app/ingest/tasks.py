@@ -326,10 +326,9 @@ def _claim_dispatch(
             return None
         item = db.get(ContentItem, dispatch.item_id)
         if item is None:
-            dispatch.state = "failed"
-            dispatch.error_code = "item_missing"
-            dispatch.updated_at = datetime.now(UTC)
-            db.commit()
+            # A tenant merge may retire a queued duplicate and cascade its
+            # dispatch before this delivery is claimed. Treat that as the same
+            # no-op duplicate outcome as a missing dispatch.
             return None
         dispatch.state = "running"
         if task_id is not None:

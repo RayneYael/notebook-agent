@@ -598,6 +598,10 @@ journalctl -u notebook-agent-gateway | rg '"trace_id":"<32位 trace ID>"'
 | 微信 | 私聊 `/whoami` | 返回绑定后的同一编号 |
 | 多渠道 | 两端交错发送 | 回复来源正确、历史不串线 |
 
+跨渠道身份绑定只支持 Telegram 与微信。来源端发送 `/link <目标渠道>`，再在目标端发送返回的 `/link <绑定码>`；目标端即使已经自动注册并拥有内容，也会完整归并到来源端 `/whoami` 对应的 tenant。绑定码默认 10 分钟过期、限定目标渠道且只能成功消费一次。若返回“目标账户仍有内容正在处理”，等待 ingestion 完成后使用同一绑定码重试；该失败不会消费绑定码。
+
+上线前运行 `bash scripts/smoke_identity_link.sh`，按固定检查点完成人工 Telegram -> 微信和微信 -> Telegram smoke。脚本只比较 `/whoami` 编号并记录固定 pass/fail，不接收、回显或保存绑定码、平台 sender identity 与消息正文。绑定完成后还要从两端分别验证同一条知识可检索，并确认两端对话历史不互相带入。
+
 ## 12. 备份与恢复
 
 必须同时保护：
@@ -617,6 +621,8 @@ docker compose exec -T postgres pg_dump -U postgres -Fc kb > kb-YYYYMMDD.dump
 隔离环境进行；恢复前停止渠道入口，避免旧备份与新消息同时写入。MinIO volume
 需要使用基础设施快照或 MinIO/S3 兼容备份工具另行备份，只有 PostgreSQL dump
 不能恢复原始对象。
+
+身份归并提交后不可通过用户命令拆分。回滚应用版本会保留已经归并的知识，但不会恢复原来的两个 tenant；如需拆分只能从正常 PostgreSQL 备份执行管理员恢复流程。
 
 ## 13. 升级与回滚
 

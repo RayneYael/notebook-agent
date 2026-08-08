@@ -98,3 +98,51 @@ def test_gateway_replaces_untrusted_request_id_at_the_http_boundary():
 
     assert received[0].request_id != "attacker-chosen-id"
     assert len(received[0].request_id) == 32
+
+
+def test_gateway_preserves_normalized_link_command():
+    secret = "s" * 32
+    received = []
+
+    def dispatch(envelope):
+        received.append(envelope)
+        return AgentAnswer(status="ok", text="safe")
+
+    server = ThreadingHTTPServer(
+        ("127.0.0.1", 0), _handler(RequestVerifier(secret), dispatch)
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        body = json.dumps(
+            {
+                "channel": "wechat",
+                "account_id": "account",
+                "external_user_id": "external-user",
+                "conversation_id": "conversation",
+                "message_id": "link-message",
+                "text": "/link telegram",
+            }
+        ).encode()
+        timestamp = str(int(time.time()))
+        nonce = uuid4().hex
+        request = Request(
+            f"http://127.0.0.1:{server.server_port}/v1/messages",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-KB-Timestamp": timestamp,
+                "X-KB-Nonce": nonce,
+                "X-KB-Signature": signature(secret, body, timestamp, nonce),
+            },
+            method="POST",
+        )
+        with urlopen(request, timeout=2) as response:
+            assert response.status == 200
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+    assert received[0].channel == "wechat"
+    assert received[0].text == "/link telegram"

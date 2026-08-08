@@ -23,6 +23,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [LangBot Channel Runtime](./langbot-channel-runtime.md) | Required bridge readiness, fail-closed routing, and channel privacy | Active |
 | [Provider TLS and Request Diagnostics](./provider-tls-diagnostics.md) | Verified outbound CA composition and redacted Agent/retrieval stage diagnostics | Active |
 | [Agent Retrieval Convergence](./agent-retrieval-convergence.md) | Server-enforced retrieval convergence, tool-free answer composition, evidence fallback, and Top-5 video-level sources | Active |
+| [Channel Identity Linking](./channel-identity-linking.md) | Deterministic `/link` validation, single-use tokens, tenant merge and privacy boundaries | Active |
 
 ---
 

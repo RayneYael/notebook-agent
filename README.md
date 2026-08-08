@@ -161,9 +161,11 @@ python -m app.cli ask --user-id 12 --thread demo 'What is the main idea of this 
 | `/whoami` | Show the internal user ID linked to the current channel identity. |
 | `/new` | Start a new conversation without loading the previous context. |
 | `/link wechat` | Generate a WeChat linking code from an authenticated channel; Telegram works the same way. |
-| `/link <code>` | Consume a linking code on a new channel and connect it to the same private library. |
+| `/link <code>` | Consume a linking code on the named target channel and connect it to the same private library. |
 
-Channels linked to the same user share a knowledge library but keep separate conversation histories by default, preventing accidental context mixing.
+Telegram and WeChat are the supported linking pair. Codes expire after the configured TTL (10 minutes by default), are restricted to the named target channel, and can succeed only once. The target account may already have used `/start`, `/whoami`, ordinary chat, or saved content: its tenant, identities, conversations, and knowledge are merged into the code-generating source tenant. Duplicate saved content is reconciled automatically. If target ingestion is currently running, retry the same code after processing finishes.
+
+Channels linked to the same user share a knowledge library but keep separate conversation histories by default, preventing accidental context mixing. A completed merge cannot be undone through chat commands; take the normal PostgreSQL backup before deployment and use administrative recovery for any later split. Linking codes necessarily appear in the two platform messages but are stored only as hashes and must never be copied into application logs.
 
 ## Model Configuration
 

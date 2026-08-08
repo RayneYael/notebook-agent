@@ -3,8 +3,8 @@ from __future__ import annotations
 import json
 import re
 import time
-from dataclasses import replace
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from threading import Barrier
 from uuid import uuid4
@@ -19,7 +19,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import FunctionModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.agent.actions import AgentActionServices
@@ -35,15 +35,17 @@ from app.channels.errors import (
     DisabledIdentity,
     ExpiredLinkToken,
     InvalidLinkToken,
+    LinkMergeBusy,
     UsedLinkToken,
 )
+from app.channels.http_gateway import RequestVerifier, signature
 from app.channels.identity import (
+    classify_link_argument,
     consume_link_token,
     create_link_token,
     resolve_identity,
     resolve_or_register,
 )
-from app.channels.http_gateway import RequestVerifier, signature
 from app.channels.pending_actions import PendingConfirmationService
 from app.channels.service import ChannelService
 from app.channels.types import ChannelEnvelope
@@ -53,6 +55,7 @@ from app.ingest.submission import IngestSubmissionService
 from app.models import (
     AppUser,
     ChannelIdentity,
+    ChannelLinkToken,
     ContentItem,
     ConversationThread,
     IngestDispatch,
@@ -487,9 +490,16 @@ async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory
 
     assert answer.status == "ok"
     assert answer.citations == [citation]
-    assert knowledge.calls == [(unrelated_question, 6)]
-    assert len(observed_instructions) == 1
-    assert "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in observed_instructions[0]
+    assert knowledge.calls == [(unrelated_question, 10)]
+    assert len(observed_instructions) == 2
+    assert any(
+        "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in value
+        for value in observed_instructions
+    )
+    assert any(
+        "可用证据（仅可引用以下 ID）：" in value
+        for value in observed_instructions
+    )
     assert published == []
     with db_factory() as db:
         action = db.get(PendingChannelAction, action_id)
@@ -539,6 +549,241 @@ def test_registration_linking_expiry_replay_and_disable_fail_closed(db_factory):
     with db_factory() as db:
         with pytest.raises(DisabledIdentity):
             resolve_identity(db, first)
+
+
+def test_link_argument_classification_is_deterministic():
+    assert classify_link_argument(" WeChat ") == ("channel", "wechat")
+    assert classify_link_argument("telegram") == ("channel", "telegram")
+    token = "Ab_" + "c" * 40
+    assert classify_link_argument(token) == ("token", token)
+    with pytest.raises(InvalidLinkToken):
+        classify_link_argument("not a token")
+
+
+def test_registered_tenants_merge_content_threads_tokens_and_duplicates(db_factory):
+    source_envelope = envelope(user=uuid4().hex)
+    target_envelope = envelope(channel="wechat", user=uuid4().hex)
+    with db_factory() as db:
+        source = resolve_or_register(db, source_envelope)
+        target = resolve_or_register(db, target_envelope)
+        source_thread = get_or_create_thread(db, source, source_envelope)
+        target_thread = get_or_create_thread(db, target, target_envelope)
+        source_item = ContentItem(
+            user_id=source.app_user_id,
+            platform="youtube",
+            platform_id="duplicate001",
+            kind="video",
+            url="https://youtu.be/duplicate001",
+            saved_at=datetime(2026, 1, 2, tzinfo=UTC),
+            why_saved="source reason",
+            watch_state="unwatched",
+            watch_pos_sec=12,
+            state="pending",
+        )
+        target_item = ContentItem(
+            user_id=target.app_user_id,
+            platform="youtube",
+            platform_id="duplicate001",
+            kind="video",
+            url="https://youtu.be/duplicate001",
+            title="complete title",
+            saved_at=datetime(2026, 1, 3, tzinfo=UTC),
+            why_saved="target reason",
+            watch_state="watched",
+            watch_pos_sec=48,
+            state="ready",
+        )
+        target_unique = ContentItem(
+            user_id=target.app_user_id,
+            platform="youtube",
+            platform_id="targetonly1",
+            kind="video",
+            url="https://youtu.be/targetonly1",
+            state="ready",
+        )
+        db.add_all([source_item, target_item, target_unique])
+        db.flush()
+        db.add(
+            Segment(
+                item_id=target_item.id,
+                seq=0,
+                start_sec=1,
+                end_sec=2,
+                text="target complete segment",
+                embedding=[0.01] * 1536,
+                boundary_kind="hard_cut",
+            )
+        )
+        db.add(
+            IngestDispatch(
+                public_id=uuid4().hex,
+                item_id=source_item.id,
+                request_key="source-duplicate-request",
+                state="enqueued",
+            )
+        )
+        target_token = create_link_token(db, target, target_channel="telegram")
+        assert target_token
+        link = create_link_token(db, source, target_channel="wechat")
+        source_user_id = source.app_user_id
+        target_user_id = target.app_user_id
+        db.commit()
+
+        linked = consume_link_token(db, target_envelope, link)
+        db.commit()
+
+        assert linked.app_user_id == source.app_user_id
+        assert db.get(AppUser, target.app_user_id) is None
+        assert db.get(ConversationThread, source_thread.id).app_user_id == source.app_user_id
+        assert db.get(ConversationThread, target_thread.id).app_user_id == source.app_user_id
+        assert {
+            identity.app_user_id
+            for identity in db.scalars(
+                select(ChannelIdentity).where(
+                    ChannelIdentity.id.in_([
+                        source.channel_identity_id,
+                        target.channel_identity_id,
+                    ])
+                )
+            )
+        } == {source.app_user_id}
+        merged_items = list(
+            db.scalars(
+                select(ContentItem)
+                .where(ContentItem.user_id == source.app_user_id)
+                .order_by(ContentItem.platform_id)
+            )
+        )
+        assert [item.platform_id for item in merged_items] == [
+            "duplicate001",
+            "targetonly1",
+        ]
+        duplicate = merged_items[0]
+        assert duplicate.id == target_item.id
+        assert duplicate.saved_at == datetime(2026, 1, 2, tzinfo=UTC)
+        assert duplicate.why_saved == (
+            "[source]\nsource reason\n\n[target]\ntarget reason"
+        )
+        assert (duplicate.watch_state, duplicate.watch_pos_sec) == ("watched", 48)
+        assert db.scalar(
+            select(func.count(Segment.id)).where(Segment.item_id == duplicate.id)
+        ) == 1
+        assert db.scalar(
+            select(func.count(IngestDispatch.id)).where(
+                IngestDispatch.item_id == source_item.id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count(ChannelLinkToken.id)).where(
+                ChannelLinkToken.app_user_id == target_user_id
+            )
+        ) == 0
+        assert db.scalar(
+            select(func.count(ChannelLinkToken.id)).where(
+                ChannelLinkToken.app_user_id == source_user_id
+            )
+        ) >= 2
+
+
+def test_running_target_ingestion_keeps_token_and_ownership_for_retry(db_factory):
+    source_envelope = envelope(user=uuid4().hex)
+    target_envelope = envelope(channel="wechat", user=uuid4().hex)
+    with db_factory() as db:
+        source = resolve_or_register(db, source_envelope)
+        target = resolve_or_register(db, target_envelope)
+        item = ContentItem(
+            user_id=target.app_user_id,
+            platform="youtube",
+            platform_id="runningitem",
+            kind="video",
+            url="https://youtu.be/runningitem",
+            state="fetching",
+        )
+        db.add(item)
+        db.flush()
+        dispatch = IngestDispatch(
+            public_id=uuid4().hex,
+            item_id=item.id,
+            request_key="running-target-request",
+            state="running",
+        )
+        db.add(dispatch)
+        link = create_link_token(db, source, target_channel="wechat")
+        db.commit()
+
+        with pytest.raises(LinkMergeBusy):
+            consume_link_token(db, target_envelope, link)
+        token = db.scalar(
+            select(ChannelLinkToken).where(
+                ChannelLinkToken.app_user_id == source.app_user_id
+            )
+        )
+        assert token.consumed_at is None
+        assert resolve_identity(db, target_envelope).app_user_id == target.app_user_id
+
+        dispatch.state = "completed"
+        db.commit()
+        linked = consume_link_token(db, target_envelope, link)
+        db.commit()
+        assert linked.app_user_id == source.app_user_id
+
+
+@pytest.mark.asyncio
+async def test_link_commands_merge_registered_target_without_agent_side_effects(
+    db_factory,
+):
+    agent = NoEvidenceAgent()
+    settings = replace(Settings(), channel_link_ttl_seconds=600)
+    service = ChannelService(db_factory, agent, settings)
+    source = envelope(user=uuid4().hex, message="source-start")
+    target = envelope(channel="wechat", user=uuid4().hex, message="target-start")
+    await service.handle(
+        ChannelEnvelope(**{**source.__dict__, "text": "/start"})
+    )
+    target_before = await service.handle(
+        ChannelEnvelope(**{**target.__dict__, "text": "/whoami"})
+    )
+    generated = await service.handle(
+        ChannelEnvelope(
+            **{**source.__dict__, "message_id": "source-link", "text": "/link wechat"}
+        )
+    )
+    token = generated.text.splitlines()[0].removeprefix("绑定码：")
+    linked = await service.handle(
+        ChannelEnvelope(
+            **{**target.__dict__, "message_id": "target-link", "text": f"/link {token}"}
+        )
+    )
+    source_after = await service.handle(
+        ChannelEnvelope(
+            **{**source.__dict__, "message_id": "source-who", "text": "/whoami"}
+        )
+    )
+    target_after = await service.handle(
+        ChannelEnvelope(
+            **{**target.__dict__, "message_id": "target-who", "text": "/whoami"}
+        )
+    )
+
+    assert target_before.text != source_after.text
+    assert generated.status == linked.status == "ok"
+    assert source_after.text == target_after.text
+    assert agent.calls == 0
+    with db_factory() as db:
+        linked_identity_ids = list(
+            db.scalars(
+                select(ChannelIdentity.id).where(
+                    ChannelIdentity.external_user_id.in_(
+                        [source.external_user_id, target.external_user_id]
+                    )
+                )
+            )
+        )
+        assert db.scalar(
+            select(func.count(ConversationThread.id)).where(
+                ConversationThread.channel_identity_id.in_(linked_identity_ids)
+            )
+        ) == 0
 
 
 def test_concurrent_registration_creates_one_user_and_identity():
