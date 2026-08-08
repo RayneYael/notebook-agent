@@ -90,3 +90,25 @@ Implemented provider-independent retrieval convergence, diversified evidence sel
 ### Status
 
 [OK] **Completed**
+
+
+## Session 4: Composer 预算与自动上下文压缩
+
+**Date**: 2026-08-08
+**Task**: Composer 预算与自动上下文压缩
+**Branch**: `main`
+
+### Summary
+
+为回答 Composer 设置 1000-token provider 上限并关闭 DeepSeek thinking；在输出超限或长度截断时按可信证据自动压缩重试，补齐安全诊断、规范与回归测试。
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `fa1dff9` | (see git log) |
+| `6e51bb2` | (see git log) |
+
+### Status
+
+[OK] **Completed**
