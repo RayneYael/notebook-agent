@@ -9,6 +9,7 @@ import math
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.limits import SEARCH_RESULT_LIMIT
 from app.agent.types import Citation
 from app.channels.types import TenantContext
 from app.diagnostics import RequestDiagnostics
@@ -17,7 +18,6 @@ from app.models import ContentItem, Segment
 from app.retrieval.search import Hit, bm25_search, vector_search
 
 
-SEARCH_RESULT_LIMIT = 10
 SEARCH_CANDIDATE_POOL_LIMIT = 50
 MAX_SOURCE_ITEMS = 5
 

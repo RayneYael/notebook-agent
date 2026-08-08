@@ -115,6 +115,10 @@ def load_message_history(
             .where(
                 ConversationTurn.thread_id == thread_id,
                 ConversationTurn.status == "completed",
+                # MCP management calls persist bounded ordering markers for
+                # delete confirmation safety.  They are not conversational
+                # model turns and must not consume the real history cap.
+                ConversationTurn.answer_status != "mcp_management",
             )
             .order_by(desc(ConversationTurn.created_at), desc(ConversationTurn.id))
             .limit(max_turns)

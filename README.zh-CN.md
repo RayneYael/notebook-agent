@@ -118,7 +118,24 @@ docker compose up -d
 alembic upgrade head
 ```
 
-### 3. 启动后台任务与 Gateway
+### 3. 启动核心 MCP 服务（无需 LangBot）
+
+核心评测入口使用官方 `mcp==2.0.0`，支持 stdio 与 Streamable HTTP；`app/` 不依赖
+LangBot。stdio 的 stdout 仅保留协议字节，诊断写入 stderr：
+
+```bash
+.venv/bin/python -m app.cli mcp-server --transport stdio
+```
+
+托管 HTTP 服务默认监听 `127.0.0.1:8000/mcp`，公开部署必须使用 TLS。优先使用
+`Authorization: Bearer <token>`；URL-only 的兼容路径 `/mcp/c/<opaque-token>` 只有在
+显式设置 `MCP_URL_TOKEN_MODE=true` 时启用，永远拒绝 `?token=`。使用
+`mcp-grant issue|rotate|revoke` 管理权限；原始 token 只在 issue/rotate 时显示，数据库
+只保存哈希。`read` grant 只能问答/查看库存，`full` grant 才能保存、删除确认、恢复和
+重试。`tools/list` 只证明 MCP 连通，评测还应调用自然语言的
+`ask_notebook_agent` 以验证真实模型路径。
+
+### 4. 启动后台任务与 Gateway
 
 首次部署时先保持 `.env` 中的 `AGENT_SAVE_ENABLED=false`，启动 ingestion worker：
 

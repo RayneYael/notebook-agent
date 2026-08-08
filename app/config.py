@@ -198,11 +198,38 @@ class Settings:
         default_factory=lambda: _env_int("CHANNEL_GATEWAY_PORT", 8765)
     )
 
+    # --- MCP transport ---
+    # These settings are intentionally independent from the private LangBot
+    # bridge.  MCP startup never requires CHANNEL_GATEWAY_SECRET.
+    mcp_host: str = field(
+        default_factory=lambda: _env("MCP_HOST", "127.0.0.1") or "127.0.0.1"
+    )
+    mcp_port: int = field(default_factory=lambda: _env_int("MCP_PORT", 8000))
+    mcp_path: str = field(
+        default_factory=lambda: _env("MCP_PATH", "/mcp") or "/mcp"
+    )
+    mcp_url_token_mode: bool = field(
+        default_factory=lambda: _env_bool("MCP_URL_TOKEN_MODE", False)
+    )
+
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
         if self.notebook_agent_log_retrieval_content and self.notebook_agent_env != "development":
             raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
+        if not self.mcp_host.strip():
+            raise ValueError("MCP_HOST must not be empty")
+        if self.mcp_port < 1 or self.mcp_port > 65535:
+            raise ValueError("MCP_PORT must be between 1 and 65535")
+        if (
+            not self.mcp_path.startswith("/")
+            or self.mcp_path == "/"
+            or "?" in self.mcp_path
+            or "#" in self.mcp_path
+        ):
+            raise ValueError("MCP_PATH must be an absolute path without query or fragment")
+        if self.mcp_path != "/" and self.mcp_path.endswith("/"):
+            raise ValueError("MCP_PATH must not have a trailing slash")
         if self.agent_composer_max_tokens <= 0:
             raise ValueError("AGENT_COMPOSER_MAX_TOKENS must be positive")
         if self.trash_retention_days <= 0:

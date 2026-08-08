@@ -25,6 +25,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Agent Retrieval Convergence](./agent-retrieval-convergence.md) | Server-enforced retrieval convergence, tool-free answer composition, evidence fallback, and Top-5 video-level sources | Active |
 | [Channel Identity Linking](./channel-identity-linking.md) | Deterministic `/link` validation, single-use tokens, tenant merge and privacy boundaries | Active |
 | [Knowledge Item Management](./knowledge-item-management.md) | Tenant-scoped inventory tools, durable destructive confirmation, recycle-bin lifecycle, retry, and bounded purge | Active |
+| [MCP Channel Runtime](./mcp-channel-runtime.md) | Official MCP v2 transports, tenant-bound grants, scope-gated tools, URL-token safety, and fail-closed readiness | Active |
 
 ---
 

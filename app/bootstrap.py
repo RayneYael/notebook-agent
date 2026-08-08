@@ -81,3 +81,41 @@ def build_channel_service(settings: Settings | None = None) -> ChannelService:
     factory = get_session_factory()
     agent = build_knowledge_agent(settings, session_factory=factory)
     return ChannelService(factory, agent, settings)
+
+
+def build_mcp_server(
+    settings: Settings | None = None,
+    *,
+    scope: str = "full",
+    token: str | None = None,
+):
+    """Build the MCP adapter without selecting a process-wide AppUser.
+
+    ``token`` is useful for a local stdio process whose operator has already
+    selected one grant.  Streamable HTTP resolves the bearer per request in
+    ``McpAuthMiddleware``; this helper never accepts an application-user id.
+    """
+
+    from app.mcp_grants import McpGrantService
+    from app.mcp_server import McpToolFacade, create_mcp_server
+
+    settings = settings or get_settings()
+    factory = get_session_factory()
+    grant_service = McpGrantService(factory)
+    resolved = None
+    if token:
+        try:
+            resolved = grant_service.resolve(token.strip())
+        except Exception:
+            raise RuntimeError("MCP token is invalid or unavailable") from None
+        # A local stdio token is authoritative for discovery; do not build a
+        # full mutation profile and hope invocation-time checks hide tools.
+        scope = resolved.scope
+    return create_mcp_server(
+        scope=scope,
+        facade=McpToolFacade(
+            settings=settings,
+            grant_service=grant_service,
+            grant=resolved,
+        ),
+    )

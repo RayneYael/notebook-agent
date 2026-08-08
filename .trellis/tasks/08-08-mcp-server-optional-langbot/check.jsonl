@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Verify stdio protocol cleanliness and continued production privacy guarantees."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Verify MCP Agent calls retain provider TLS and stable failure discrimination."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Verify real model invocation, tenant-scoped retrieval, citations, timeouts, and fallback behavior."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify grant migration, hash-only storage, rotation/revocation, and cross-user tenant isolation."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Verify authentication failures are stable and indistinguishable without leaking raw secrets or tenant state."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Verify making LangBot optional does not regress the existing optional bridge's fail-closed runtime contract."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"Audit schema, identity, transport, logging, service, persistence, and documentation round trips."}
+{"file":".trellis/tasks/08-08-mcp-server-optional-langbot/research/mcp-official-contract.md","reason":"Check implementation against the current official MCP SDK and transport/security facts."}
+{"file":".trellis/tasks/08-08-mcp-server-optional-langbot/research/mixer-evaluation-contract.md","reason":"Verify tools/list, direct invocation, hosted reachability, and competition artifact behavior against MiXer's published workflow."}

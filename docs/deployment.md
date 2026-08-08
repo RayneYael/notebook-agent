@@ -259,7 +259,49 @@ CHANNEL_GATEWAY_HOST=127.0.0.1
 CHANNEL_GATEWAY_PORT=8765
 ```
 
-## 7. 安装 LangBot 桥接
+## 6.5 MCP 核心入口（无需 LangBot）
+
+MCP 是 Notebook Agent 的核心评测入口，LangBot 只负责可选的个人微信/Telegram
+渠道适配。安装 `.[dev]` 会固定官方 Python SDK `mcp==2.0.0`；`app/` 不导入
+LangBot SDK，删除 `integrations/` 不影响 MCP 或 CLI。
+
+### 6.5.1 stdio 本地验收
+
+stdio 的 stdout 只能包含 MCP 协议字节，应用诊断会写入 stderr 和受限的私有日志：
+
+```bash
+.venv/bin/python -m app.cli mcp-server --transport stdio
+```
+
+用官方 MCP client/Inspector 初始化后执行 `tools/list`，再调用
+`ask_notebook_agent` 的自然语言问题。仅调用 `tools/list` 不能证明 Notebook
+Agent 的模型执行。
+
+### 6.5.2 Streamable HTTP 与授权
+
+默认配置是 `MCP_HOST=127.0.0.1`、`MCP_PORT=8000`、`MCP_PATH=/mcp`。公开部署必须
+使用 HTTPS 和反向代理，优先传 `Authorization: Bearer <token>`：
+
+```bash
+.venv/bin/python -m app.cli mcp-grant issue --user-id 12 --scope full --label mixer
+.venv/bin/python -m app.cli mcp-server --transport streamable-http
+```
+
+grant 的原始 token 只在 issue/rotate 时显示；数据库只存哈希，`list`/`show` 不会
+显示 bearer。每个 grant 映射一个稳定 MCP principal、一个 `AppUser` 和 `read` 或
+`full` scope；服务端每次请求都检查禁用、撤销和可选过期。浏览器/demo 使用
+`read` grant，且应为每个浏览器会话生成新的高熵 `conversation_id`。
+
+MiXer 等 URL-only 客户端只有在显式设置 `MCP_URL_TOKEN_MODE=true` 后才能使用
+`/mcp/c/<opaque-token>`。仅接受 HTTPS 动态路径，随后内部改写为 `/mcp`；不接受
+`?token=`，应用和代理访问日志必须省略或 redaction 完整 request URI。竞赛结束或
+疑似泄露后立即 rotate/revoke。
+
+MCP 进程可用性不等于数据库、模型、embedding、Redis、MinIO、Celery 或 maintenance
+readiness。read-only 问答可以不启动 Redis/MinIO/worker；启用 full 的保存、重试和
+回收站操作前，必须检查相应依赖和 migration `e5f6a7b8c9d0 (head)`。
+
+## 7. 安装 LangBot 桥接（可选）
 
 ### 7.1 应用启动就绪与隐私补丁
 

@@ -1,0 +1,9 @@
+{"file":".trellis/spec/backend/logging-guidelines.md","reason":"Preserve privacy-safe diagnostics and adapt the stdout sink safely for MCP stdio."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Preserve verified model/embedding provider composition and safe request correlation."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Ensure the MCP facade reaches the existing two-stage LLM Agent without bypassing retrieval or citation contracts."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Add hashed, revocable MCP access grants and their migration without weakening tenant or secret-storage boundaries."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Return stable authentication/scope errors without leaking token validity, tenant existence, or raw request paths."}
+{"file":".trellis/spec/guides/cross-layer-thinking-guide.md","reason":"The MCP schema crosses protocol, identity, service, model, persistence, and documentation boundaries."}
+{"file":".trellis/spec/guides/code-reuse-thinking-guide.md","reason":"Reuse ChannelService and extract shared explicit identity setup instead of duplicating CLI behavior."}
+{"file":".trellis/tasks/08-08-mcp-server-optional-langbot/research/mcp-official-contract.md","reason":"Use the verified current MCP transports, Python SDK version, stdio logging constraint, and HTTP security requirements."}
+{"file":".trellis/tasks/08-08-mcp-server-optional-langbot/research/mixer-evaluation-contract.md","reason":"Align the adapter with MiXer's code-to-MCP proxy, direct-tool/Agent evaluation modes, source-runtime requirement, and self-hosted +5 path."}

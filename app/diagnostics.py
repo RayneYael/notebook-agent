@@ -172,7 +172,8 @@ class DailySizeRotatingFileHandler(RotatingFileHandler):
 
 
 def configure_runtime_logging(
-    *, log_dir: str, max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5
+    *, log_dir: str, max_bytes: int = 10 * 1024 * 1024, backup_count: int = 5,
+    console_stream: str = "stdout",
 ) -> bool:
     """Install idempotent stdout + optional private file handlers.
 
@@ -182,7 +183,9 @@ def configure_runtime_logging(
 
     if max_bytes <= 0 or backup_count <= 0:
         raise ValueError("logging rotation limits must be positive")
-    config = (str(Path(log_dir).resolve()), max_bytes, backup_count)
+    if console_stream not in {"stdout", "stderr"}:
+        raise ValueError("console_stream must be stdout or stderr")
+    config = (str(Path(log_dir).resolve()), max_bytes, backup_count, console_stream)
     managed = [
         handler
         for handler in LOGGER.handlers
@@ -199,14 +202,16 @@ def configure_runtime_logging(
     LOGGER.setLevel(logging.INFO)
     LOGGER.propagate = False
     formatter = _SafeJsonFormatter()
-    stdout = logging.StreamHandler(sys.stdout)
-    stdout._notebook_runtime_config = config  # type: ignore[attr-defined]
-    stdout.setFormatter(formatter)
-    LOGGER.addHandler(stdout)
+    console = logging.StreamHandler(
+        sys.stderr if console_stream == "stderr" else sys.stdout
+    )
+    console._notebook_runtime_config = config  # type: ignore[attr-defined]
+    console.setFormatter(formatter)
+    LOGGER.addHandler(console)
     try:
         file_handler = DailySizeRotatingFileHandler(
             Path(log_dir), max_bytes=max_bytes, backup_count=backup_count,
-            stdout_handler=stdout,
+            stdout_handler=console,
         )
         file_handler._notebook_runtime_config = config  # type: ignore[attr-defined]
         file_handler.setFormatter(formatter)

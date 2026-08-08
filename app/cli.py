@@ -16,6 +16,7 @@ from app.db import get_session_factory, session
 from app.ingest.tasks import ingest_url
 from app.models import AppUser, ChannelIdentity
 from app.retrieval.search import bm25_search, vector_search
+from app.mcp_grants import McpGrantError, McpGrantService
 
 
 def _print(name, hits):
@@ -49,6 +50,31 @@ def main() -> None:
     rebind.add_argument("--identity-id", type=int, required=True)
     rebind.add_argument("--user-id", type=int, required=True)
     commands.add_parser("gateway-server")
+    mcp_server = commands.add_parser("mcp-server")
+    mcp_server.add_argument(
+        "--transport", choices=("stdio", "streamable-http"), default="stdio"
+    )
+    grants = commands.add_parser("mcp-grant", aliases=["mcp-grants"])
+    grant_commands = grants.add_subparsers(dest="grant_command", required=True)
+    issue = grant_commands.add_parser("issue")
+    issue.add_argument("--user-id", type=int, required=True)
+    issue.add_argument("--scope", choices=("read", "full"), default="read")
+    issue.add_argument("--expires-at")
+    issue.add_argument("--label")
+    issue.add_argument("--created-by")
+    list_grants = grant_commands.add_parser("list")
+    list_grants.add_argument("--user-id", type=int)
+    list_grants.add_argument("--limit", type=int, default=100)
+    list_grants.add_argument("--offset", type=int, default=0)
+    show_grant = grant_commands.add_parser("show")
+    show_grant.add_argument("grant_id")
+    rotate = grant_commands.add_parser("rotate")
+    rotate.add_argument("grant_id")
+    rotate.add_argument("--expires-at")
+    revoke = grant_commands.add_parser("revoke")
+    revoke.add_argument("grant_id")
+    disable = grant_commands.add_parser("disable")
+    disable.add_argument("grant_id")
     args = parser.parse_args()
     if args.command == "users":
         _users(args)
@@ -59,7 +85,18 @@ def main() -> None:
         )
         print(f"item={item_id} state={state}")
         return
+    if args.command in {"mcp-grant", "mcp-grants"}:
+        _mcp_grants(args)
+        return
     settings = get_settings()
+    if args.command == "mcp-server":
+        from app.mcp_server import run_stdio, run_streamable_http
+
+        if args.transport == "stdio":
+            run_stdio(settings=settings)
+        else:
+            run_streamable_http(settings=settings)
+        return
     configure_runtime_logging(
         log_dir=settings.notebook_agent_log_dir,
         max_bytes=settings.notebook_agent_log_max_bytes,
@@ -114,6 +151,75 @@ def _users(args) -> None:
             db.commit()
         state = "disabled" if user.disabled_at else "active"
         print(f"user={user.id} state={state}")
+
+
+def _parse_expiry(value: str | None):
+    if value is None:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise SystemExit("expiry must be an ISO-8601 timestamp") from exc
+    if parsed.tzinfo is None:
+        raise SystemExit("expiry must include a timezone")
+    return parsed
+
+
+def _mcp_grants(args) -> None:
+    service = McpGrantService(get_session_factory())
+    try:
+        if args.grant_command == "issue":
+            issued = service.issue(
+                args.user_id,
+                scope=args.scope,
+                expires_at=_parse_expiry(args.expires_at),
+                label=args.label,
+                created_by=args.created_by,
+            )
+            # Raw bearer material is intentionally printed only on issue and
+            # rotate.  It is never included by list/show metadata commands.
+            print(f"grant_id={issued.grant_id}")
+            print(f"scope={issued.metadata.scope}")
+            print(f"token={issued.raw_token}")
+            return
+        if args.grant_command == "list":
+            for grant in service.list(
+                app_user_id=args.user_id,
+                limit=getattr(args, "limit", 100),
+                offset=getattr(args, "offset", 0),
+            ):
+                values = grant.model_dump()
+                values = {
+                    key: value.isoformat() if isinstance(value, datetime) else value
+                    for key, value in values.items()
+                    if key not in {"last_used_at"}
+                }
+                print(" ".join(f"{key}={value}" for key, value in values.items()))
+            return
+        if args.grant_command == "show":
+            values = service.get(args.grant_id).model_dump()
+            print(" ".join(
+                f"{key}={value.isoformat() if isinstance(value, datetime) else value}"
+                for key, value in values.items()
+                if key != "last_used_at"
+            ))
+            return
+        if args.grant_command == "rotate":
+            issued = service.rotate(args.grant_id, expires_at=_parse_expiry(args.expires_at))
+            print(f"grant_id={issued.grant_id}")
+            print(f"scope={issued.metadata.scope}")
+            print(f"token={issued.raw_token}")
+            return
+        if args.grant_command == "revoke":
+            metadata = service.revoke(args.grant_id)
+            print(f"grant_id={metadata.grant_id} revoked_at={metadata.revoked_at}")
+            return
+        if args.grant_command == "disable":
+            metadata = service.disable(args.grant_id)
+            print(f"grant_id={metadata.grant_id} disabled_at={metadata.disabled_at}")
+            return
+    except McpGrantError as exc:
+        raise SystemExit(exc.error_code) from None
 
 
 async def _ask(args, settings) -> None:

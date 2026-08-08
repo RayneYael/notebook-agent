@@ -35,7 +35,8 @@ Agent: ...
 | Hybrid retrieval | Combine keyword search with pgvector semantic search to find relevant content even when the wording differs. |
 | Traceable answers | Answers may cite only evidence returned during retrieval and include source titles, excerpts, and timestamped links. |
 | Multi-step agent | Search segments, expand surrounding context, inspect item metadata, and open an exact source location. |
-| Multi-channel access | Connect Telegram and WeChat through LangBot while keeping channel adapters separate from the agent core. |
+| MCP evaluation entry point | Use the standard `mcp==2.0.0` stdio or Streamable HTTP server without installing LangBot. |
+| Multi-channel access | Optionally connect Telegram and WeChat through LangBot while keeping channel adapters separate from the agent core. |
 | Private knowledge spaces | Data is isolated by user. Model tools cannot accept or alter `user_id`, and cross-user resources remain invisible. |
 | Cross-channel identity linking | Use short-lived, single-use codes to access the same private library from another channel. |
 | Persistent conversations | Recent turns live in PostgreSQL and survive restarts. Use `/new` to start with a clean context. |
@@ -49,7 +50,8 @@ Notebook Agent treats reliability and privacy boundaries as product features, no
 - **Evidence first**: Every ordinary knowledge question requires a query embedding and a real knowledge-base search. If retrieval is unavailable, the request fails explicitly instead of falling back to model memory.
 - **Citation integrity**: Final answers can use only server-approved segment IDs. Fabricated citations are rejected and regenerated; an unverified draft is never returned if repair fails.
 - **Tenant by construction**: Trusted channel events resolve the user before agent execution. Tenant identity is fixed in dependencies and never exposed in the model's tool schema.
-- **Secure channel bridge**: The LangBot bridge listens only on loopback and validates HMAC signatures, timestamps, and nonces. Replays and duplicate message deliveries do not produce duplicate replies.
+- **Secure channel bridge**: The optional LangBot bridge listens only on loopback and validates HMAC signatures, timestamps, and nonces. Replays and duplicate message deliveries do not produce duplicate replies.
+- **Revocable MCP principals**: Bearer capabilities are generated with at least 256 bits of entropy, stored only as hashes, and resolved to a tenant and `read`/`full` scope on every request. Raw tokens are shown only on issue/rotation; URL compatibility uses a redacted path, never a query parameter.
 - **Safe confirmation flow**: Pending actions belong to one user and conversation, expire after ten minutes, and can be consumed only once.
 - **Recoverable execution**: Content jobs use durable dispatch records and idempotency boundaries, so duplicate delivery does not repeat the full ingestion pipeline.
 
@@ -89,7 +91,8 @@ YouTube is the currently supported end-to-end ingestion source. The data model r
 - **Retrieval**: Vector cosine search plus PostgreSQL full-text search and Chinese trigram search
 - **Ingestion**: yt-dlp, Celery, Redis
 - **Object storage**: MinIO and other S3-compatible storage
-- **Channels**: LangBot 4.10.6, Telegram, WeChat OpenClaw/iLink
+- **MCP**: official Python SDK `mcp==2.0.0` (stdio and Streamable HTTP)
+- **Channels (optional)**: LangBot 4.10.6, Telegram, WeChat OpenClaw/iLink
 - **Embedding**: Zhipu Embedding-3 with 1,536 dimensions
 - **Quality**: Pytest, structured diagnostics, idempotency tests, and tenant-isolation tests
 
@@ -100,7 +103,7 @@ YouTube is the currently supported end-to-end ingestion source. The data model r
 - Python 3.11+
 - Docker and Docker Compose
 - An agent model API and a Zhipu Embedding API key
-- For real chat channels: LangBot 4.10.6 and Telegram or WeChat credentials
+- LangBot 4.10.6 and Telegram/WeChat credentials only for the optional personal-channel integration
 
 ### 2. Install and Initialize
 
@@ -113,14 +116,47 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
 cp .env.example .env
-# Edit .env and configure the database, embedding provider,
-# agent provider, and CHANNEL_GATEWAY_SECRET.
+# Edit .env and configure the database, embedding provider, and agent provider.
+# CHANNEL_GATEWAY_SECRET is needed only for the optional LangBot bridge.
 
 docker compose up -d
 alembic upgrade head
 ```
 
-### 3. Start the Worker and Gateway
+### 3. Start the Core MCP Server
+
+Notebook Agent can be evaluated without LangBot. Run the local protocol over
+stdio (stdout is reserved for MCP protocol bytes; diagnostics go to stderr):
+
+```bash
+.venv/bin/python -m app.cli mcp-server --transport stdio
+```
+
+For a local stdio client that should call the Agent, launch the subprocess
+with an operator-issued grant token in its private environment (for example
+`MCP_TOKEN=<raw-token>`); the process resolves that token through the same
+hash-only grant table. Schema inspection remains available without it.
+
+For a hosted evaluator, use Streamable HTTP. It binds to `127.0.0.1:8000` and
+serves `/mcp` by default; put a public deployment behind TLS and a proxy that
+omits or redacts request URIs. Prefer `Authorization: Bearer <token>`. If a
+URL-only evaluator cannot send headers, explicitly set `MCP_URL_TOKEN_MODE=true`
+and issue a grant URL at `/mcp/c/<opaque-token>`; query-string tokens are
+rejected. Create and rotate grants with `mcp-grant issue|rotate`; raw bearer
+material is printed only by those two commands and is not recoverable later.
+
+```bash
+.venv/bin/python -m app.cli mcp-server --transport streamable-http
+```
+
+`tools/list` verifies only protocol connectivity. A measured smoke must call
+`ask_notebook_agent` with a natural-language question so the request reaches
+the Notebook Agent model/retrieval path. The browser/demo profile should use a
+`read` grant and a fresh high-entropy conversation id per browser session;
+trusted `full` grants expose the typed save/inventory/delete/restore/retry
+tools.
+
+### 4. Start the Worker and Gateway
 
 On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the ingestion worker:
 

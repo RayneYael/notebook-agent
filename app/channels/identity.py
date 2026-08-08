@@ -97,6 +97,83 @@ def resolve_identity(db: Session, envelope: ChannelEnvelope) -> TenantContext:
     return _tenant(db, identity)
 
 
+def ensure_explicit_identity(
+    db: Session,
+    *,
+    app_user_id: int,
+    channel: str,
+    account_id: str,
+    external_user_id: str,
+) -> TenantContext:
+    """Bind an application-owned identity to an existing user.
+
+    Operator-created principals (MCP grants and the CLI) must never trigger
+    self-registration.  This helper is intentionally transaction-scoped: the
+    caller owns commit/rollback and can create a grant and its identity as one
+    atomic unit.  Rebinding an existing external identity to another tenant is
+    rejected rather than silently changing authorization state.
+    """
+
+    try:
+        numeric_user_id = int(app_user_id)
+    except (TypeError, ValueError):
+        raise UnboundIdentity("internal user does not exist") from None
+    if isinstance(app_user_id, bool) or numeric_user_id <= 0:
+        raise UnboundIdentity("internal user does not exist")
+    envelope = ChannelEnvelope(
+        channel=channel,
+        account_id=account_id,
+        external_user_id=external_user_id,
+        conversation_id="identity-bootstrap",
+        message_id="identity-bootstrap",
+        text="",
+    )
+    user = db.get(AppUser, numeric_user_id)
+    if user is None:
+        raise UnboundIdentity("internal user does not exist")
+    if user.disabled_at is not None:
+        raise DisabledIdentity("account is disabled")
+    identity = db.scalar(_identity_query(envelope))
+    if identity is not None:
+        if identity.app_user_id != user.id:
+            raise IdentityConflict("identity is already bound to another user")
+        return _tenant(db, identity)
+    identity = ChannelIdentity(
+        app_user_id=user.id,
+        channel=envelope.channel,
+        account_id=envelope.account_id,
+        external_user_id=envelope.external_user_id,
+    )
+    # SQLite's INTEGER-only autoincrement rule does not apply to the
+    # production BigInteger primary key.  Small offline/unit fixtures often
+    # use SQLite, so provide a deterministic local id only for that dialect;
+    # PostgreSQL continues to use its normal sequence.
+    if getattr(getattr(db, "bind", None), "dialect", None) is not None and db.bind.dialect.name == "sqlite":
+        identity.id = int(db.scalar(select(func.max(ChannelIdentity.id))) or 0) + 1
+    db.add(identity)
+    try:
+        # A savepoint keeps the caller's transaction (including a just-added
+        # grant) intact when a concurrent insert wins the unique race.
+        with db.begin_nested():
+            db.flush()
+    except IntegrityError:
+        # A concurrent operator may have won the unique identity race.  The
+        # session remains usable after rollback, then we resolve and validate
+        # that winner without ever accepting a cross-tenant rebind.
+        existing = db.scalar(_identity_query(envelope))
+        if existing is None:
+            raise IdentityConflict("identity registration raced") from None
+        if existing.app_user_id != user.id:
+            raise IdentityConflict("identity is already bound to another user") from None
+        return _tenant(db, existing)
+    return _tenant(db, identity)
+
+
+# Friendly aliases used by operator tooling and adapters.
+ensure_identity_for_user = ensure_explicit_identity
+bind_explicit_identity = ensure_explicit_identity
+
+
 def resolve_or_register(db: Session, envelope: ChannelEnvelope) -> TenantContext:
     """Atomically return the existing identity or create one private tenant."""
 

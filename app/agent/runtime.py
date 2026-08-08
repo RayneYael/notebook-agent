@@ -39,6 +39,7 @@ from app.agent.actions import (
     AgentActionRuntime,
     AgentActionServices,
 )
+from app.agent.limits import SEARCH_RESULT_LIMIT
 from app.agent.provider import composer_model_settings
 from app.agent.services import (
     EmbeddingUnavailable,
@@ -85,7 +86,6 @@ NORMAL_RETRIEVAL_CALLS_LIMIT = 5
 NORMAL_SEARCH_CALLS_LIMIT = 2
 NORMAL_EXPANSION_CALLS_LIMIT = 3
 MAX_SOURCE_ITEMS = 5
-SEARCH_RESULT_LIMIT = 10
 ANSWER_REQUEST_LIMIT = COMPOSER_VALIDATION_REQUEST_LIMIT
 COMPOSER_EVIDENCE_EXCERPT_CHARS = 360
 COMPRESSED_EVIDENCE_LIMIT = 8
