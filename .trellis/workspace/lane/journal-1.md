@@ -223,3 +223,24 @@ Enforced deterministic bare-URL save confirmation and exact platform/video retri
 ### Status
 
 [OK] **Completed**
+
+
+## Session 9: Add durable ingestion completion queue
+
+**Date**: 2026-08-09
+**Task**: Add durable ingestion completion queue
+**Branch**: `main`
+
+### Summary
+
+Added transactional completion outbox, durable completion queue, bounded repair sweep, Redis persistence contract, migration, tests, docs, and backend spec.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `998baea` | (see git log) |
+
+### Status
+
+[OK] **Completed**
