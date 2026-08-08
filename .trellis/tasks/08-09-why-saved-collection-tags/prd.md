@@ -58,6 +58,10 @@ remains an ordinary validated hashtag inside `why_saved`.
   descriptions grounded in the source video's public metadata. Demo overrides
   remain ignored runtime data and must never become title-ID conditionals in
   production frontend code.
+- The library's two visible counters describe the cards in their own regions:
+  the primary count uses the currently rendered readable items and the queue
+  count uses the currently rendered work items. Neither counter reuses the
+  API-wide total across both lifecycle groups.
 - All additions match the existing pale editorial UI, remain usable at
   390x844, expose programmatic labels, and never rely on color alone.
 
@@ -103,3 +107,6 @@ remains an ordinary validated hashtag inside `why_saved`.
 - [x] Source-metadata checks and browser smoke prove the five non-primary demo
   videos have distinct, detailed, placeholder-free descriptions while the
   production Connector-to-ContentItem description path remains unchanged.
+- [x] Library tests and browser smoke prove each region count matches its own
+  rendered cards and follows collection filtering instead of showing a fixed
+  or API-wide placeholder total.

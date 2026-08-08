@@ -227,7 +227,7 @@ export function LibraryPage({
       ) : null}
       {library.isSuccess && library.data.items.length > 0 ? (
         <>
-          <div className="library-summary"><span>{library.data.total} 个视频</span>{shouldPollLibrary(library.data.items) ? <span className="live-note" aria-live="polite"><i />正在自动更新状态</span> : null}</div>
+          <div className="library-summary"><span aria-label="当前可阅读视频数量">{readableItems.length} 个视频</span>{shouldPollLibrary(library.data.items) ? <span className="live-note" aria-live="polite"><i />正在自动更新状态</span> : null}</div>
           {readableItems.length > 0 ? (
             <section className="library-ready-zone" aria-label="可阅读视频">
               <div className="video-grid">
@@ -242,7 +242,7 @@ export function LibraryPage({
                   <p className="eyebrow">整理状态</p>
                   <h2 id="library-work-zone-title">整理队列</h2>
                 </div>
-                <span>{workItems.length} 个视频</span>
+                <span aria-label="整理队列视频数量">{workItems.length} 个视频</span>
               </header>
               <div className="video-grid">
                 {workItems.map((item) => <VideoCard item={item} key={item.public_id} />)}

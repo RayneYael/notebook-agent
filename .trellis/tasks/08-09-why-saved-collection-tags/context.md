@@ -187,3 +187,18 @@
   visited every detail with no desktop overflow; at 391x844 the longest checked
   description occupied 339x168 with no horizontal overflow. The preview is left
   on `/videos/creative-confidence` for user review.
+
+## 2026-08-09 region count follow-up
+
+- User feedback identified the primary `6 个视频` label as a placeholder-like
+  mismatch: the API total covered four readable cards plus two queue cards,
+  while the label sat directly above only the readable region.
+- TDD RED found no `当前可阅读视频数量` label and showed the old value as 3 for
+  a fixture with one readable and two work items. GREEN binds the two labels to
+  the already-grouped `readableItems.length` and `workItems.length` values.
+- Final verification: 13 frontend test files / 56 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, and Vite build passed. Desktop browser evidence
+  showed four readable cards with `4 个视频` and two queue cards with `2 个视频`.
+  Selecting `产品调研` reduced the readable region and its count to one while
+  the empty queue region disappeared. Narrow smoke had no horizontal overflow,
+  and the 5175 preview was restored to the unfiltered desktop library.

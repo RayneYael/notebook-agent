@@ -102,11 +102,13 @@ describe("library page", () => {
     }));
 
     const readableRegion = await screen.findByRole("region", { name: "可阅读视频" });
+    expect(screen.getByLabelText("当前可阅读视频数量")).toHaveTextContent("1 个视频");
     expect(within(readableRegion).getByText("理解比收藏重要")).toBeInTheDocument();
     expect(within(readableRegion).queryByText("正在整理的视频")).not.toBeInTheDocument();
     expect(within(readableRegion).queryByText("整理失败的视频")).not.toBeInTheDocument();
 
     const workRegion = screen.getByRole("region", { name: "整理队列" });
+    expect(within(workRegion).getByLabelText("整理队列视频数量")).toHaveTextContent("2 个视频");
     expect(within(workRegion).getByText("正在整理的视频")).toBeInTheDocument();
     expect(within(workRegion).getByText("整理失败的视频")).toBeInTheDocument();
     expect(within(workRegion).queryByText("理解比收藏重要")).not.toBeInTheDocument();

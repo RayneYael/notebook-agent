@@ -110,6 +110,15 @@
 - [x] Restart only the owned 5175 fixture and verify all five detail APIs,
   desktop detail pages, and the 391x844 creative-confidence page.
 
+## Gate 13 - Region count follow-up
+
+- [x] RED: prove the primary region cannot be queried by a distinct count label
+  and still displays the API-wide total instead of its rendered card count.
+- [x] GREEN: derive the primary and queue labels from `readableItems.length`
+  and `workItems.length` after lifecycle grouping.
+- [x] Run all frontend checks and verify default, collection-filtered, and
+  narrow browser states against the actual cards in each region.
+
 ## Validation Commands
 
 ```powershell
