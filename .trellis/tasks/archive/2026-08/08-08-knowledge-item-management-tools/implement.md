@@ -132,7 +132,7 @@ docker compose exec -T postgres psql -U postgres -d kb -c '\\d+ content_item'
 - [x] 不对含 soft-deleted rows 的环境执行删除 columns 的 downgrade；需要 schema downgrade 时先由用户明确
   选择 restore 或 purge，并完成备份。
 - [x] `trellis-check` 与必要 spec update 已完成。
-- [ ] commit 与 finish-work 完成后再归档任务。
+- [x] commit 与 finish-work 完成后归档任务。
 
 ## 11. Final validation record
 
