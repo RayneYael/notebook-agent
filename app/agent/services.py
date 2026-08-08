@@ -161,6 +161,7 @@ class KnowledgeServices:
                     .join(ContentItem, Segment.item_id == ContentItem.id)
                     .where(
                         ContentItem.user_id == self._tenant.app_user_id,
+                        ContentItem.deleted_at.is_(None),
                         Segment.id.in_(segment_ids),
                     )
                 ).all()
@@ -234,6 +235,7 @@ class KnowledgeServices:
                 .where(
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                 )
             ).one_or_none()
             if anchor is None:
@@ -257,6 +259,7 @@ class KnowledgeServices:
                 select(ContentItem).where(
                     ContentItem.id == item_id,
                     ContentItem.user_id == self._tenant.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                 )
             )
             if item is None:
@@ -281,6 +284,7 @@ class KnowledgeServices:
                 .where(
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
+                    ContentItem.deleted_at.is_(None),
                 )
             ).one_or_none()
             if row is None:

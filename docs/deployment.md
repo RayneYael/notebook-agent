@@ -119,6 +119,13 @@ cp .env.example .env
 | `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
 | `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
 | `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true` |
+| `AGENT_ITEM_MANAGEMENT_ENABLED` | 是 | inventory/update/restore/retry/delete rollout flag；关闭时 CRUD tools 不注册，但 deleted-content filters 仍生效 |
+| `TRASH_RETENTION_DAYS` | 是 | 回收站保留天数，默认 30；必须为正数 |
+| `TRASH_PURGE_INTERVAL_SECONDS` | 是 | purge sweep 周期，默认 3600 秒 |
+| `TRASH_PURGE_BATCH_SIZE` | 是 | 每轮最多 claim 100 个条目，默认 20 |
+| `TRASH_PURGE_CLAIM_TIMEOUT_SECONDS` | 是 | stale purge claim 可重试的超时，默认 1800 秒 |
+| `TRASH_PURGE_MAX_DURATION_SECONDS` | 是 | 单轮 purge wall-clock 上限，默认 30 秒；超出批次会释放 claim 并延后 |
+| `TRASH_PURGE_OBJECT_TIMEOUT_SECONDS` | 是 | 单个 MinIO delete 的 connect/read timeout，默认 10 秒 |
 | `CHANNEL_GATEWAY_SECRET` | 是 | 至少 32 字符的随机共享密钥 |
 
 生成共享密钥时可使用系统密码管理器或：
@@ -147,7 +154,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `c7e8a91b2d34`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `d4e5f6a7b8c9`，`alembic check` 应显示没有新的 upgrade operation。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -184,7 +191,7 @@ EMBEDDING_BATCH_SIZE=64
 
 ### 6.1 readiness 与 Celery worker
 
-保持 `AGENT_SAVE_ENABLED=false`。先确认三个依赖均 ready：
+保持 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false`。先确认三个依赖均 ready：
 
 ```bash
 docker compose ps
@@ -194,14 +201,17 @@ curl --fail http://127.0.0.1:9000/minio/health/ready
 ```
 
 通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG`、MinIO ready endpoint
-返回成功、schema 为 `c7e8a91b2d34 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+返回成功、schema 为 `d4e5f6a7b8c9 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
-在独立终端或受管理服务中启动只消费 `ingest` queue 的 worker：
+在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
 
 ```bash
 .venv/bin/celery -A app.ingest.tasks.celery_app worker \
-  --loglevel=INFO --queues=ingest
+  --loglevel=INFO --queues=ingest,maintenance
+
+# 只启动一个 beat 实例，定期投递有界 maintenance purge task。
+.venv/bin/celery -A app.ingest.tasks.celery_app beat --loglevel=INFO
 ```
 
 从同一环境检查 worker：
@@ -211,7 +221,7 @@ worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
 ```
 
-至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest`。worker 必须拥有
+至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest` 与 `maintenance`。worker 必须拥有
 PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gateway 请求进程内同步
 执行 metadata、字幕、MinIO、chunk 或 embedding。worker 的任务参数只应是内部 dispatch ID。
 
@@ -237,6 +247,7 @@ feature flag 改为：
 
 ```dotenv
 AGENT_SAVE_ENABLED=true
+AGENT_ITEM_MANAGEMENT_ENABLED=true
 ```
 
 然后只重启 gateway 使配置生效；不要重置 LangBot channel identity、微信登录或已有 content。
@@ -401,10 +412,10 @@ curl --fail -H 'Authorization: Bearer <LangBot-admin-token>' \
 首次开启自然语言保存或升级：
 
 1. PostgreSQL、Redis、MinIO。
-2. 保持 `AGENT_SAVE_ENABLED=false`，备份后执行 `alembic upgrade head` 并确认 current/check。
-3. 部署并启动兼容 Celery worker，确认它监听 `ingest`，CA/Redis/MinIO 均 ready。
+2. 保持 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false`，备份后执行 `alembic upgrade head` 并确认 current/check。
+3. 部署并启动兼容 Celery worker，确认它监听 `ingest,maintenance`，并启动单一 beat 实例；CA/Redis/MinIO 均 ready。
 4. 部署并启动 Notebook Agent `gateway-server`，检查 loopback health 与只读检索 smoke。
-5. 设置 `AGENT_SAVE_ENABLED=true` 并重启 gateway；不得重置 channel login、identity 或 content。
+5. 设置 `AGENT_SAVE_ENABLED=true` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=true` 并重启 gateway；不得重置 channel login、identity 或 content。
 6. 确认已应用 TLS/readiness patch；保留已证实的默认登录/轮询路径。仅有企业 CA 需求或明确
    诊断时，在 LangBot 进程中设置 `tls_ca_bundle` 或 `TLS_CA_BUNDLE`。不要禁用 TLS verification。
 7. Docker/WebSocket 模式先启动 plugin runtime；stdio 模式由 LangBot core 启动它。
@@ -430,11 +441,15 @@ LangBot。不要先启动 adapter 试图“等它自己恢复”。
 
 1. 停 LangBot adapters/core，停止接收新消息。
 2. 停 plugin runtime。
-3. 关闭 `AGENT_SAVE_ENABLED` 并重启/停止 Notebook Agent gateway，阻止新 submission。
+3. 关闭 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED` 并重启/停止 Notebook Agent gateway，阻止新 submission/management calls；保留 maintenance worker/beat 以继续安全清理，或按需暂停 beat。
 4. 让 active ingestion 完成；需要立即止损时再停止 Celery worker。
 5. 确认没有 ingestion 工作后，再按需停止 Redis、MinIO 与 PostgreSQL。
 
-不要在消息处理中直接执行 migration downgrade。
+不要在消息处理中直接执行 migration downgrade。生产 downgrade 前必须完成 PostgreSQL/MinIO
+备份，关闭 `AGENT_ITEM_MANAGEMENT_ENABLED` 与 Celery beat，确认所有回收站条目已经逐项恢复或
+完成对象删除 + 数据库 purge，并执行普通库存与 semantic/BM25 检索 smoke，确认没有软删除内容
+复活。migration 会在发现任何 `deleted_at IS NOT NULL` 行时主动拒绝 downgrade，不会通过删列使
+回收站内容重新可见。
 
 ## 9. Linux systemd 示例
 
@@ -588,7 +603,7 @@ journalctl -u notebook-agent-gateway | rg '"trace_id":"<32位 trace ID>"'
 | migration drift | `.venv/bin/alembic check` | 无新 upgrade operation |
 | Redis | `redis-cli ping` | `PONG` |
 | MinIO | `GET /minio/health/ready` | HTTP 200 |
-| ingestion worker | Celery `inspect ping` + `active_queues` | worker pong 且监听 `ingest` |
+| ingestion worker | Celery `inspect ping` + `active_queues` | worker pong 且监听 `ingest`、`maintenance` |
 | Agent 进程 | `GET http://127.0.0.1:8765/health` | HTTP 200、status ok |
 | LangBot process health | `GET /healthz` | required bridge 为 `initialized` 后 API 才可用；不代表微信 poll healthy |
 | OpenClaw adapter readiness | `GET /api/v1/platform/adapters/readiness`（管理员认证） | `state=healthy`，连续三次成功 poll 或持续两分钟；无 `certificate_verification_failed` |
@@ -618,19 +633,40 @@ docker compose exec -T postgres pg_dump -U postgres -Fc kb > kb-YYYYMMDD.dump
 需要使用基础设施快照或 MinIO/S3 兼容备份工具另行备份，只有 PostgreSQL dump
 不能恢复原始对象。
 
+回收站容量巡检（在备份与 purge smoke 后执行）：
+
+```sql
+SELECT pg_size_pretty(pg_database_size(current_database())) AS database_size;
+SELECT relname, pg_size_pretty(pg_total_relation_size(relid)) AS total_size,
+       n_live_tup, n_dead_tup, last_autovacuum
+FROM pg_stat_user_tables
+WHERE relname IN ('content_item', 'segment', 'ingest_dispatch');
+SELECT indexrelname, pg_size_pretty(pg_relation_size(indexrelid)) AS index_size
+FROM pg_stat_user_indexes
+WHERE relname IN ('content_item', 'segment');
+SELECT count(*) AS trash_count,
+       min(deleted_at) AS oldest_trash,
+       count(*) FILTER (WHERE deleted_at <= now() - interval '30 days') AS expired
+FROM content_item
+WHERE deleted_at IS NOT NULL;
+```
+
+按 `purge_sweep` 的 claimed/completed/failed/deferred counters 与 oldest trash 观察 backlog；
+不得在请求路径执行 `VACUUM FULL` 或 `REINDEX`，只在实测 dead tuples/index bloat 后安排维护。
+
 ## 13. 升级与回滚
 
 升级顺序：
 
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
-3. 设置 `AGENT_SAVE_ENABLED=false` 并安装新的 Python 依赖。
-4. 执行 `alembic upgrade head`，确认 revision `c7e8a91b2d34`。
-5. 先启动 compatible worker，确认 ingest queue、CA、Redis 与 MinIO readiness。
+3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false` 并安装新的 Python 依赖。
+4. 执行 `alembic upgrade head`，确认 revision `d4e5f6a7b8c9`。
+5. 先启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
 6. 再启动 gateway 并检查 health、schema 与 CLI ask。
-7. 最后开启 `AGENT_SAVE_ENABLED`、重启 gateway，再启动 plugin/LangBot。
+7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway，再启动 plugin/LangBot。
 
-保存路径异常时先把 `AGENT_SAVE_ENABLED=false` 并重启 gateway。这会保留只读检索，同时
+保存路径异常时先把 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false` 并重启 gateway。这会保留只读检索，同时
 阻止新的 pending action、ContentItem 和 dispatch；不要删除或重绑用户数据。已在运行的 worker
 任务可以安全完成；若出现 tenant mismatch 或无界重复 enqueue，再停止 worker intake，并保留
 `ingest_dispatch` / `pending_channel_action` rows 供审计。

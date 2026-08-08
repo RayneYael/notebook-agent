@@ -6,6 +6,7 @@ from app.agent.actions import AgentActionServices
 from app.agent.provider import build_model
 from app.agent.runtime import KnowledgeAgent
 from app.agent.services import KnowledgeServices
+from app.agent.management import KnowledgeItemManagementService
 from app.channels.service import ChannelService
 from app.channels.pending_actions import PendingConfirmationService
 from app.config import Settings, get_settings
@@ -49,12 +50,15 @@ def build_knowledge_agent(
         return KnowledgeServices(request.tenant, factory, embedder=embedder)
 
     action_factory = None
-    if settings.agent_save_enabled:
+    if settings.agent_save_enabled or settings.agent_item_management_enabled:
         action_services = AgentActionServices(
             submission=IngestSubmissionService(
                 factory, publish_ingest_dispatch
             ),
             pending=PendingConfirmationService(factory),
+            management=KnowledgeItemManagementService(
+                factory, retention_days=settings.trash_retention_days
+            ),
         )
 
         def action_factory(_request):

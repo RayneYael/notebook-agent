@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any, Sequence
 
 from pydantic_ai.messages import ModelMessage, ModelMessagesTypeAdapter
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, select
 from sqlalchemy.orm import Session
 
 from app.channels.types import ChannelEnvelope, TenantContext
@@ -17,6 +17,10 @@ from app.models import (
     ConversationTurn,
     PendingChannelAction,
 )
+
+
+class ThreadResetBlocked(RuntimeError):
+    """A high-risk external effect is still applying to this thread."""
 
 
 def get_or_create_thread(
@@ -58,15 +62,28 @@ def reset_thread(
     )
     if current is not None:
         now = datetime.now(UTC)
-        db.execute(
-            update(PendingChannelAction)
+        actions = db.scalars(
+            select(PendingChannelAction)
             .where(
                 PendingChannelAction.thread_id == current.id,
                 PendingChannelAction.consumed_at.is_(None),
                 PendingChannelAction.cancelled_at.is_(None),
             )
-            .values(cancelled_at=now)
-        )
+            .with_for_update()
+        ).all()
+        for action in actions:
+            payload = action.payload
+            if (
+                action.kind == "delete_saved_items"
+                and isinstance(payload, dict)
+                and payload.get("effect_state") == "applying"
+            ):
+                # Closing the thread would strand the applying claim: the
+                # external effect could still mutate items while no trusted
+                # conversation remains able to recover/finalize it. Fail
+                # closed and leave the thread/action untouched.
+                raise ThreadResetBlocked("delete_in_progress")
+            action.cancelled_at = now
         current.closed_at = now
         current.updated_at = current.closed_at
         db.flush()

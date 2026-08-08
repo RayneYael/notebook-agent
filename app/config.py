@@ -155,6 +155,29 @@ class Settings:
     agent_save_enabled: bool = field(
         default_factory=lambda: _env_bool("AGENT_SAVE_ENABLED", False)
     )
+    # Inventory/CRUD rollout is intentionally independent from save actions.
+    # Deleted-content filters remain active even when this flag is disabled.
+    agent_item_management_enabled: bool = field(
+        default_factory=lambda: _env_bool("AGENT_ITEM_MANAGEMENT_ENABLED", False)
+    )
+    trash_retention_days: int = field(
+        default_factory=lambda: _env_int("TRASH_RETENTION_DAYS", 30)
+    )
+    trash_purge_interval_seconds: int = field(
+        default_factory=lambda: _env_int("TRASH_PURGE_INTERVAL_SECONDS", 3600)
+    )
+    trash_purge_batch_size: int = field(
+        default_factory=lambda: _env_int("TRASH_PURGE_BATCH_SIZE", 20)
+    )
+    trash_purge_claim_timeout_seconds: int = field(
+        default_factory=lambda: _env_int("TRASH_PURGE_CLAIM_TIMEOUT_SECONDS", 1800)
+    )
+    trash_purge_max_duration_seconds: float = field(
+        default_factory=lambda: _env_float("TRASH_PURGE_MAX_DURATION_SECONDS", 30.0)
+    )
+    trash_purge_object_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("TRASH_PURGE_OBJECT_TIMEOUT_SECONDS", 10.0)
+    )
     context_max_turns: int = field(
         default_factory=lambda: _env_int("CONTEXT_MAX_TURNS", 8)
     )
@@ -182,6 +205,18 @@ class Settings:
             raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
         if self.agent_composer_max_tokens <= 0:
             raise ValueError("AGENT_COMPOSER_MAX_TOKENS must be positive")
+        if self.trash_retention_days <= 0:
+            raise ValueError("TRASH_RETENTION_DAYS must be positive")
+        if self.trash_purge_interval_seconds <= 0:
+            raise ValueError("TRASH_PURGE_INTERVAL_SECONDS must be positive")
+        if self.trash_purge_batch_size <= 0 or self.trash_purge_batch_size > 100:
+            raise ValueError("TRASH_PURGE_BATCH_SIZE must be between 1 and 100")
+        if self.trash_purge_claim_timeout_seconds <= 0:
+            raise ValueError("TRASH_PURGE_CLAIM_TIMEOUT_SECONDS must be positive")
+        if self.trash_purge_max_duration_seconds <= 0:
+            raise ValueError("TRASH_PURGE_MAX_DURATION_SECONDS must be positive")
+        if self.trash_purge_object_timeout_seconds <= 0:
+            raise ValueError("TRASH_PURGE_OBJECT_TIMEOUT_SECONDS must be positive")
         if (
             self.agent_composer_max_tokens * COMPOSER_VALIDATION_REQUEST_LIMIT
             > self.agent_output_token_limit

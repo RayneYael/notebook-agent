@@ -82,7 +82,26 @@ class AgentRequest:
     message_id: str
     request_id: str
     history: tuple[dict, ...] = ()
+    # Server-owned correlation for high-risk confirmations.  This is the
+    # message id of the newest completed turn before the current message;
+    # model/tool arguments never carry it.
+    latest_turn_message_id: str | None = None
 
     def __post_init__(self) -> None:
         if not self.question.strip():
             raise ValueError("question must not be empty")
+
+
+# Management contracts live in their focused module to keep retrieval types
+# small.  Re-exporting them here preserves the package-level contract for
+# integrations that historically imported all Agent payloads from ``types``.
+from app.agent.management import (  # noqa: E402  (intentional compatibility export)
+    BatchItemOperationResult,
+    ItemFilters,
+    ItemOperationResult,
+    KnowledgeItemManagementService,
+    SavedItem,
+    SavedItemPage,
+    decode_cursor,
+    encode_cursor,
+)

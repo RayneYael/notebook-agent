@@ -8,12 +8,14 @@ from dataclasses import replace
 from datetime import timedelta
 from uuid import uuid4
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 from pydantic_ai.messages import ModelMessagesTypeAdapter
 
 from app.agent.runtime import AgentExecution, KnowledgeAgent
 from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.channels.conversations import (
+    ThreadResetBlocked,
     find_turn,
     get_or_create_thread,
     load_message_history,
@@ -30,7 +32,7 @@ from app.channels.identity import (
 from app.channels.types import ChannelEnvelope
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics
-from app.models import ConversationThread
+from app.models import ConversationThread, ConversationTurn
 
 
 class ChannelService:
@@ -107,7 +109,18 @@ class ChannelService:
                 )
             if command == "new":
                 diagnostics.event("route", route="command")
-                thread = reset_thread(db, tenant, envelope)
+                try:
+                    thread = reset_thread(db, tenant, envelope)
+                except ThreadResetBlocked:
+                    db.rollback()
+                    return self._response_ready(
+                        diagnostics,
+                        AgentAnswer(
+                            status="failed",
+                            text="删除操作正在处理中，暂时无法开启新会话，请稍后重试。",
+                            error_code="delete_in_progress",
+                        ),
+                    )
                 db.commit()
                 return self._response_ready(
                     diagnostics,
@@ -131,6 +144,18 @@ class ChannelService:
                 max_turns=self._settings.context_max_turns,
                 max_tokens=self._settings.context_token_budget,
             )
+            latest_turn = db.scalar(
+                select(ConversationTurn)
+                .where(
+                    ConversationTurn.thread_id == thread.id,
+                    ConversationTurn.status == "completed",
+                )
+                .order_by(
+                    ConversationTurn.created_at.desc(),
+                    ConversationTurn.id.desc(),
+                )
+                .limit(1)
+            )
             request = AgentRequest(
                 question=envelope.text,
                 tenant=tenant,
@@ -140,6 +165,9 @@ class ChannelService:
                 request_id=envelope.request_id,
                 history=tuple(
                     ModelMessagesTypeAdapter.dump_python(history, mode="json")
+                ),
+                latest_turn_message_id=(
+                    latest_turn.message_id if latest_turn is not None else None
                 ),
             )
             db.commit()
