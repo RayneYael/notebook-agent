@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Load the backend spec index and language/quality routing before implementation."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Preserve planner/composer budgets, trusted Citation caching, tenant scoping, and no-evidence behavior while adding exact-reference enforcement."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Preserve management history, deleted-content gates, pending actions, and tenant-safe inventory behavior."}
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Keep YouTube platform-ID and URL behavior consistent with the existing connector contract."}
+{"file":".trellis/tasks/08-09-exact-video-reference-routing/research/root-cause.md","reason":"Use the reproduced log, database, and code-path evidence that defines the defect and required server-owned invariants."}
