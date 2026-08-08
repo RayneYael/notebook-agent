@@ -1,41 +1,173 @@
 # Notebook Agent
 
-一个按用户隔离的私有知识库 Agent。它从 PostgreSQL/pgvector 中检索真实片段，
-通过 PydanticAI 组织多步只读工具调用，并由 LangBot 同时接入 Telegram、微信，
-未来可按同一边界增加 Slack。
+[English](README.md) | [简体中文](README.zh-CN.md)
 
-## 当前能力
+> Your private knowledge, available wherever you chat.
 
-- 渠道身份首次发消息即可自助注册，无需管理员预先创建。
-- 每个 `AppUser` 只检索自己的 `ContentItem` / `Segment`。
-- 第二渠道通过短期、单次绑定码接入同一私有知识库。
-- Telegram、微信等已启用渠道可以同时运行；单个 adapter 故障不改变 Agent 核心。
-- 会话最近几轮保存在 PostgreSQL，服务重启后可以恢复；不同渠道默认不混合历史。
-- Agent 提供四个 tenant-scoped 知识检索工具，并可在 feature flag 开启后根据自然语言调用
-  tenant-bound 视频保存 action；模型工具 schema 不接收 `user_id`。
-- 普通知识问答必须使用 query embedding + pgvector；没有 provider 时会明确 fail closed，
-  不会伪装成纯词法检索。`/start`、`/whoami`、`/link`、`/new` 不受此影响。
-- 无证据与查询不可用会给出不同提示；伪造引用编号的草稿会在同一轮中强制重新检索，
-  修复失败也不会返回草稿。
+**EAZO Global Hackathon Project**
 
-## 本地启动
+Notebook Agent is a multi-channel private knowledge agent for individuals. Send a video link through Telegram or WeChat to turn it into searchable knowledge. Later, ask questions in natural language and the agent will retrieve evidence from your own library, returning answers with source titles, original excerpts, and timestamped video links.
 
-完整的本地、Linux 单机、容器同网络命名空间部署、升级回滚、备份和排障说明见
-[`docs/deployment.md`](docs/deployment.md)。
+It addresses a familiar problem: we save more videos and articles than ever, but rarely find the exact quote, idea, or explanation when we actually need it.
+
+## Demo: From Saved Content to Answers
+
+1. **Save content**: Send the bot `Save this <YouTube URL>`.
+2. **Process automatically**: The system extracts metadata and captions, creates semantic chunks, generates embeddings, and builds the index asynchronously.
+3. **Ask anytime**: For example, “Which video in my library discussed product demand validation?”
+4. **Return to the source**: Every answer includes real evidence and timestamped links to the relevant moment in the video.
+
+```text
+User: Save this https://youtu.be/...
+Agent: Added to the processing queue. It will become searchable when ready.
+
+User: What does this video recommend for building reliable AI agents?
+Agent: ...
+       [1] Video title · 08:42 · Original excerpt
+```
+
+## Core Features
+
+| Capability | Description |
+| --- | --- |
+| Conversational capture | Save 1–10 explicit video URLs using natural language. A bare URL requires confirmation to prevent accidental saves. |
+| Video knowledge ingestion | Extract YouTube metadata and captions, split content along semantic and temporal boundaries, and generate vector indexes. |
+| Hybrid retrieval | Combine keyword search with pgvector semantic search to find relevant content even when the wording differs. |
+| Traceable answers | Answers may cite only evidence returned during retrieval and include source titles, excerpts, and timestamped links. |
+| Multi-step agent | Search segments, expand surrounding context, inspect item metadata, and open an exact source location. |
+| Multi-channel access | Connect Telegram and WeChat through LangBot while keeping channel adapters separate from the agent core. |
+| Private knowledge spaces | Data is isolated by user. Model tools cannot accept or alter `user_id`, and cross-user resources remain invisible. |
+| Cross-channel identity linking | Use short-lived, single-use codes to access the same private library from another channel. |
+| Persistent conversations | Recent turns live in PostgreSQL and survive restarts. Use `/new` to start with a clean context. |
+| Asynchronous processing | Redis and Celery handle fetching, chunking, and embedding without blocking chat requests. |
+
+## More Than a RAG Demo
+
+Notebook Agent treats reliability and privacy boundaries as product features, not afterthoughts:
+
+- **Evidence first**: Every ordinary knowledge question requires a query embedding and a real knowledge-base search. If retrieval is unavailable, the request fails explicitly instead of falling back to model memory.
+- **Citation integrity**: Final answers can use only server-approved segment IDs. Fabricated citations are rejected and regenerated; an unverified draft is never returned if repair fails.
+- **Tenant by construction**: Trusted channel events resolve the user before agent execution. Tenant identity is fixed in dependencies and never exposed in the model's tool schema.
+- **Secure channel bridge**: The LangBot bridge listens only on loopback and validates HMAC signatures, timestamps, and nonces. Replays and duplicate message deliveries do not produce duplicate replies.
+- **Safe confirmation flow**: Pending actions belong to one user and conversation, expire after ten minutes, and can be consumed only once.
+- **Recoverable execution**: Content jobs use durable dispatch records and idempotency boundaries, so duplicate delivery does not repeat the full ingestion pipeline.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    U["User"] --> TG["Telegram"]
+    U --> WX["WeChat"]
+    TG --> LB["LangBot + Bridge Plugin"]
+    WX --> LB
+    LB --> GW["Notebook Agent Gateway"]
+    GW --> ID["Identity & Conversation"]
+    GW --> AG["PydanticAI Agent"]
+    AG --> RET["Tenant-scoped Retrieval"]
+    RET --> PG["PostgreSQL + pgvector"]
+    AG --> Q["Save Action"]
+    Q --> RD["Redis + Celery"]
+    RD --> ING["YouTube Ingestion"]
+    ING --> S3["MinIO Raw Storage"]
+    ING --> EMB["Embedding Provider"]
+    ING --> PG
+```
+
+### Content Pipeline
+
+```text
+URL → Metadata/Captions → Validation → Raw Archive → Semantic Chunking → Embedding → pgvector → Searchable
+```
+
+YouTube is the currently supported end-to-end ingestion source. The data model reserves a unified content and segment structure for Bilibili videos and WeChat Official Account articles, but those connectors are not yet implemented and are therefore not presented as available features.
+
+## Technology Stack
+
+- **Agent**: PydanticAI with native providers and OpenAI-compatible gateways
+- **Database**: PostgreSQL 17, pgvector, SQLAlchemy, Alembic
+- **Retrieval**: Vector cosine search plus PostgreSQL full-text search and Chinese trigram search
+- **Ingestion**: yt-dlp, Celery, Redis
+- **Object storage**: MinIO and other S3-compatible storage
+- **Channels**: LangBot 4.10.6, Telegram, WeChat OpenClaw/iLink
+- **Embedding**: Zhipu Embedding-3 with 1,536 dimensions
+- **Quality**: Pytest, structured diagnostics, idempotency tests, and tenant-isolation tests
+
+## Quick Start
+
+### 1. Requirements
+
+- Python 3.11+
+- Docker and Docker Compose
+- An agent model API and a Zhipu Embedding API key
+- For real chat channels: LangBot 4.10.6 and Telegram or WeChat credentials
+
+### 2. Install and Initialize
 
 ```bash
-cp .env.example .env
-# 填写数据库、embedding、Agent provider 和 CHANNEL_GATEWAY_SECRET
+git clone YOUR_REPOSITORY_URL
+cd notebook-agent
+
+python -m venv .venv
+source .venv/bin/activate
 python -m pip install -e '.[dev]'
+
+cp .env.example .env
+# Edit .env and configure the database, embedding provider,
+# agent provider, and CHANNEL_GATEWAY_SECRET.
+
 docker compose up -d
 alembic upgrade head
-# 保持 .env 中 AGENT_SAVE_ENABLED=false，先启动兼容 worker
+```
+
+### 3. Start the Worker and Gateway
+
+On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the ingestion worker:
+
+```bash
 .venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest
-# worker ready 后再开启 flag 并启动/重启 gateway
+```
+
+After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the gateway:
+
+```bash
 .venv/bin/python -m app.cli gateway-server
 ```
 
-模型可使用 PydanticAI 支持的直接 provider；OpenAI-compatible 网关只需同时配置：
+See the [deployment guide](docs/deployment.md) for local and single-host Linux deployments, backup, rollback, upgrades, and troubleshooting.
+
+## Try It Locally with the CLI
+
+You can validate the data and question-answering flow without connecting a chat platform:
+
+```bash
+# Create a local user and note the returned user ID.
+python -m app.cli users create
+
+# Replace 12 with the returned user ID, then ingest a video.
+python -m app.cli ingest --user-id 12 'https://youtu.be/...'
+
+# Compare keyword and vector retrieval results.
+python -m app.cli search --user-id 12 'your query'
+
+# Ask the agent a question.
+python -m app.cli ask --user-id 12 --thread demo 'What is the main idea of this video?'
+```
+
+## Chat Commands
+
+| Command | Purpose |
+| --- | --- |
+| `/start` | Register automatically or confirm the current account and return its internal user ID. |
+| `/whoami` | Show the internal user ID linked to the current channel identity. |
+| `/new` | Start a new conversation without loading the previous context. |
+| `/link wechat` | Generate a WeChat linking code from an authenticated channel; Telegram works the same way. |
+| `/link <code>` | Consume a linking code on a new channel and connect it to the same private library. |
+
+Channels linked to the same user share a knowledge library but keep separate conversation histories by default, preventing accidental context mixing.
+
+## Model Configuration
+
+You can use any provider supported by PydanticAI. For an OpenAI-compatible gateway, configure:
 
 ```dotenv
 AGENT_MODEL=openai:your-model-name
@@ -43,63 +175,41 @@ AGENT_API_KEY=...
 AGENT_BASE_URL=https://your-gateway.example/v1
 ```
 
-`AGENT_BASE_URL` 只影响 provider 适配层，不会改变工具、prompt 或答案结构。
+`AGENT_BASE_URL` changes only the provider connection. It does not alter tools, prompts, tenant boundaries, or the answer contract.
 
-## 用户、导入与提问
+## LangBot Multi-Channel Integration
 
-正常用户在 Telegram/微信首次发送 `/start` 或普通问题时，系统会原子创建
-`AppUser + ChannelIdentity`；回复会给出内部用户编号。`/whoami` 可以再次查看。
-管理员不是正常注册的必经角色。
+The bridge plugin lives in [`integrations/langbot_kb_plugin/`](integrations/langbot_kb_plugin/). It converts trusted platform events into a common `ChannelEnvelope` and routes responses; Notebook Agent continues to own identities, conversations, model execution, and retrieval permissions.
 
-本地 CLI 测试可显式创建一个用户：
+To connect LangBot:
 
-```bash
-python -m app.cli users create
-python -m app.cli ingest --user-id 12 'https://youtu.be/...'
-python -m app.cli search --user-id 12 '查询词'
-python -m app.cli ask --user-id 12 --thread demo '自然语言问题'
+1. Configure the same `CHANNEL_GATEWAY_SECRET` of at least 32 characters in Notebook Agent and the plugin.
+2. Enable Telegram and OpenClaw/iLink WeChat adapters in LangBot.
+3. Use `KB_BOT_CHANNELS` to map every LangBot bot UUID explicitly to `telegram` or `wechat`.
+4. Apply [`integrations/langbot-4.10.6-redact-monitoring.patch`](integrations/langbot-4.10.6-redact-monitoring.patch) so monitoring paths do not copy private message bodies or external identities.
+5. Start the Notebook Agent gateway and plugin runtime before starting LangBot.
+
+See the [LangBot bridge section](docs/deployment.md#7-安装-langbot-桥接) of the deployment guide for configuration and readiness checks.
+
+## Project Structure
+
+```text
+app/
+├── agent/          # Agent runtime, tools, providers, and answer contracts
+├── channels/       # Identity, conversations, commands, confirmations, and HTTP gateway
+├── connectors/     # Content platform connectors; currently YouTube
+├── ingest/         # Fetching, validation, chunking, embedding, and Celery tasks
+├── retrieval/      # Keyword and vector retrieval
+├── cli.py          # Operations, local ingestion, search, and question answering
+└── models.py       # Multi-tenant knowledge and conversation models
+
+integrations/       # LangBot bridge plugin and security patch
+migrations/         # Alembic database migrations
+docs/               # Deployment, upgrades, rollback, and troubleshooting
+tests/              # Unit, integration, security-boundary, and PostgreSQL tests
 ```
 
-禁用与恢复只属于运维：
-
-```bash
-python -m app.cli users disable --user-id 12
-python -m app.cli users enable --user-id 12
-# 仅用于人工纠错；会改变该渠道身份可访问的私有知识库
-python -m app.cli users rebind-identity --identity-id 34 --user-id 12
-```
-
-渠道内 `/new` 开启新会话，不再加载旧上下文。不同 Telegram/微信会话即使绑定
-同一个用户，也默认分别恢复自己的历史。
-
-开启保存功能后，用户可直接发送“帮我保存 <URL>”；1–10 个明确保存 URL 会异步入队，
-不会在渠道请求内等待 metadata、字幕或 embedding。只发送裸 URL 时系统会先询问是否保存；
-确认状态绑定当前 tenant/thread、十分钟过期。内容只有到 `ready` 后才能被知识检索引用。
-
-## 绑定第二渠道
-
-在已登录渠道发送 `/link wechat`（或 `/link telegram`），然后在目标渠道发送
-`/link <绑定码>`。绑定码只存哈希、短期有效且只能消费一次。直接在第二渠道
-开始使用而不输入绑定码，会创建另一个独立私有用户，系统不会按昵称自动合并。
-
-## LangBot 多渠道桥接
-
-固定验证版本为 LangBot 4.10.6。桥接插件位于
-`integrations/langbot_kb_plugin/`，只负责把可信平台事件转换成
-`ChannelEnvelope` 并路由回复；用户、会话、模型和检索权限仍由本项目管理。
-
-1. 为应用与插件配置相同的 `CHANNEL_GATEWAY_SECRET`（至少 32 字符）。
-2. 在 LangBot 中同时启用 Telegram 与 OpenClaw/iLink 微信 bot。
-3. 用 `KB_BOT_CHANNELS` 把每个 LangBot bot UUID 明确映射为 `telegram` 或 `wechat`。
-4. 应用 `integrations/langbot-4.10.6-redact-monitoring.patch`，避免 LangBot monitoring
-   复制私聊正文和外部身份；未应用时隐私验收不得通过。
-5. 启动 `python -m app.cli gateway-server`，再启动 LangBot 与 plugin runtime。
-
-桥接仅接受 loopback HTTP，并校验 HMAC、时间戳与 nonce，重放请求会被拒绝；短时间内
-同一个平台 message ID 的重复投递也只会触发一条最终平台回复。
-Slack 后续只需增加并配置一个 `channel="slack"` adapter，不修改 Agent/retrieval。
-
-## 验证
+## Verification
 
 ```bash
 pytest -q
@@ -109,9 +219,8 @@ python -m app.cli ask --help
 python -m app.cli users --help
 ```
 
-Migration downgrade mechanics are exercised only against a disposable,
-randomly named PostgreSQL database in the automated migration test. Do not run
-destructive downgrade checks against a normal local or production database.
+Automated migration downgrade tests must run only against a temporary, disposable PostgreSQL database. Never run destructive downgrade verification against a normal local or production database.
 
-真实 Telegram、微信和真实模型不会进入自动测试。完整人工步骤见
-`.trellis/tasks/08-05-knowledge-retrieval-agent/manual-acceptance.md`。
+---
+
+Built for the **EAZO Global Hackathon** — turning scattered saved content into a private, searchable memory.
