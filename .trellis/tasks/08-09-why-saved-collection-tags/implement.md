@@ -60,6 +60,15 @@
 - [x] Verify desktop/mobile layout, progress semantics, full frontend checks,
   and the refreshed isolated preview before committing.
 
+## Gate 8 - Remove queue explanation follow-up
+
+- [x] RED: prove the selected queue explanation is absent while grouping and
+  progress semantics remain available.
+- [x] GREEN: remove the copy node and its dedicated style, retaining a 1rem
+  structural gap between the queue heading and cards.
+- [x] Re-run the full frontend checks, rebuild 5175, and confirm the copy is
+  absent with no horizontal overflow.
+
 ## Validation Commands
 
 ```powershell

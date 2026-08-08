@@ -185,9 +185,6 @@ export function LibraryPage({
                 </div>
                 <span>{workItems.length} 个视频</span>
               </header>
-              <p className="library-work-zone__note">
-                整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。
-              </p>
               <div className="video-grid">
                 {workItems.map((item) => <VideoCard item={item} key={item.public_id} />)}
               </div>

@@ -110,7 +110,7 @@ describe("library page", () => {
     expect(within(workRegion).getByText("正在整理的视频")).toBeInTheDocument();
     expect(within(workRegion).getByText("整理失败的视频")).toBeInTheDocument();
     expect(within(workRegion).queryByText("理解比收藏重要")).not.toBeInTheDocument();
-    expect(within(workRegion).getByText("整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。")).toBeInTheDocument();
+    expect(within(workRegion).queryByText("整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。")).not.toBeInTheDocument();
     expect(within(workRegion).getByRole("progressbar", { name: "当前整理进度" })).toHaveAttribute("value", "83");
     expect(within(workRegion).getByText("约 83%")).toBeInTheDocument();
   });

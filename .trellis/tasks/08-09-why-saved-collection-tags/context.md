@@ -102,3 +102,14 @@
   339px content width, progress remained 83%, and no horizontal overflow was
   present. The viewport override was reset afterward and the 5175 deliverable
   returned to desktop sizing for user review.
+
+## 2026-08-09 queue-copy removal follow-up
+
+- User selected the explanatory sentence under `整理队列` and requested its
+  removal. TDD RED confirmed the sentence remained in the rendered region;
+  GREEN removes the node and its dedicated style while preserving grouping,
+  polling, and the semantic progress element.
+- Final verification: 13 frontend test files / 54 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, and the Vite production build passed. The
+  refreshed 5175 browser showed the copy absent, a 16px title-to-grid gap,
+  progress still present, and no horizontal overflow.

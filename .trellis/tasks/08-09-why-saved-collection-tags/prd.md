@@ -37,10 +37,9 @@ remains an ordinary validated hashtag inside `why_saved`.
 - The library keeps readable videos in the primary grid and moves queued,
   processing, failed, or action-required videos into a quieter lower work
   area separated by whitespace and a fine divider.
-- The lower work area explains that videos automatically return to the upper
-  readable area after successful processing, and shows a deliberately
-  approximate batch progress indicator for reassurance rather than precise
-  worker telemetry.
+- The lower work area stays visually concise without explanatory body copy and
+  shows a deliberately approximate progress indicator for reassurance rather
+  than precise worker telemetry.
 - The library displays discovered collections as quiet filter chips. Choosing
   one uses the existing server-side `why_saved` search by querying its exact
   hashtag; choosing `全部视频` clears that collection filter.
@@ -79,4 +78,4 @@ remains an ordinary validated hashtag inside `why_saved`.
 - [x] Account-shell tests and browser smoke prove an outside click closes the
   account popover without changing logout behavior.
 - [x] Library tests and browser smoke prove readable/work-item grouping, the
-  automatic-move explanation, and the approximate progress indicator.
+  absence of redundant explanatory copy, and the approximate progress indicator.
