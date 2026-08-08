@@ -4,11 +4,18 @@ from __future__ import annotations
 
 import asyncio
 import threading
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Callable, Literal
 
-from pydantic_ai import Agent, PromptedOutput, RunContext, UsageLimits
+from pydantic_ai import (
+    Agent,
+    PromptedOutput,
+    RunContext,
+    UsageLimits,
+    capture_run_messages,
+)
 from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRetry,
@@ -31,6 +38,7 @@ from app.agent.actions import (
     AgentActionRuntime,
     AgentActionServices,
 )
+from app.agent.provider import composer_model_settings
 from app.agent.services import (
     EmbeddingUnavailable,
     KnowledgeNotFound,
@@ -44,7 +52,7 @@ from app.agent.types import (
     Citation,
     RetrievalToolPayload,
 )
-from app.config import Settings
+from app.config import COMPOSER_VALIDATION_REQUEST_LIMIT, Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
 
 
@@ -72,7 +80,10 @@ NORMAL_SEARCH_CALLS_LIMIT = 2
 NORMAL_EXPANSION_CALLS_LIMIT = 3
 MAX_SOURCE_ITEMS = 5
 SEARCH_RESULT_LIMIT = 10
-ANSWER_REQUEST_LIMIT = 2
+ANSWER_REQUEST_LIMIT = COMPOSER_VALIDATION_REQUEST_LIMIT
+COMPOSER_EVIDENCE_EXCERPT_CHARS = 360
+COMPRESSED_EVIDENCE_LIMIT = 8
+COMPRESSED_EVIDENCE_EXCERPT_CHARS = 180
 FALLBACK_INTRO = "自动总结未完成，以下是知识库中最相关的证据："
 
 
@@ -142,6 +153,7 @@ class ComposerDeps:
     """Trusted allow-list passed to the tool-free answer composer only."""
 
     citations: dict[int, Citation]
+    excerpt_chars: int = COMPOSER_EVIDENCE_EXCERPT_CHARS
     diagnostics: RequestDiagnostics | None = None
     invalid_draft_count: int = 0
 
@@ -408,18 +420,10 @@ def build_composer(model: Model | str, *, tool_timeout: float = 15.0) -> Agent[C
 
     @composer.instructions
     def bounded_evidence_instruction(ctx: RunContext[ComposerDeps]) -> str:
-        rows: list[str] = []
-        for citation in ctx.deps.citations.values():
-            excerpt = " ".join(citation.excerpt.split())[:360]
-            timestamp = (
-                f"，时间 {int(citation.start_sec)} 秒"
-                if citation.start_sec is not None
-                else ""
-            )
-            rows.append(
-                f"ID {citation.segment_id}，视频《{citation.title}》{timestamp}：{excerpt}"
-            )
-        return "可用证据（仅可引用以下 ID）：\n" + "\n".join(rows)
+        return _render_composer_evidence(
+            ctx.deps.citations.values(),
+            excerpt_chars=ctx.deps.excerpt_chars,
+        )
 
     @composer.output_validator
     def validate_draft(ctx: RunContext[ComposerDeps], draft: AnswerDraft) -> AnswerDraft:
@@ -469,9 +473,14 @@ class KnowledgeAgent:
             model,
             tool_timeout=settings.agent_tool_timeout_seconds,
         )
+        answer_model = composer_model or model
         self._composer = build_composer(
-            composer_model or model,
+            answer_model,
             tool_timeout=settings.agent_tool_timeout_seconds,
+        )
+        self._composer_model_settings = composer_model_settings(
+            answer_model,
+            max_tokens=settings.agent_composer_max_tokens,
         )
         self._settings = settings
         self._service_factory = service_factory
@@ -686,20 +695,59 @@ class KnowledgeAgent:
             diagnostics.event(
                 "model_attempt", call_index=attempts, agent_phase="answer"
             )
-            return {"parallel_tool_calls": False}
+            return dict(self._composer_model_settings)
+
+        async def run_attempt(attempt_deps: ComposerDeps):
+            return await self._composer.run(
+                request.question.strip(),
+                deps=attempt_deps,
+                usage_limits=UsageLimits(
+                    request_limit=ANSWER_REQUEST_LIMIT,
+                    output_tokens_limit=self._settings.agent_output_token_limit,
+                ),
+                usage=RunUsage(),
+                model_settings=record_answer_attempt,
+            )
 
         try:
             async with asyncio.timeout(self._settings.agent_timeout_seconds):
-                result = await self._composer.run(
-                    request.question.strip(),
-                    deps=composer_deps,
-                    usage_limits=UsageLimits(
-                        request_limit=ANSWER_REQUEST_LIMIT,
-                        output_tokens_limit=self._settings.agent_output_token_limit,
-                    ),
-                    usage=RunUsage(),
-                    model_settings=record_answer_attempt,
-                )
+                active_deps = composer_deps
+                first_error: BaseException | None = None
+                with capture_run_messages() as attempt_messages:
+                    try:
+                        result = await run_attempt(active_deps)
+                    except (
+                        UsageLimitExceeded,
+                        UnexpectedModelBehavior,
+                        ModelRetry,
+                    ) as exc:
+                        first_error = exc
+                limit_kind = _compression_retry_kind(first_error, attempt_messages)
+                if first_error is not None and limit_kind is None:
+                    raise first_error
+                if limit_kind is not None:
+                    compressed_deps = _compressed_composer_deps(composer_deps)
+                    if compressed_deps is None:
+                        if first_error is not None:
+                            raise first_error
+                        raise UnexpectedModelBehavior(
+                            "Composer response reached provider length limit"
+                        )
+                    diagnostics.event(
+                        "context_compressed",
+                        retry_count=1,
+                        result_count=len(compressed_deps.citations),
+                        projected_value=len(composer_deps.citations),
+                        limit_kind=limit_kind,
+                        agent_phase="answer",
+                    )
+                    active_deps = compressed_deps
+                    with capture_run_messages() as compressed_messages:
+                        result = await run_attempt(active_deps)
+                    if _captured_length_cutoff(compressed_messages):
+                        raise UnexpectedModelBehavior(
+                            "Compressed Composer response reached provider length limit"
+                        )
         except TimeoutError:
             diagnostics.event(
                 "agent_failed", error_code="timeout", agent_phase="answer"
@@ -755,7 +803,7 @@ class KnowledgeAgent:
         diagnostics.event(
             "citation_validated",
             result_count=len(selected),
-            retry_count=composer_deps.invalid_draft_count,
+            retry_count=active_deps.invalid_draft_count,
             agent_phase="answer",
         )
         return AgentExecution(
@@ -830,6 +878,100 @@ def _limit_citations_by_item(citations: list[Citation]) -> list[Citation]:
             item_ids.add(citation.item_id)
         selected.append(citation)
     return selected
+
+
+def _render_composer_evidence(
+    citations: Iterable[Citation],
+    *,
+    excerpt_chars: int,
+) -> str:
+    """Render the trusted Composer view with an explicit excerpt projection."""
+
+    rows: list[str] = []
+    for citation in citations:
+        excerpt = " ".join(citation.excerpt.split())[:excerpt_chars]
+        timestamp = (
+            f"，时间 {int(citation.start_sec)} 秒"
+            if citation.start_sec is not None
+            else ""
+        )
+        rows.append(
+            f"ID {citation.segment_id}，视频《{citation.title}》{timestamp}：{excerpt}"
+        )
+    return "可用证据（仅可引用以下 ID）：\n" + "\n".join(rows)
+
+
+def _compressed_citations(citations: list[Citation]) -> list[Citation]:
+    """Select coverage first, then fill remaining slots in retrieval order."""
+
+    selected: list[Citation] = []
+    selected_segments: set[int] = set()
+    covered_items: set[int] = set()
+    for citation in citations:
+        if citation.item_id in covered_items:
+            continue
+        selected.append(citation)
+        selected_segments.add(citation.segment_id)
+        covered_items.add(citation.item_id)
+        if len(selected) >= COMPRESSED_EVIDENCE_LIMIT:
+            return selected
+    for citation in citations:
+        if citation.segment_id in selected_segments:
+            continue
+        selected.append(citation)
+        selected_segments.add(citation.segment_id)
+        if len(selected) >= COMPRESSED_EVIDENCE_LIMIT:
+            break
+    return selected
+
+
+def _compressed_composer_deps(deps: ComposerDeps) -> ComposerDeps | None:
+    """Create a smaller local evidence view, or skip a useless retry."""
+
+    original = list(deps.citations.values())
+    selected = _compressed_citations(original)
+    compressed = ComposerDeps(
+        {citation.segment_id: citation for citation in selected},
+        excerpt_chars=COMPRESSED_EVIDENCE_EXCERPT_CHARS,
+        diagnostics=deps.diagnostics,
+    )
+    original_size = len(
+        _render_composer_evidence(original, excerpt_chars=deps.excerpt_chars)
+    )
+    compressed_size = len(
+        _render_composer_evidence(
+            compressed.citations.values(),
+            excerpt_chars=compressed.excerpt_chars,
+        )
+    )
+    if len(compressed.citations) >= len(deps.citations) and compressed_size >= original_size:
+        return None
+    return compressed
+
+
+def _compression_retry_kind(
+    exc: BaseException | None,
+    messages: list[ModelMessage],
+) -> str | None:
+    """Classify only output-budget or structured-output exhaustion for retry."""
+
+    if isinstance(exc, UsageLimitExceeded):
+        kind, _, _ = classify_usage_limit(exc)
+        return "output_tokens" if kind == "output_tokens" else None
+    if (
+        exc is None or isinstance(exc, (UnexpectedModelBehavior, ModelRetry))
+    ) and _captured_length_cutoff(messages):
+        return "unknown"
+    return None
+
+
+def _captured_length_cutoff(messages: list[ModelMessage]) -> bool:
+    """Return whether the provider explicitly marked any response truncated."""
+
+    return any(
+        isinstance(message, ModelResponse) and message.finish_reason == "length"
+        for message in messages
+    )
 
 
 def _render_sections(draft: AnswerDraft, citations: list[Citation]) -> str:

@@ -19,6 +19,12 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
+# The answer Composer allows one structured-output repair in a run. Keep this
+# constant next to configuration validation so the provider cap and the
+# post-response safety budget cannot drift apart.
+COMPOSER_VALIDATION_REQUEST_LIMIT = 2
+
+
 def _env(name: str, default: str | None = None) -> str | None:
     return os.environ.get(name, default)
 
@@ -143,6 +149,9 @@ class Settings:
     agent_output_token_limit: int = field(
         default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
     )
+    agent_composer_max_tokens: int = field(
+        default_factory=lambda: _env_int("AGENT_COMPOSER_MAX_TOKENS", 1000)
+    )
     agent_save_enabled: bool = field(
         default_factory=lambda: _env_bool("AGENT_SAVE_ENABLED", False)
     )
@@ -171,6 +180,16 @@ class Settings:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
         if self.notebook_agent_log_retrieval_content and self.notebook_agent_env != "development":
             raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
+        if self.agent_composer_max_tokens <= 0:
+            raise ValueError("AGENT_COMPOSER_MAX_TOKENS must be positive")
+        if (
+            self.agent_composer_max_tokens * COMPOSER_VALIDATION_REQUEST_LIMIT
+            > self.agent_output_token_limit
+        ):
+            raise ValueError(
+                "AGENT_COMPOSER_MAX_TOKENS multiplied by the Composer request "
+                "limit must not exceed AGENT_OUTPUT_TOKEN_LIMIT"
+            )
 
 
 def _build_database_url() -> str:

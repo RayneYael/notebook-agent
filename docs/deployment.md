@@ -115,6 +115,7 @@ cp .env.example .env
 | `AGENT_BASE_URL` | OpenAI-compatible 时 | 以 `/v1` 结尾的兼容接口根地址 |
 | `AGENT_TOOL_TIMEOUT_SECONDS` | 是 | 单次 Agent tool 上限；必须小于外层 `AGENT_TIMEOUT_SECONDS` |
 | `AGENT_OUTPUT_TOKEN_LIMIT` | 是 | 每个独立阶段的模型输出上限：检索规划与无工具回答 composer 分别从新计数开始；不要通过简单提高该值修复检索收敛 |
+| `AGENT_COMPOSER_MAX_TOKENS` | 是 | 每次回答 Composer 请求真正发给 provider 的生成上限，默认 `1000`；每个完整或压缩 attempt 最多两次结构化输出请求，因此该值乘以 2 不得超过该 attempt 的 `AGENT_OUTPUT_TOKEN_LIMIT`。DeepSeek Composer 同时关闭 thinking；输出预算/截断时会在同一总超时内以全新 usage 预算用压缩证据重试一次，整个 workflow 最多四次 provider 请求，按默认值合计 provider cap 最多 4000 输出 tokens |
 | `BROKER_PUBLISH_TIMEOUT_SECONDS` | 是 | channel 保存消息发布总预算；运行时会压到 Agent tool 上限以内 |
 | `BROKER_PUBLISH_MAX_RETRIES` | 是 | broker 发布的有限 retry 次数；不影响 worker ingestion retry |
 | `AGENT_SAVE_ENABLED` | 是 | rollout 前保持 `false`；worker ready 后才改为 `true` |

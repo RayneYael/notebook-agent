@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 from pydantic_ai.exceptions import ModelHTTPError
 
+from app.config import Settings
 from app.diagnostics import RequestDiagnostics
 
 
@@ -172,6 +173,46 @@ def test_settings_reject_production_or_unknown_retrieval_content(monkeypatch):
     monkeypatch.setenv("NOTEBOOK_AGENT_ENV", "unknown")
     monkeypatch.setenv("NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT", "false")
     with __import__("pytest").raises(ValueError): Settings()
+
+
+def test_settings_validate_composer_provider_budget(monkeypatch):
+    monkeypatch.setenv("AGENT_OUTPUT_TOKEN_LIMIT", "2000")
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "0")
+    with pytest.raises(ValueError, match="AGENT_COMPOSER_MAX_TOKENS must be positive"):
+        Settings()
+
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1001")
+    with pytest.raises(ValueError, match="must not exceed AGENT_OUTPUT_TOKEN_LIMIT"):
+        Settings()
+
+    monkeypatch.setenv("AGENT_COMPOSER_MAX_TOKENS", "1000")
+    assert Settings().agent_composer_max_tokens == 1000
+
+
+def test_context_compressed_diagnostic_contains_only_safe_counts(caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "context_compressed",
+            retry_count=1,
+            result_count=8,
+            projected_value=20,
+            limit_kind="output_tokens",
+            agent_phase="answer",
+        )
+
+    payload = caplog.records[-1].diagnostic_payload
+    assert payload["stage"] == "context_compressed"
+    assert payload["retry_count"] == 1
+    assert payload["result_count"] == 8
+    assert payload["projected_value"] == 20
+    assert payload["limit_kind"] == "output_tokens"
+    assert set(payload) == {
+        "event", "stage", "request_id", "trace_id", "tenant_id",
+        "duration_ms", "error_code", "error_class", "agent_phase",
+        "retry_count", "result_count", "projected_value", "limit_kind",
+    }
 
 
 def test_runtime_logging_dual_writes_and_keeps_private_sentinels_out(

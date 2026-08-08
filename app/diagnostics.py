@@ -23,7 +23,7 @@ _STAGES = frozenset({
     "accepted", "route", "duplicate", "gateway_response_ready", "agent_started",
     "model_attempt", "tool_call", "embedding_started", "embedding_completed",
     "embedding_failed", "retrieval_started", "retrieval_completed", "retrieval_failed",
-    "citation_validated", "agent_failed", "action_validated",
+    "citation_validated", "context_compressed", "agent_failed", "action_validated",
 })
 _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
