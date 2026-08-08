@@ -10,6 +10,7 @@ projects.
 | --- | --- |
 | Git branch | `main` |
 | Vercel project | `notebook-agent` |
+| Vercel project ID | `prj_kYOLISpRQ42qnAWq63m3uXfUuCmi` |
 | Neon project | `notebook-agent` |
 | Neon organization | `deequoique` |
 | Neon project ID | `raspy-river-64327139` |
@@ -136,7 +137,7 @@ must never appear in the body or logs.
 Fill this section with non-secret identifiers after the live deployment:
 
 - Public URL: pending
-- Vercel project ID: pending
+- Vercel project ID: `prj_kYOLISpRQ42qnAWq63m3uXfUuCmi`
 - Neon project ID: `raspy-river-64327139`
 - Neon branch ID: `br-morning-dust-auqbf4i2`
 - Deployed Git commit: pending
