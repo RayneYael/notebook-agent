@@ -40,6 +40,7 @@ Agent: ...
 | Cross-channel identity linking | Use short-lived, single-use codes to access the same private library from another channel. |
 | Persistent conversations | Recent turns live in PostgreSQL and survive restarts. Use `/new` to start with a clean context. |
 | Asynchronous processing | Redis and Celery handle fetching, chunking, and embedding without blocking chat requests. |
+| Inventory and recycle bin | Tenant-scoped list/detail views, bounded `why_saved` updates, confirmed soft-delete, restore, failed-ingestion retry, and a 30-day bounded purge. |
 
 ## More Than a RAG Demo
 
@@ -124,7 +125,8 @@ alembic upgrade head
 On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the ingestion worker:
 
 ```bash
-.venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest
+.venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest,maintenance
+.venv/bin/celery -A app.ingest.tasks.celery_app beat
 ```
 
 After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the gateway:

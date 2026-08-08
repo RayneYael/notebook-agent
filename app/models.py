@@ -269,12 +269,43 @@ class ContentItem(Base):
     )
     fail_reason: Mapped[str | None] = mapped_column(Text)
 
+    # Recycle-bin lifecycle.  These fields deliberately remain separate from
+    # ``state``: ingestion state is owned by the worker, while deletion and
+    # purge state is owned by the management/maintenance services.
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    purge_attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    purge_error_code: Mapped[str | None] = mapped_column(Text)
+    # A short-lived delete-effect fence.  Restore/re-save replaces this value
+    # so a late effect from an older confirmation cannot soft-delete the item
+    # again after it has become visible.
+    delete_claim_token: Mapped[str | None] = mapped_column(Text)
+
     __table_args__ = (
         UniqueConstraint(
             "user_id", "platform", "platform_id",
             name="uq_content_item_user_platform_platform_id",
         ),
-        Index("ix_content_item_user_saved_at", "user_id", saved_at.desc()),
+        Index(
+            "ix_content_item_user_saved_at",
+            "user_id",
+            saved_at.desc(),
+            id.desc(),
+            postgresql_where=text("deleted_at IS NULL"),
+        ),
+        Index(
+            "ix_content_item_user_deleted_at",
+            "user_id",
+            deleted_at.desc(),
+            id.desc(),
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
+        Index(
+            "ix_content_item_deleted_at_id",
+            "deleted_at",
+            id,
+            postgresql_where=text("deleted_at IS NOT NULL"),
+        ),
         Index(
             "ix_content_item_content_hash",
             "content_hash",

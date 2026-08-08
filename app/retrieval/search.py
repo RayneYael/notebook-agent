@@ -31,13 +31,13 @@ def _hits(rows) -> list[Hit]:
 
 def vector_search(db, query_vector: list[float], *, user_id: int, k: int = 20) -> list[Hit]:
     distance = Segment.embedding.cosine_distance(query_vector)
-    stmt = select(Segment, ContentItem, (1 - distance).label("score")).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.state == "ready", Segment.embedding.isnot(None)).order_by(distance).limit(k)
+    stmt = select(Segment, ContentItem, (1 - distance).label("score")).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.deleted_at.is_(None), ContentItem.state == "ready", Segment.embedding.isnot(None)).order_by(distance).limit(k)
     return _hits(db.execute(stmt).all())
 
 
 def bm25_search(db, query: str, *, user_id: int, k: int = 20) -> list[Hit]:
     is_zh = bool(re.search(r"[\u3400-\u9fff]", query))
-    base = select(Segment, ContentItem).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.state == "ready")
+    base = select(Segment, ContentItem).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.deleted_at.is_(None), ContentItem.state == "ready")
     if is_zh:
         score = func.similarity(Segment.text, query)
         stmt = base.add_columns(score.label("score")).where(ContentItem.lang.like("zh%"), or_(Segment.text.op("%")(query), Segment.text.ilike(f"%{query}%"))).order_by(desc(score)).limit(k)

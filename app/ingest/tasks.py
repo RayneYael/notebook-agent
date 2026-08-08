@@ -4,14 +4,17 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import os
 import time
 from collections.abc import Callable
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
+from uuid import uuid4
 
 import boto3
 from botocore.exceptions import ClientError
+from botocore.config import Config as BotoConfig
 from celery import Celery, Task
 from kombu import Producer
 from sqlalchemy import delete, func, select
@@ -24,11 +27,15 @@ from app.ingest.chunker import chunk
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import guard_transcript
 from app.models import AppUser, ContentItem, IngestDispatch, Segment
+from app.agent.management import RecycleBinPurgeService
 from app.tls import configure_trusted_ca
 
 
 celery_app = Celery("kb", broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"), backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
-celery_app.conf.task_routes = {"app.ingest.tasks.fetch_text_task": {"queue": "ingest"}}
+celery_app.conf.task_routes = {
+    "app.ingest.tasks.fetch_text_task": {"queue": "ingest"},
+    "app.ingest.tasks.purge_expired_items_task": {"queue": "maintenance"},
+}
 
 
 def _bounded_publish_options(
@@ -95,7 +102,18 @@ class RawObjectStore:
     def __init__(self) -> None:
         settings = get_settings()
         self.bucket = settings.minio_bucket
-        self.client = boto3.client("s3", endpoint_url=settings.minio_endpoint_url, aws_access_key_id=settings.minio_access_key, aws_secret_access_key=settings.minio_secret_key)
+        timeout = max(1.0, float(settings.trash_purge_object_timeout_seconds))
+        self._client_kwargs = {
+            "endpoint_url": settings.minio_endpoint_url,
+            "aws_access_key_id": settings.minio_access_key,
+            "aws_secret_access_key": settings.minio_secret_key,
+        }
+        self._base_config = BotoConfig(
+            connect_timeout=timeout,
+            read_timeout=timeout,
+            retries={"total_max_attempts": 1, "mode": "standard"},
+        )
+        self.client = boto3.client("s3", config=self._base_config, **self._client_kwargs)
 
     def put(self, key: str, body: bytes, content_type: str) -> None:
         try:
@@ -103,6 +121,72 @@ class RawObjectStore:
         except ClientError:
             self.client.create_bucket(Bucket=self.bucket)
         self.client.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=content_type)
+
+    def _client_for_timeout(self, timeout_seconds: float | None):
+        if timeout_seconds is None:
+            return self.client, False
+        try:
+            timeout = float(timeout_seconds)
+        except (TypeError, ValueError):
+            raise TimeoutError("object_delete_timeout") from None
+        if not math.isfinite(timeout) or timeout <= 0:
+            raise TimeoutError("object_delete_timeout")
+        # Reserve a fraction for client construction, TLS teardown and the
+        # caller's post-delete claim transaction. Botocore exposes separate
+        # connect/read budgets rather than one total operation deadline, so
+        # their sum is deliberately below the remaining sweep budget.
+        overhead_reserve = min(0.05, timeout * 0.1)
+        available = timeout - overhead_reserve
+        minimum_stage = 0.001
+        if available < minimum_stage * 2:
+            raise TimeoutError("object_delete_timeout")
+        connect_timeout = max(minimum_stage, available * 0.25)
+        read_timeout = available - connect_timeout
+        if read_timeout < minimum_stage:
+            read_timeout = minimum_stage
+            connect_timeout = available - read_timeout
+        if connect_timeout <= 0 or read_timeout <= 0:
+            raise TimeoutError("object_delete_timeout")
+        # Botocore has no per-request timeout argument for S3 operations. A
+        # short-lived client with a merged Config is the provider-supported
+        # way to enforce the purge sweep's remaining wall-clock budget.
+        config = self._base_config.merge(
+            BotoConfig(
+                connect_timeout=connect_timeout,
+                read_timeout=read_timeout,
+            )
+        )
+        return boto3.client("s3", config=config, **self._client_kwargs), True
+
+    def delete_object(
+        self, key: str, *, timeout_seconds: float | None = None
+    ) -> None:
+        """Idempotently delete one raw object.
+
+        S3 delete is itself idempotent.  A missing object and a missing bucket
+        are treated as already-cleaned; other failures are propagated so the
+        purge row remains retryable.  The key is never included in an error.
+        """
+
+        client, temporary = self._client_for_timeout(timeout_seconds)
+        try:
+            try:
+                client.delete_object(Bucket=self.bucket, Key=key)
+            except ClientError as exc:
+                code = str((exc.response or {}).get("Error", {}).get("Code", ""))
+                if code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}:
+                    return
+                raise RuntimeError("object_delete_failed") from None
+        finally:
+            if temporary:
+                close = getattr(client, "close", None)
+                if callable(close):
+                    close()
+
+    # Keep the adapter compatible with purge fakes/older callers that use a
+    # generic ``delete`` method while preserving the per-call timeout contract.
+    def delete(self, key: str, *, timeout_seconds: float | None = None) -> None:
+        self.delete_object(key, timeout_seconds=timeout_seconds)
 
 
 def _connector(url: str) -> YouTubeConnector:
@@ -121,8 +205,21 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
     with factory() as db:
         if db.get(AppUser, user_id) is None:
             raise LookupError(f"app user {user_id} not found")
-        existing = db.scalar(select(ContentItem).where(ContentItem.user_id == user_id, ContentItem.platform == connector.platform, ContentItem.platform_id == platform_id))
+        existing = db.scalar(select(ContentItem).where(ContentItem.user_id == user_id, ContentItem.platform == connector.platform, ContentItem.platform_id == platform_id).with_for_update())
         if existing:
+            if getattr(existing, "deleted_at", None) is not None:
+                retention_days = get_settings().trash_retention_days
+                now = db.scalar(select(func.now()))
+                if getattr(existing, "purge_claimed_at", None) is not None or existing.deleted_at + timedelta(days=retention_days) <= now:
+                    return existing.id
+                existing.deleted_at = None
+                existing.delete_claim_token = uuid4().hex
+                existing.purge_claimed_at = None
+                existing.purge_attempts = 0
+                existing.purge_error_code = None
+                if why_saved is not None:
+                    existing.why_saved = " ".join(why_saved.split())[:500] or None
+                db.commit()
             return existing.id
         item = ContentItem(
             user_id=user_id,
@@ -144,6 +241,11 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         item = db.get(ContentItem, item_id)
         if item is None:
             raise LookupError(f"content item {item_id} not found")
+        if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
+            # A late worker may finish remote fetching, but must not publish
+            # new visible segments for an item that is in the recycle bin.
+            _mark_item_deleted(db, item)
+            return "deleted"
         connector = connector or _connector(item.url)
         meta = connector.fetch_meta(item.platform_id)
         if meta is not None:
@@ -172,13 +274,31 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             raise TypeError(f"connector returned unsupported text result: {type(result)!r}")
         guard_transcript(result.raw_body, result.cues, platform=item.platform)
         key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
-        (object_store or RawObjectStore()).put(key, result.raw_body, "application/json")
+        db.refresh(item)
+        if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
+            _mark_item_deleted(db, item)
+            return "deleted"
+        store = object_store or RawObjectStore()
+        # Persist a deterministic cleanup intent before crossing the external
+        # object-store boundary.  If the process dies during/after ``put``,
+        # purge and a later worker both have the key needed for idempotent
+        # cleanup; no uncommitted ORM attribute can hide an orphan object.
         item.raw_object_key = key
         item.content_hash = hashlib.sha256("\n".join(c.text.strip() for c in result.cues).encode()).hexdigest()
         item.text_source = result.source
         item.lang = result.lang
         item.state = "chunking"
-        db.flush()
+        db.commit()
+        store.put(key, result.raw_body, "application/json")
+        # A soft delete may have committed while the object was being put.
+        # Remove the object immediately and leave the row/dispatch available
+        # for restore or retry; the final check below protects the embedding
+        # interleaving as well.
+        db.refresh(item)
+        if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
+            _delete_object_best_effort(store, key)
+            _mark_item_deleted(db, item)
+            return "deleted"
         if embedder is None:
             embedder = build_worker_embedder()
         semantic = lambda texts: embedder.embed(texts)
@@ -188,6 +308,11 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             raise ValueError(
                 f"embedding count mismatch: expected {len(chunks)}, got {len(vectors)}"
             )
+        db.refresh(item)
+        if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
+            _delete_object_best_effort(store, key)
+            _mark_item_deleted(db, item)
+            return "deleted"
         db.execute(delete(Segment).where(Segment.item_id == item.id))
         item.state = "embedding"
         for seq, (part, vector) in enumerate(zip(chunks, vectors, strict=True)):
@@ -197,6 +322,35 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         item.fail_reason = None
         db.commit()
         return item.state
+
+
+def _delete_object_best_effort(store: Any, key: str) -> None:
+    """Delete a late worker object without exposing key/provider details."""
+
+    delete = getattr(store, "delete_object", None) or getattr(store, "delete", None)
+    if delete is None:
+        return
+    try:
+        delete(key)
+    except TypeError:
+        try:
+            delete(getattr(store, "bucket", None), key)
+        except Exception:
+            return
+    except Exception:
+        return
+
+
+def _mark_item_deleted(db: Any, item: Any) -> None:
+    """Converge a worker abort into a durable retryable item state."""
+
+    # A worker that returns ``deleted`` may have already persisted cleanup
+    # intent/raw_object_key and then observed a soft-delete race.  Keep the
+    # row visibly failed (rather than chunking/embedding forever) so restore
+    # plus a later save/retry can create a fresh dispatch.
+    item.state = "failed"
+    item.fail_reason = "item_deleted"
+    db.commit()
 
 
 class IngestTask(Task):
@@ -248,6 +402,42 @@ def publish_ingest_dispatch(dispatch_id: int) -> str:
         return str(result.id)
 
 
+@celery_app.task(name="app.ingest.tasks.purge_expired_items_task")
+def purge_expired_items_task() -> dict[str, int]:
+    """Run one bounded recycle-bin sweep and emit only safe counters."""
+
+    settings = get_settings()
+    service = RecycleBinPurgeService(
+        get_session_factory(),
+        RawObjectStore(),
+        retention_days=settings.trash_retention_days,
+        batch_size=settings.trash_purge_batch_size,
+        claim_timeout_seconds=settings.trash_purge_claim_timeout_seconds,
+        max_duration_seconds=settings.trash_purge_max_duration_seconds,
+    )
+    result = service.purge_once()
+    return {
+        "claimed": result.claimed,
+        "completed": result.completed,
+        "failed": result.failed,
+        "deferred": result.deferred,
+    }
+
+
+try:
+    _purge_interval = max(1, int(os.getenv("TRASH_PURGE_INTERVAL_SECONDS", "3600")))
+except (TypeError, ValueError):
+    _purge_interval = 3600
+
+celery_app.conf.beat_schedule = {
+    "purge-expired-items": {
+        "task": "app.ingest.tasks.purge_expired_items_task",
+        "schedule": float(_purge_interval),
+        "options": {"queue": "maintenance"},
+    }
+}
+
+
 def build_worker_embedder(
     settings: Settings | None = None,
 ) -> EmbeddingProvider:
@@ -295,7 +485,7 @@ def process_dispatch(
         )
         raise RuntimeError("ingestion_failed") from None
     _complete_dispatch(
-        dispatch_id, task_id, session_factory=factory
+        dispatch_id, task_id, process_state=state, session_factory=factory
     )
     return state
 
@@ -329,6 +519,14 @@ def _claim_dispatch(
             # A tenant merge may retire a queued duplicate and cascade its
             # dispatch before this delivery is claimed. Treat that as the same
             # no-op duplicate outcome as a missing dispatch.
+            return None
+        if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
+            dispatch.state = "failed"
+            dispatch.error_code = "item_deleted"
+            item.state = "failed"
+            item.fail_reason = "item_deleted"
+            dispatch.updated_at = datetime.now(UTC)
+            db.commit()
             return None
         dispatch.state = "running"
         if task_id is not None:
@@ -369,6 +567,7 @@ def _complete_dispatch(
     dispatch_id: int,
     task_id: str | None,
     *,
+    process_state: str | None = None,
     session_factory=None,
 ) -> None:
     factory = session_factory or get_session_factory()
@@ -386,6 +585,21 @@ def _complete_dispatch(
                 and dispatch.task_id not in {None, task_id}
             )
         ):
+            return
+        item = db.get(ContentItem, dispatch.item_id)
+        if (
+            item is None
+            or process_state == "deleted"
+            or getattr(item, "deleted_at", None) is not None
+            or getattr(item, "purge_claimed_at", None) is not None
+        ):
+            dispatch.state = "failed"
+            dispatch.error_code = "item_deleted"
+            if item is not None:
+                item.state = "failed"
+                item.fail_reason = "item_deleted"
+            dispatch.updated_at = datetime.now(UTC)
+            db.commit()
             return
         dispatch.state = "completed"
         dispatch.error_code = None

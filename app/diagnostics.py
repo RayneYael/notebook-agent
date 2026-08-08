@@ -29,7 +29,10 @@ _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
     "search_segments", "get_neighbors", "get_item", "open_at",
     "request_save_confirmation", "save_videos", "confirm_video_save",
-    "clarify_save_confirmation", "cancel_video_save",
+    "clarify_save_confirmation", "cancel_video_save", "list_saved_items",
+    "get_saved_item", "update_saved_item", "delete_saved_items",
+    "confirm_item_deletion", "clarify_item_deletion", "cancel_item_deletion",
+    "restore_saved_items", "retry_item_ingestion",
 })
 _LIMITS = frozenset({"request", "tool_calls", "output_tokens", "unknown"})
 _AGENT_PHASES = frozenset({"retrieval", "answer"})
@@ -38,6 +41,17 @@ _ERRORS = frozenset({
     "timeout", "limit", "answer_unavailable", "runtime_error", "not_found",
     "search_required", "empty_answer", "identity_error", "thread_missing",
     "queue_unavailable", "invalid_envelope",
+    "item_not_found", "invalid_cursor", "invalid_batch", "invalid_why_saved",
+    "invalid_location", "invalid_filter", "management_failed", "object_delete_failed",
+    "confirmation_required", "confirmation_missing", "confirmation_expired",
+    "item_deleted", "item_expired", "retry_not_allowed", "management_unavailable",
+    "management_failed", "items_listed", "item_read", "item_updated", "items_deleted",
+    "items_restored", "delete_cancelled", "retry_queued", "purge_failed",
+    "purge_in_progress",
+    "delete_failed",
+    "delete_in_progress",
+    "save_confirmation_required", "save_cancelled", "save_partial", "save_accepted",
+    "save_failed", "save_unavailable", "invalid_url", "batch_too_large", "empty_batch",
 })
 
 

@@ -19,6 +19,7 @@ from app.agent.services import ItemDetails
 from app.agent.types import AgentRequest, Citation
 from app.channels.pending_actions import (
     ConfirmationResult,
+    PendingDeleteSnapshot,
     PendingSaveSnapshot,
     PendingValidationError,
 )
@@ -674,6 +675,88 @@ async def test_mixed_search_then_save_returns_action_without_citation_retry():
     assert result.answer.citations == []
     assert knowledge.calls == ["search_segments"]
     assert len(submission.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_mixed_search_and_delete_uses_canonical_per_item_outcome():
+    rows = (
+        {"item_id": 1, "status": "deleted", "safe_error_code": None},
+        {"item_id": 2, "status": "already_restored", "safe_error_code": None},
+        {"item_id": 3, "status": "already_deleted", "safe_error_code": None},
+    )
+
+    class MixedPending:
+        def inspect_delete(self, tenant, thread_id):
+            return PendingDeleteSnapshot(active=True, count=3)
+
+        def confirm_delete(self, tenant, thread_id, **kwargs):
+            return ConfirmationResult(
+                "confirmed",
+                item_ids=(1, 2, 3),
+                results=rows,
+                action_id=17,
+            ), None
+
+    class MixedKnowledge:
+        def __init__(self):
+            self.calls = []
+
+        def search_segments(self, query, *, limit=6):
+            self.calls.append(query)
+            return []
+
+    knowledge = MixedKnowledge()
+
+    def model(messages, _info):
+        has_tool_returns = any(
+            isinstance(part, ToolReturnPart)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+        )
+        if has_tool_returns:
+            return ModelResponse(parts=[TextPart("untrusted mixed draft")])
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    "search_segments",
+                    json.dumps({"query": "irrelevant evidence"}),
+                    tool_call_id="search-mixed",
+                ),
+                ToolCallPart(
+                    "confirm_item_deletion",
+                    "{}",
+                    tool_call_id="confirm-mixed",
+                ),
+            ]
+        )
+
+    settings = replace(
+        Settings(),
+        agent_item_management_enabled=True,
+        agent_timeout_seconds=2,
+    )
+    services = AgentActionServices(
+        submission=FakeSubmission(BatchSaveResult(())),
+        pending=MixedPending(),
+        management=object(),  # the fake pending owns the canonical outcome
+    )
+    runtime = KnowledgeAgent(
+        FunctionModel(model),
+        settings,
+        lambda _request: knowledge,
+        action_factory=lambda _request: services,
+    )
+    result = await runtime.run(_request("确认删除"))
+
+    assert result.answer.status == "ok"
+    assert result.answer.error_code == "items_deleted"
+    assert result.answer.citations == []
+    assert result.answer.action_results == list(rows)
+    assert "已移入回收站" in result.answer.text
+    assert "已恢复，未重复删除" in result.answer.text
+    assert "此前已在回收站" in result.answer.text
+    assert knowledge.calls == ["irrelevant evidence"]
 
 
 @pytest.mark.asyncio

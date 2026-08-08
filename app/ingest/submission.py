@@ -4,16 +4,18 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.channels.types import TenantContext
 from app.connectors.youtube import YouTubeConnector
+from app.config import get_settings
 from app.models import ContentItem, IngestDispatch
 
 
@@ -55,6 +57,9 @@ class SaveItemResult:
     status: Literal[
         "queued",
         "already_exists",
+        "restored",
+        "purge_in_progress",
+        "retry_not_allowed",
         "unsupported_url",
         "invalid_url",
         "queue_unavailable",
@@ -157,9 +162,19 @@ class IngestSubmissionService:
         self,
         session_factory: Callable[[], Session],
         publisher: Callable[[int], str | None],
+        *,
+        retention_days: int | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
+        if retention_days is None:
+            try:
+                retention_days = get_settings().trash_retention_days
+            except (RuntimeError, ValueError):
+                retention_days = 30
+        if retention_days <= 0:
+            raise ValueError("retention_days must be positive")
+        self._retention = timedelta(days=int(retention_days))
 
     def submit_urls(
         self,
@@ -206,9 +221,44 @@ class IngestSubmissionService:
                         ContentItem.user_id == tenant.app_user_id,
                         ContentItem.platform == reference.platform,
                         ContentItem.platform_id == reference.platform_id,
-                    )
+                    ).with_for_update()
                 )
                 if existing is not None:
+                    restored_from_trash = False
+                    if getattr(existing, "deleted_at", None) is not None:
+                        now = db.scalar(select(func.now()))
+                        deleted_at = existing.deleted_at
+                        if getattr(existing, "purge_claimed_at", None) is not None or (
+                            deleted_at is not None
+                            and deleted_at + self._retention <= now
+                        ):
+                            return SaveItemResult(
+                                result_id=result_id,
+                                input_index=prepared.input_index,
+                                status="purge_in_progress",
+                                item_id=existing.id,
+                                state=existing.state,
+                                safe_error_code="purge_in_progress",
+                            )
+                        existing.deleted_at = None
+                        existing.delete_claim_token = uuid4().hex
+                        existing.purge_claimed_at = None
+                        existing.purge_attempts = 0
+                        existing.purge_error_code = None
+                        restored_from_trash = True
+                        if why_saved is not None:
+                            existing.why_saved = " ".join(why_saved.split())[:500] or None
+                        # A restored ready/no-text/capability item is visible
+                        # immediately and does not need a duplicate dispatch.
+                        if existing.state not in {"failed", "pending"}:
+                            db.commit()
+                            return SaveItemResult(
+                                result_id=result_id,
+                                input_index=prepared.input_index,
+                                status="restored",
+                                item_id=existing.id,
+                                state=existing.state,
+                            )
                     replay = db.scalar(
                         select(IngestDispatch).where(
                             IngestDispatch.item_id == existing.id,
@@ -216,6 +266,8 @@ class IngestSubmissionService:
                         )
                     )
                     if replay is not None:
+                        if restored_from_trash:
+                            db.commit()
                         return self._existing_result(
                             prepared, existing, replay
                         )
@@ -233,6 +285,8 @@ class IngestSubmissionService:
                         "running",
                         "completed",
                     }:
+                        if restored_from_trash:
+                            db.commit()
                         return self._already_exists(prepared, existing)
                     content = existing
                     content.state = "pending"
@@ -304,6 +358,173 @@ class IngestSubmissionService:
             item_id=item_id,
             state="pending",
         )
+
+    def retry_item(
+        self,
+        tenant: TenantContext,
+        item_id: int,
+        *,
+        request_key: str,
+    ) -> SaveItemResult:
+        """Queue one stable failed item for its next durable attempt.
+
+        The request key is trusted application state (thread/action/message),
+        never a model argument.  Replaying it returns the same dispatch
+        result and the active-dispatch partial index prevents concurrent
+        retries from creating two workers.
+        """
+
+        if not request_key.strip() or isinstance(item_id, bool):
+            raise ValueError("retry requires item id and request key")
+        try:
+            item_id = int(item_id)
+        except (TypeError, ValueError):
+            raise ValueError("retry requires item id and request key") from None
+        if item_id <= 0:
+            raise ValueError("retry requires item id and request key")
+        result_id = "A1"
+        try:
+            with self._session_factory() as db:
+                item = db.scalar(
+                    select(ContentItem)
+                    .where(ContentItem.id == item_id, ContentItem.user_id == tenant.app_user_id)
+                    .with_for_update()
+                )
+                if item is None or getattr(item, "deleted_at", None) is not None:
+                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, safe_error_code="item_not_found")
+                replay = db.scalar(
+                    select(IngestDispatch).where(
+                        IngestDispatch.item_id == item.id,
+                        IngestDispatch.request_key == request_key,
+                    )
+                )
+                if replay is not None:
+                    repaired = self._repair_retry_split_state(db, item, replay)
+                    if repaired:
+                        db.commit()
+                    return self._retry_result(item, replay)
+                latest = db.scalar(
+                    select(IngestDispatch)
+                    .where(IngestDispatch.item_id == item.id)
+                    .order_by(IngestDispatch.attempt.desc())
+                    .limit(1)
+                )
+                # A prior retry may have committed the dispatch failure but
+                # crashed before flipping the item back to ``failed``. Repair
+                # that split state even when this request uses a fresh key;
+                # otherwise a pending item would be permanently ineligible
+                # for retry after a transient database outage.
+                if (
+                    item.state == "pending"
+                    and latest is not None
+                    and latest.state == "failed"
+                    and latest.error_code == "queue_unavailable"
+                ):
+                    item.state = "failed"
+                    item.fail_reason = "queue_unavailable"
+                if item.state != "failed":
+                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+                if latest is not None and latest.state in {"pending", "enqueued", "running"}:
+                    return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+                item.state = "pending"
+                item.fail_reason = None
+                dispatch = IngestDispatch(
+                    public_id=uuid4().hex,
+                    item_id=item.id,
+                    request_key=request_key,
+                    attempt=(latest.attempt + 1) if latest is not None else 1,
+                    state="pending",
+                )
+                db.add(dispatch)
+                db.flush()
+                dispatch_id = dispatch.id
+                db.commit()
+        except IntegrityError:
+            with self._session_factory() as db:
+                item = db.get(ContentItem, item_id)
+                dispatch = db.scalar(
+                    select(IngestDispatch)
+                    .where(IngestDispatch.item_id == item_id, IngestDispatch.request_key == request_key)
+                )
+                if item is not None and dispatch is not None:
+                    return self._retry_result(item, dispatch)
+            return SaveItemResult(result_id, 0, "retry_not_allowed", item_id=item_id, safe_error_code="retry_not_allowed")
+        except Exception:
+            return SaveItemResult(result_id, 0, "create_failed", item_id=item_id, safe_error_code="create_failed")
+
+        try:
+            task_id = self._publisher(dispatch_id)
+        except Exception:
+            if not self._mark_retry_publish_failed(dispatch_id):
+                # The broker failed and the state transition could not be
+                # durably recorded.  Do not claim a stable retry outcome;
+                # admission will inspect/repair the row on the next attempt.
+                return SaveItemResult(
+                    result_id,
+                    0,
+                    "create_failed",
+                    item_id=item_id,
+                    safe_error_code="create_failed",
+                )
+            return SaveItemResult(result_id, 0, "queue_unavailable", item_id=item_id, state="failed", safe_error_code="queue_unavailable")
+        self._set_dispatch_state(dispatch_id, state="enqueued", task_id=task_id)
+        return SaveItemResult(result_id, 0, "queued", item_id=item_id, state="pending")
+
+    @staticmethod
+    def _retry_result(item: ContentItem, dispatch: IngestDispatch) -> SaveItemResult:
+        if dispatch.state in {"pending", "enqueued", "running"}:
+            return SaveItemResult("A1", 0, "queued", item_id=item.id, state=item.state)
+        if dispatch.state == "failed" and dispatch.error_code == "queue_unavailable":
+            return SaveItemResult("A1", 0, "queue_unavailable", item_id=item.id, state=item.state, safe_error_code="queue_unavailable")
+        return SaveItemResult("A1", 0, "retry_not_allowed", item_id=item.id, state=item.state, safe_error_code="retry_not_allowed")
+
+    @staticmethod
+    def _repair_retry_split_state(
+        db: Session, item: ContentItem, dispatch: IngestDispatch
+    ) -> bool:
+        """Repair a crash between queue failure and the state transaction.
+
+        A retry admission never treats ``pending item + failed dispatch`` as
+        a stable success.  If an older process left that split state, repair
+        both rows in the current transaction before reporting the durable
+        queue failure.
+        """
+
+        if dispatch.state == "failed" and dispatch.error_code == "queue_unavailable" and item.state == "pending":
+            item.state = "failed"
+            item.fail_reason = "queue_unavailable"
+            return True
+        return False
+
+    def _mark_retry_publish_failed(self, dispatch_id: int) -> bool:
+        """Atomically make a failed retry dispatch and item retryable."""
+
+        try:
+            with self._session_factory() as db:
+                dispatch = db.scalar(
+                    select(IngestDispatch)
+                    .where(IngestDispatch.id == dispatch_id)
+                    .with_for_update()
+                )
+                if dispatch is None:
+                    return False
+                item = db.scalar(
+                    select(ContentItem)
+                    .where(ContentItem.id == dispatch.item_id)
+                    .with_for_update()
+                )
+                if dispatch.state == "pending":
+                    dispatch.state = "failed"
+                    dispatch.error_code = "queue_unavailable"
+                if item is not None and item.state == "pending":
+                    item.state = "failed"
+                    item.fail_reason = "queue_unavailable"
+                db.commit()
+                return True
+        except Exception:
+            return False
+
+    retry_item_ingestion = retry_item
 
     @staticmethod
     def _already_exists(

@@ -23,6 +23,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.orm import sessionmaker
 
 from app.agent.actions import AgentActionServices
+from app.agent.management import KnowledgeItemManagementService
 from app.agent.runtime import AgentExecution, KnowledgeAgent
 from app.agent.services import KnowledgeNotFound, KnowledgeServices
 from app.agent.types import AgentAnswer, AgentRequest, Citation
@@ -358,6 +359,316 @@ async def test_signed_save_actions_are_durable_and_exactly_once(db_factory):
 
 
 @pytest.mark.asyncio
+async def test_channel_delete_confirmation_chain_survives_real_clarification(db_factory):
+    """A clarification turn advances the server anchor before confirmation.
+
+    This intentionally runs through ``ChannelService`` and persisted
+    ``ConversationTurn`` rows rather than calling the pending service
+    directly. A delayed confirmation must be accepted only when the latest
+    completed turn is B (the clarification), while the target remains the
+    server-owned payload created by A.
+    """
+
+    external_user = f"delete-chain-{uuid4().hex}"
+    first = ChannelEnvelope(
+        channel="telegram",
+        account_id="delete-chain-account",
+        external_user_id=external_user,
+        conversation_id="delete-chain-chat",
+        message_id="delete-A",
+        text="删除这个条目",
+    )
+    with db_factory() as db:
+        tenant = resolve_or_register(db, first)
+        item = ContentItem(
+            user_id=tenant.app_user_id,
+            platform="youtube",
+            platform_id=f"delete-chain-{uuid4().hex[:10]}",
+            kind="video",
+            url="https://youtu.be/delete-chain",
+            title="delete-chain",
+            text_source="none",
+            state="ready",
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+
+    action_services = AgentActionServices(
+        submission=IngestSubmissionService(db_factory, lambda _dispatch_id: "task"),
+        pending=PendingConfirmationService(db_factory),
+        management=KnowledgeItemManagementService(db_factory),
+    )
+
+    def model(messages, _info):
+        last_request = next(
+            message
+            for message in reversed(messages)
+            if isinstance(message, ModelRequest)
+        )
+        if any(isinstance(part, ToolReturnPart) for part in last_request.parts):
+            return ModelResponse(parts=[TextPart("discarded action prose")])
+        prompt = next(
+            str(part.content)
+            for part in last_request.parts
+            if isinstance(part, UserPromptPart)
+        )
+        if prompt == "删除这个条目":
+            tool_name, arguments = "delete_saved_items", {"item_ids": [item_id]}
+        elif prompt == "我还不确定":
+            tool_name, arguments = "clarify_item_deletion", {}
+        elif prompt == "确认" or prompt.startswith("确认删除"):
+            tool_name, arguments = "confirm_item_deletion", {}
+        else:
+            raise AssertionError(f"unexpected prompt: {prompt}")
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name,
+                    json.dumps(arguments),
+                    tool_call_id=f"{tool_name}-{prompt}",
+                )
+            ]
+        )
+
+    settings = replace(
+        Settings(),
+        agent_item_management_enabled=True,
+        agent_timeout_seconds=2,
+    )
+    agent = KnowledgeAgent(
+        FunctionModel(model),
+        settings,
+        lambda _request: object(),
+        action_factory=lambda _request: action_services,
+    )
+    service = ChannelService(db_factory, agent, settings)
+
+    first_answer = await service.handle(first)
+    assert first_answer.status == "ok"
+    assert first_answer.error_code == "confirmation_required"
+    assert first_answer.action_results == [{"status": "confirmation_required", "count": 1}]
+    code_match = re.search(r"确认删除 ([A-Z0-9]{6})", first_answer.text)
+    assert code_match is not None
+    confirmation_code = code_match.group(1)
+
+    second_answer = await service.handle(
+        replace(first, message_id="delete-B", text="我还不确定")
+    )
+    assert second_answer.status == "ok"
+    assert second_answer.error_code == "confirmation_required"
+    with db_factory() as db:
+        assert db.get(ContentItem, item_id).deleted_at is None
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id == "delete-chain-chat",
+            )
+        )
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert action is not None and action.consumed_at is None
+        assert action.payload["confirmation_anchor_message_id"] == "delete-B"
+        assert action.payload["confirmation_anchor_parent_message_id"] == "delete-A"
+
+    third_answer = await service.handle(
+        replace(first, message_id="delete-C", text=f"确认删除 {confirmation_code}")
+    )
+    assert third_answer.status == "ok"
+    assert third_answer.error_code == "items_deleted"
+    assert third_answer.action_results[0]["status"] == "deleted"
+    with db_factory() as db:
+        deleted = db.get(ContentItem, item_id)
+        assert deleted is not None and deleted.deleted_at is not None
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id == "delete-chain-chat",
+            )
+        )
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert action is not None and action.consumed_at is not None
+        assert action.payload["confirmation_anchor_message_id"] == "delete-C"
+        assert action.payload["confirmation_anchor_parent_message_id"] == "delete-B"
+
+
+@pytest.mark.asyncio
+async def test_channel_new_is_blocked_while_delete_effect_applies_then_recovers(db_factory):
+    """``/new`` cannot strand an applying delete claim.
+
+    Once the short effect lease is stale, a later confirmation can reclaim
+    the durable action and finish the idempotent soft delete in the same
+    conversation.
+    """
+
+    external_user = f"delete-new-{uuid4().hex}"
+    first = ChannelEnvelope(
+        channel="telegram",
+        account_id="delete-new-account",
+        external_user_id=external_user,
+        conversation_id="delete-new-chat",
+        message_id="delete-new-A",
+        text="删除这个条目",
+    )
+    with db_factory() as db:
+        tenant = resolve_or_register(db, first)
+        item = ContentItem(
+            user_id=tenant.app_user_id,
+            platform="youtube",
+            platform_id=f"delete-new-{uuid4().hex[:10]}",
+            kind="video",
+            url="https://youtu.be/delete-new",
+            title="delete-new",
+            text_source="none",
+            state="ready",
+        )
+        db.add(item)
+        db.commit()
+        item_id = item.id
+
+    action_services = AgentActionServices(
+        submission=IngestSubmissionService(db_factory, lambda _dispatch_id: "task"),
+        pending=PendingConfirmationService(db_factory),
+        management=KnowledgeItemManagementService(db_factory),
+    )
+
+    def model(messages, _info):
+        last_request = next(
+            message
+            for message in reversed(messages)
+            if isinstance(message, ModelRequest)
+        )
+        if any(isinstance(part, ToolReturnPart) for part in last_request.parts):
+            return ModelResponse(parts=[TextPart("discarded action prose")])
+        prompt = next(
+            str(part.content)
+            for part in last_request.parts
+            if isinstance(part, UserPromptPart)
+        )
+        if prompt == "删除这个条目":
+            tool_name, arguments = "delete_saved_items", {"item_ids": [item_id]}
+        elif prompt == "确认" or prompt.startswith("确认删除"):
+            tool_name, arguments = "confirm_item_deletion", {}
+        else:
+            raise AssertionError(f"unexpected prompt: {prompt}")
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    tool_name,
+                    json.dumps(arguments),
+                    tool_call_id=f"{tool_name}-{prompt}",
+                )
+            ]
+        )
+
+    settings = replace(
+        Settings(),
+        agent_item_management_enabled=True,
+        agent_timeout_seconds=2,
+    )
+    agent = KnowledgeAgent(
+        FunctionModel(model),
+        settings,
+        lambda _request: object(),
+        action_factory=lambda _request: action_services,
+    )
+    service = ChannelService(db_factory, agent, settings)
+
+    requested = await service.handle(first)
+    assert requested.error_code == "confirmation_required"
+    code_match = re.search(r"确认删除 ([A-Z0-9]{6})", requested.text)
+    assert code_match is not None
+    confirmation_code = code_match.group(1)
+    with db_factory() as db:
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id == "delete-new-chat",
+            )
+        )
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert action is not None
+        payload = dict(action.payload)
+        payload["effect_state"] = "applying"
+        payload["effect_claimed_at"] = datetime.now(UTC).isoformat()
+        payload["effect_claim_token"] = "manual-in-flight-claim"
+        action.payload = payload
+        db.commit()
+
+    blocked = await service.handle(replace(first, message_id="delete-new", text="/new"))
+    assert blocked.status == "failed"
+    assert blocked.error_code == "delete_in_progress"
+    with db_factory() as db:
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id == "delete-new-chat",
+            )
+        )
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert thread.closed_at is None
+        assert action is not None and action.cancelled_at is None
+        assert action.payload["effect_state"] == "applying"
+
+        stale_payload = dict(action.payload)
+        stale_payload["effect_claimed_at"] = (
+            datetime.now(UTC) - timedelta(minutes=2)
+        ).isoformat()
+        action.payload = stale_payload
+        db.commit()
+
+    recovered = await service.handle(
+        replace(
+            first,
+            message_id="delete-new-C",
+            text=f"确认删除 {confirmation_code}",
+        )
+    )
+    assert recovered.status == "ok"
+    assert recovered.error_code == "items_deleted"
+    with db_factory() as db:
+        deleted = db.get(ContentItem, item_id)
+        assert deleted is not None and deleted.deleted_at is not None
+        thread = db.scalar(
+            select(ConversationThread)
+            .join(ChannelIdentity)
+            .where(
+                ChannelIdentity.external_user_id == external_user,
+                ConversationThread.external_conversation_id == "delete-new-chat",
+            )
+        )
+        action = db.scalar(
+            select(PendingChannelAction).where(
+                PendingChannelAction.thread_id == thread.id
+            )
+        )
+        assert action is not None and action.consumed_at is not None
+
+
+@pytest.mark.asyncio
 async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory):
     """A durable pending batch must not turn a knowledge question into an action."""
 
@@ -373,7 +684,7 @@ async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory
         def __init__(self):
             self.calls = []
 
-        def search_segments(self, query, *, limit=6):
+        def search_segments(self, query, *, limit=10):
             self.calls.append((query, limit))
             return [citation]
 
@@ -428,9 +739,14 @@ async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory
                         tool_call_id="request-confirmation",
                     )
                 ]
-            )
+        )
         assert prompt == unrelated_question
-        observed_instructions.append(info.instructions)
+        # The same FunctionModel is used by the answer-only composer.  Its
+        # second request intentionally carries the bounded evidence prompt,
+        # not the pending-save state; observe only the retrieval-stage
+        # instruction under test.
+        if "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in info.instructions:
+            observed_instructions.append(info.instructions)
         return ModelResponse(
             parts=[
                 ToolCallPart(
@@ -491,15 +807,8 @@ async def test_unrelated_question_keeps_live_pending_action_unchanged(db_factory
     assert answer.status == "ok"
     assert answer.citations == [citation]
     assert knowledge.calls == [(unrelated_question, 10)]
-    assert len(observed_instructions) == 2
-    assert any(
-        "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in value
-        for value in observed_instructions
-    )
-    assert any(
-        "可用证据（仅可引用以下 ID）：" in value
-        for value in observed_instructions
-    )
+    assert len(observed_instructions) == 1
+    assert "可信服务器状态：当前 conversation 有 1 个视频等待保存确认。" in observed_instructions[0]
     assert published == []
     with db_factory() as db:
         action = db.get(PendingChannelAction, action_id)

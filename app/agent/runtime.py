@@ -7,7 +7,7 @@ import threading
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
 from enum import Enum
-from typing import Callable, Literal
+from typing import Annotated, Callable, Literal
 
 from pydantic_ai import (
     Agent,
@@ -32,6 +32,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.usage import RunUsage
+from pydantic import Field
 
 from app.agent.actions import (
     ActionInputMismatch,
@@ -72,6 +73,11 @@ INSTRUCTIONS = """
 8. 询问链接内容不代表保存意图，仍按知识检索规则处理。
 9. 多来源问题先比较 search_segments 返回的 excerpt、标题和来源；不要为每一个候选机械展开。
    同一视频的不同时间证据可保留，但不要编造章节标题。
+10. “我存了什么/库存/回收站”只能调用 list_saved_items 或 get_saved_item；
+    “修改收藏原因”调用 update_saved_item；删除必须先 delete_saved_items 再等待明确确认，
+    确认/取消/含糊分别调用 confirm_item_deletion/cancel_item_deletion/clarify_item_deletion；
+    恢复调用 restore_saved_items，失败重试调用 retry_item_ingestion。管理工具结果是终止结果，
+    不调用 search_segments，也不要把模糊标题直接当成 item_id。
 """.strip()
 
 
@@ -168,6 +174,7 @@ def build_agent(
     model: Model | str,
     *,
     tool_timeout: float = 15.0,
+    management_enabled: bool = False,
 ) -> Agent[AgentDeps, str]:
     def normal_retrieval_available(deps: AgentDeps) -> bool:
         if deps.retrieval_calls >= NORMAL_RETRIEVAL_CALLS_LIMIT:
@@ -270,6 +277,22 @@ def build_agent(
             "clarify_save_confirmation；"
             "明显无关的新问题按正常知识流程处理并保留待确认状态。"
             "不要为确认回复调用知识检索。"
+        )
+
+    @agent.instructions
+    def pending_delete_instruction(ctx: RunContext[AgentDeps]) -> str:
+        """Expose only count/kind for a trusted pending delete action."""
+
+        snapshot = ctx.deps.actions.pending_delete_snapshot()
+        if snapshot is None or not snapshot.active:
+            return ""
+        return (
+            "可信服务器状态：当前 conversation 有 "
+            f"{snapshot.count} 个条目等待删除确认。明确肯定调用 confirm_item_deletion；"
+            "明确否定调用 cancel_item_deletion；含糊调用 clarify_item_deletion。"
+            "不要从模型历史重建删除目标。"
+            + "当前用户消息必须包含服务端显示的确认码，否则请先重新发起删除，"
+            "不要猜测、复用旧确认或仅回复‘是/确认’。"
         )
 
     @agent.tool(prepare=prepare_search)
@@ -396,6 +419,107 @@ def build_agent(
         ctx.deps.tool_event("cancel_video_save", "succeeded", call_index, len(outcome.results))
         return outcome.tool_payload()
 
+    if management_enabled:
+        @agent.tool
+        def list_saved_items(
+            ctx: RunContext[AgentDeps],
+            kind: Literal["video", "article"] | None = None,
+            platform: Literal["youtube", "bilibili", "wechat_mp"] | None = None,
+            state: Literal[
+                "pending", "fetching", "needs_extension", "needs_asr", "chunking",
+                "embedding", "ready", "failed", "no_text",
+            ] | None = None,
+            location: Literal["library", "trash"] = "library",
+            limit: Annotated[int, Field(ge=1, le=50)] = 20,
+            cursor: Annotated[str | None, Field(max_length=512)] = None,
+        ) -> dict:
+            """List the current tenant's bounded inventory projection."""
+            outcome, call_index = execute_tool(
+                ctx.deps,
+                "list_saved_items",
+                lambda: ctx.deps.actions.list_saved_items(
+                    kind=kind, platform=platform, state=state,
+                    location=location, limit=limit, cursor=cursor,
+                ),
+            )
+            ctx.deps.tool_event("list_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def get_saved_item(
+            ctx: RunContext[AgentDeps], item_id: Annotated[int, Field(gt=0)]
+        ) -> dict:
+            """Read one item previously identified by the inventory list."""
+            outcome, call_index = execute_tool(ctx.deps, "get_saved_item", lambda: ctx.deps.actions.get_saved_item(item_id))
+            ctx.deps.tool_event("get_saved_item", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def update_saved_item(
+            ctx: RunContext[AgentDeps],
+            item_id: Annotated[int, Field(gt=0)],
+            why_saved: Annotated[str | None, Field(max_length=500)],
+        ) -> dict:
+            """Update or clear only the user's saved reason."""
+            outcome, call_index = execute_tool(ctx.deps, "update_saved_item", lambda: ctx.deps.actions.update_saved_item(item_id, why_saved))
+            ctx.deps.tool_event("update_saved_item", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def delete_saved_items(
+            ctx: RunContext[AgentDeps],
+            item_ids: Annotated[
+                list[Annotated[int, Field(gt=0)]],
+                Field(min_length=1, max_length=10),
+            ],
+        ) -> dict:
+            """Create a durable deletion confirmation; never deletes immediately."""
+            outcome, call_index = execute_tool(ctx.deps, "delete_saved_items", lambda: ctx.deps.actions.request_delete(item_ids))
+            ctx.deps.tool_event("delete_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def confirm_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
+            outcome, call_index = execute_tool(
+                ctx.deps,
+                "confirm_item_deletion",
+                ctx.deps.actions.confirm_delete,
+            )
+            ctx.deps.tool_event("confirm_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def clarify_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
+            outcome, call_index = execute_tool(ctx.deps, "clarify_item_deletion", ctx.deps.actions.clarify_delete)
+            ctx.deps.tool_event("clarify_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def cancel_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
+            outcome, call_index = execute_tool(ctx.deps, "cancel_item_deletion", ctx.deps.actions.cancel_delete)
+            ctx.deps.tool_event("cancel_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def restore_saved_items(
+            ctx: RunContext[AgentDeps],
+            item_ids: Annotated[
+                list[Annotated[int, Field(gt=0)]],
+                Field(min_length=1, max_length=10),
+            ],
+        ) -> dict:
+            outcome, call_index = execute_tool(ctx.deps, "restore_saved_items", lambda: ctx.deps.actions.restore_saved_items(item_ids))
+            ctx.deps.tool_event("restore_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
+        @agent.tool
+        def retry_item_ingestion(
+            ctx: RunContext[AgentDeps], item_id: Annotated[int, Field(gt=0)]
+        ) -> dict:
+            outcome, call_index = execute_tool(ctx.deps, "retry_item_ingestion", lambda: ctx.deps.actions.retry_item_ingestion(item_id))
+            ctx.deps.tool_event("retry_item_ingestion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
+            return outcome.tool_payload()
+
     return agent
 
 
@@ -472,6 +596,7 @@ class KnowledgeAgent:
         self._agent = build_agent(
             model,
             tool_timeout=settings.agent_tool_timeout_seconds,
+            management_enabled=settings.agent_item_management_enabled,
         )
         answer_model = composer_model or model
         self._composer = build_composer(
@@ -502,7 +627,7 @@ class KnowledgeAgent:
             services.set_diagnostics(diagnostics)
         action_services = (
             self._action_factory(request)
-            if self._settings.agent_save_enabled
+            if (self._settings.agent_save_enabled or self._settings.agent_item_management_enabled)
             and self._action_factory is not None
             else None
         )
@@ -510,6 +635,7 @@ class KnowledgeAgent:
             request,
             action_services,
             enabled=self._settings.agent_save_enabled,
+            management_enabled=self._settings.agent_item_management_enabled,
         )
         deps = AgentDeps(services, actions, diagnostics=diagnostics)
         diagnostics.event("agent_started", agent_phase="retrieval")
@@ -597,7 +723,7 @@ class KnowledgeAgent:
                 diagnostics,
                 log_event=False,
             )
-        except UnexpectedModelBehavior:
+        except UnexpectedModelBehavior as exc:
             if deps.actions.input_mismatch:
                 outcome = deps.actions.finalize_input_mismatch()
                 diagnostics.event(
@@ -613,8 +739,13 @@ class KnowledgeAgent:
                     ),
                     [],
                 )
+            diagnostics.event(
+                "agent_failed", error_code="runtime_error", exception=exc,
+                agent_phase="retrieval",
+            )
             return self._failure(
-                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error", diagnostics
+                request, "知识库暂时无法完成检索，请稍后重试。", "runtime_error", diagnostics,
+                log_event=False,
             )
         except KnowledgeNotFound:
             return self._failure(request, "请求的知识片段不存在。", "not_found", diagnostics)
@@ -643,11 +774,14 @@ class KnowledgeAgent:
                     thread_id=request.thread_public_id,
                     error_code=outcome.error_code,
                 ),
-                # The model's action prose is not trusted or needed for
-                # recovery. Persist only the canonical ActionOutcome on the
-                # conversation turn; pending confirmation is separately
-                # durable and tenant/thread-bound.
-                [],
+                # Management reads and outcomes are canonical, bounded
+                # server-rendered context for follow-up turns (for example,
+                # “next page” or “the second item”).  Save/pending actions
+                # retain the old empty-history contract so raw URLs and
+                # pending payloads never enter model history.
+                _canonical_history(request.question, outcome.text)
+                if outcome.history_visible
+                else [],
             )
 
         if deps.search_calls < 1:
