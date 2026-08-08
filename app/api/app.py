@@ -42,6 +42,7 @@ _SAFE_HTTP_CODES = frozenset(
         "item_archived",
         "retry_unavailable",
         "quota_exceeded",
+        "save_disabled",
         "empty_batch",
         "batch_too_large",
         "transcript_unavailable",
@@ -68,6 +69,7 @@ class CapabilitiesResponse(BaseModel):
         "telegram",
         "wechat",
     )
+    save_enabled: bool = True
     max_save_batch_size: int = MAX_SAVE_BATCH_SIZE
     transcript_pagination: bool = True
     archive: bool = True
@@ -94,6 +96,7 @@ _SAFE_MESSAGES = {
     "item_archived": "请先恢复该视频",
     "retry_unavailable": "当前状态不能重试",
     "quota_exceeded": "已达到当前保存额度，请稍后重试",
+    "save_disabled": "资料库当前为只读模式，暂时不能添加或重新整理视频",
     "empty_batch": "请至少添加一个链接",
     "batch_too_large": "一次最多添加 10 个链接",
     "transcript_unavailable": "全文暂不可用",
@@ -170,6 +173,7 @@ def create_app(
     expected_origin: str | None = None,
     cookie_secure: bool = True,
     publish_budget_seconds: float = 5.0,
+    save_enabled: bool = True,
     web_login_channels: tuple[str, ...] = ("telegram", "wechat"),
     static_dir: str | Path | None = None,
 ) -> FastAPI:
@@ -282,7 +286,10 @@ def create_app(
         tags=["public"],
     )
     def capabilities() -> CapabilitiesResponse:
-        return CapabilitiesResponse(web_login_channels=public_login_channels)
+        return CapabilitiesResponse(
+            web_login_channels=public_login_channels,
+            save_enabled=save_enabled,
+        )
 
     if services is not None:
         app.include_router(
@@ -311,6 +318,7 @@ def create_app(
                 services.submission,
                 services.transcript,
                 publish_budget_seconds=publish_budget_seconds,
+                save_enabled=save_enabled,
                 scope_dependency=authenticated_scope,
             )
         )

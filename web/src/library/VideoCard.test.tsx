@@ -50,8 +50,21 @@ describe("video card", () => {
       </MemoryRouter>,
     );
 
-    expect(screen.getByText("正在等待视频信息")).toBeInTheDocument();
-    expect(screen.getByText("等待处理")).toBeInTheDocument();
+    expect(screen.getByText("视频信息尚未准备好")).toBeInTheDocument();
+    expect(screen.getByText("等待整理")).toBeInTheDocument();
+    expect(screen.getByText("暂无封面")).toBeInTheDocument();
+    expect(screen.queryByText("YT")).not.toBeInTheDocument();
     expect(screen.queryByText("未知作者")).not.toBeInTheDocument();
+  });
+
+  it("uses the same retry action wording as the detail page", () => {
+    render(
+      <MemoryRouter>
+        <VideoCard item={{ ...baseItem, lifecycle: "failed", available_actions: ["retry"] }} />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByText("打开详情后可重新整理")).toBeInTheDocument();
+    expect(screen.queryByText(/安全重试/)).not.toBeInTheDocument();
   });
 });

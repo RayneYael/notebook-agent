@@ -10,3 +10,8 @@
 
 # Nested unified-diff artifacts require one-space blank context lines.
 *.patch -whitespace
+
+# OpenAPI artifacts are generated and byte-compared. Keep their line endings
+# stable on Windows so core.autocrlf cannot create false contract drift.
+web/src/api/openapi.json text eol=lf
+web/src/api/schema.d.ts text eol=lf

@@ -52,6 +52,8 @@ _ERRORS = frozenset({
     "delete_in_progress",
     "save_confirmation_required", "save_cancelled", "save_partial", "save_accepted",
     "save_failed", "save_unavailable", "invalid_url", "batch_too_large", "empty_batch",
+    "channel_unavailable", "challenge_invalid", "challenge_expired",
+    "challenge_used", "account_disabled", "web_login_unavailable",
 })
 
 
@@ -103,9 +105,10 @@ class DailySizeRotatingFileHandler(RotatingFileHandler):
         self._stdout_handler = stdout_handler
         self._reported_failure = False
         directory.mkdir(mode=0o750, parents=True, exist_ok=True)
-        os.chmod(directory, 0o750)
-        if os.stat(directory).st_mode & 0o777 != 0o750:
-            raise PermissionError("log directory mode could not be secured")
+        if os.name != "nt":
+            os.chmod(directory, 0o750)
+            if os.stat(directory).st_mode & 0o777 != 0o750:
+                raise PermissionError("log directory mode could not be secured")
         super().__init__(
             self._path_for_day(self._active_day), maxBytes=max_bytes,
             backupCount=backup_count, encoding="utf-8", delay=False,
@@ -131,9 +134,10 @@ class DailySizeRotatingFileHandler(RotatingFileHandler):
     def _open(self):
         stream = super()._open()
         try:
-            os.chmod(self.baseFilename, 0o640)
-            if os.stat(self.baseFilename).st_mode & 0o777 != 0o640:
-                raise PermissionError("log file mode could not be secured")
+            if os.name != "nt":
+                os.chmod(self.baseFilename, 0o640)
+                if os.stat(self.baseFilename).st_mode & 0o777 != 0o640:
+                    raise PermissionError("log file mode could not be secured")
             return stream
         except Exception:
             try:

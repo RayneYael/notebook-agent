@@ -11,6 +11,7 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, loginChannel, onLogout, logoutPending = false }: AppShellProps) {
+  const loginChannelLabel = loginChannel === "telegram" ? "Telegram" : "微信";
   return (
     <div className="app-shell">
       <a className="skip-link" href="#main-content">跳到主要内容</a>
@@ -21,12 +22,15 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
             <span>Notebook Agent</span>
           </Link>
           <details className="account-menu">
-            <summary aria-label="打开账户菜单">
-              <span aria-hidden="true">{loginChannel === "telegram" ? "TG" : "WX"}</span>
+            <summary aria-label={`打开账户菜单，当前登录方式：${loginChannelLabel}`}>
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <circle cx="12" cy="8" r="3.25" />
+                <path d="M5.75 19c.7-3.3 2.8-5 6.25-5s5.55 1.7 6.25 5" />
+              </svg>
             </summary>
             <div className="account-popover">
-              <p className="eyebrow">当前登录</p>
-              <strong>{loginChannel === "telegram" ? "Telegram" : "微信"}</strong>
+              <p className="eyebrow">登录方式</p>
+              <strong>{loginChannelLabel}</strong>
               <button disabled={logoutPending} onClick={onLogout}>退出登录</button>
             </div>
           </details>

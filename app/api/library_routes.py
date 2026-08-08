@@ -81,6 +81,8 @@ def _safe_service_errors():
     except LibraryNotFound as exc:
         raise HTTPException(status_code=404, detail=exc.error_code) from None
     except LibraryConflict as exc:
+        if exc.error_code == "save_disabled":
+            raise HTTPException(status_code=503, detail=exc.error_code) from None
         if exc.error_code == "quota_exceeded":
             raise HTTPException(
                 status_code=429,
@@ -140,6 +142,7 @@ def build_library_router(
     transcript,
     *,
     publish_budget_seconds: float,
+    save_enabled: bool = True,
     scope_dependency: Callable,
 ) -> APIRouter:
     """Build routes with an explicit authenticated-scope injection point."""
@@ -152,6 +155,10 @@ def build_library_router(
         dependencies=[Security(_session_cookie_schema)],
         responses={422: {"model": ErrorResponse}},
     )
+
+    def require_save_enabled() -> None:
+        if not save_enabled:
+            raise HTTPException(status_code=503, detail="save_disabled")
 
     @router.get("/library/items", response_model=LibraryPageResponse)
     def list_items(
@@ -184,13 +191,18 @@ def build_library_router(
                 is_true_first_empty=result.is_true_first_empty,
             )
 
-    @router.post("/library/items:batch", response_model=BatchSaveResponse)
+    @router.post(
+        "/library/items:batch",
+        response_model=BatchSaveResponse,
+        responses={503: {"model": ErrorResponse}},
+    )
     def save_batch(
         body: BatchSaveRequest,
         idempotency_key: IdempotencyKey,
         _csrf_token: CsrfHeader,
         scope=Depends(scope_dependency),
     ) -> BatchSaveResponse:
+        require_save_enabled()
         with _safe_service_errors():
             result = submission.submit_urls(
                 scope,
@@ -250,7 +262,10 @@ def build_library_router(
     @router.post(
         "/library/items/{item_public_id}:retry",
         response_model=LibraryItemResponse,
-        responses={429: {"model": ErrorResponse}},
+        responses={
+            429: {"model": ErrorResponse},
+            503: {"model": ErrorResponse},
+        },
     )
     def retry(
         item_public_id: PublicId,
@@ -258,12 +273,14 @@ def build_library_router(
         _csrf_token: CsrfHeader,
         scope=Depends(scope_dependency),
     ) -> LibraryItemResponse:
+        require_save_enabled()
         with _safe_service_errors():
             return _item(
                 library.retry(
                     scope,
                     item_public_id,
                     request_key=_request_key(scope, idempotency_key),
+                    publish_budget_seconds=publish_budget_seconds,
                 )
             )
 

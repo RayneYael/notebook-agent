@@ -51,11 +51,14 @@ describe("video detail", () => {
     );
 
     expect(screen.getByRole("heading", { name: "章节" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "原始全文" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "完整字幕" })).toBeInTheDocument();
+    expect(screen.getByText("来自原视频字幕")).toBeInTheDocument();
+    expect(screen.queryByText(/搜索切片/)).not.toBeInTheDocument();
     expect(screen.getByText("记录不是终点，理解才是。")).toBeInTheDocument();
     expect(screen.getByText("原视频作者提供的简介，不是 AI 摘要。")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: /摘要/ })).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "继续加载全文" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续加载字幕" })).toBeInTheDocument();
+    expect(screen.getByText("中文")).toBeInTheDocument();
     expect(container.querySelector("img")).toHaveAttribute("width", "960");
     expect(container.querySelector("img")).toHaveAttribute("height", "540");
     expect(container.querySelector("img")).toHaveAttribute("fetchpriority", "high");
@@ -74,7 +77,7 @@ describe("video detail", () => {
       />,
     );
 
-    expect(screen.getByRole("heading", { name: "已有摘要" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "摘要" })).toBeInTheDocument();
     expect(screen.getByText("这是此前已经存储的摘要。")).toBeInTheDocument();
   });
 
@@ -90,7 +93,7 @@ describe("video detail", () => {
         onUpdateWhySaved={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "重新处理" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "重新整理" })).toBeInTheDocument();
 
     rerender(
       <VideoDetailView
@@ -103,7 +106,7 @@ describe("video detail", () => {
         onUpdateWhySaved={vi.fn()}
       />,
     );
-    expect(screen.queryByRole("button", { name: "重新处理" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重新整理" })).not.toBeInTheDocument();
   });
 
   it("distinguishes transcript and action failures from genuinely empty content", () => {
@@ -124,13 +127,13 @@ describe("video detail", () => {
     );
 
     expect(screen.getByRole("alert", { name: "视频操作失败" })).toHaveTextContent(
-      "操作没有完成",
+      "操作未完成",
     );
-    expect(screen.getByRole("alert", { name: "全文加载失败" })).toHaveTextContent(
-      "全文暂时无法加载",
+    expect(screen.getByRole("alert", { name: "字幕加载失败" })).toHaveTextContent(
+      "字幕暂时无法加载",
     );
     expect(screen.queryByText("这段视频没有可显示的字幕。")).not.toBeInTheDocument();
-    screen.getByRole("button", { name: "重新加载全文" }).click();
+    screen.getByRole("button", { name: "重新加载字幕" }).click();
     expect(retryTranscript).toHaveBeenCalledOnce();
   });
 
@@ -148,7 +151,7 @@ describe("video detail", () => {
       />,
     );
 
-    expect(screen.getByText("正在加载原始全文…")).toBeInTheDocument();
+    expect(screen.getByText("正在加载字幕…")).toBeInTheDocument();
     expect(screen.queryByText("这段视频没有可显示的字幕。")).not.toBeInTheDocument();
   });
 
@@ -171,14 +174,45 @@ describe("video detail", () => {
     );
 
     await user.click(screen.getByRole("button", { name: "编辑" }));
-    const input = screen.getByRole("textbox", { name: "为什么保存" });
+    const input = screen.getByRole("textbox", { name: "保存说明" });
     await user.clear(input);
     await user.type(input, "新的保存原因");
     await user.click(screen.getByRole("button", { name: "保存说明" }));
-    expect(await screen.findByRole("textbox", { name: "为什么保存" })).toBeInTheDocument();
+    expect(await screen.findByRole("textbox", { name: "保存说明" })).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "保存说明" }));
-    expect(screen.queryByRole("textbox", { name: "为什么保存" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("textbox", { name: "保存说明" })).not.toBeInTheDocument();
     expect(updateWhySaved).toHaveBeenCalledTimes(2);
+  });
+
+  it("maps language codes and cover placeholders to user-facing copy", () => {
+    const { rerender } = render(
+      <VideoDetailView
+        item={{ ...item, lang: "zh-Hans", cover_url: null }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    expect(screen.getByText("简体中文")).toBeInTheDocument();
+    expect(screen.getByText("暂无封面")).toBeInTheDocument();
+    expect(screen.queryByText(/ZH-HANS|YT/)).not.toBeInTheDocument();
+
+    rerender(
+      <VideoDetailView
+        item={{ ...item, lang: "x-private", cover_url: null }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+    expect(screen.queryByText(/X-PRIVATE/)).not.toBeInTheDocument();
   });
 });

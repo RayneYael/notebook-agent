@@ -5,13 +5,19 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import inspect
+import time
 from typing import Any, Literal, Protocol
 from uuid import uuid4
 
 from sqlalchemy import asc, desc, func, or_, select
 from sqlalchemy.orm import Session
 
-from app.ingest.submission import IngestQuotaExceeded, IngestQuotaPolicy
+from app.ingest.submission import (
+    MIN_REMAINING_PUBLISH_BUDGET_SECONDS,
+    IngestQuotaExceeded,
+    IngestQuotaPolicy,
+)
 from app.models import ContentItem, IngestDispatch
 
 
@@ -154,10 +160,23 @@ class ContentLibraryService:
         publisher: Callable[..., str | None],
         *,
         quota_policy: IngestQuotaPolicy | None = None,
+        save_enabled: bool = True,
     ) -> None:
         self._session_factory = session_factory
         self._publisher = publisher
         self._quota_policy = quota_policy or IngestQuotaPolicy()
+        self._save_enabled = bool(save_enabled)
+        try:
+            signature = inspect.signature(publisher)
+            self._publisher_accepts_budget = (
+                "remaining_budget_seconds" in signature.parameters
+                or any(
+                    value.kind is inspect.Parameter.VAR_KEYWORD
+                    for value in signature.parameters.values()
+                )
+            )
+        except (TypeError, ValueError):
+            self._publisher_accepts_budget = False
 
     def list_items(
         self,
@@ -283,9 +302,19 @@ class ContentLibraryService:
         item_public_id: str,
         *,
         request_key: str,
+        publish_budget_seconds: float | None = None,
     ) -> LibraryItemDTO:
+        if not self._save_enabled:
+            raise LibraryConflict("save_disabled")
         if not request_key.strip():
             raise ValueError("request key is required")
+        if publish_budget_seconds is not None and publish_budget_seconds <= 0:
+            raise ValueError("publish budget must be positive")
+        publish_deadline = (
+            time.monotonic() + float(publish_budget_seconds)
+            if publish_budget_seconds is not None
+            else None
+        )
         with self._session_factory() as db:
             if not self._quota_policy.acquire_locks(
                 db, scope.app_user_id
@@ -333,8 +362,24 @@ class ContentLibraryService:
             db.flush()
             dispatch_id = dispatch.id
             db.commit()
+        remaining_budget = (
+            publish_deadline - time.monotonic()
+            if publish_deadline is not None
+            else None
+        )
         try:
-            task_id = self._publisher(dispatch_id)
+            if (
+                remaining_budget is not None
+                and remaining_budget <= MIN_REMAINING_PUBLISH_BUDGET_SECONDS
+            ):
+                raise TimeoutError("broker_publish_timeout")
+            if self._publisher_accepts_budget and remaining_budget is not None:
+                task_id = self._publisher(
+                    dispatch_id,
+                    remaining_budget_seconds=remaining_budget,
+                )
+            else:
+                task_id = self._publisher(dispatch_id)
         except Exception:
             self._set_dispatch(
                 dispatch_id,
@@ -426,9 +471,17 @@ class ContentLibraryService:
             result.setdefault(dispatch.item_id, dispatch)
         return result
 
-    @staticmethod
-    def _dto(item: ContentItem, latest: IngestDispatch | None) -> LibraryItemDTO:
+    def _dto(self, item: ContentItem, latest: IngestDispatch | None) -> LibraryItemDTO:
         projection = project_lifecycle(item, latest)
+        available_actions = (
+            tuple(
+                action
+                for action in projection.available_actions
+                if action != "retry"
+            )
+            if not self._save_enabled
+            else projection.available_actions
+        )
         return LibraryItemDTO(
             public_id=item.public_id,
             platform=item.platform,
@@ -448,7 +501,7 @@ class ContentLibraryService:
             text_source=item.text_source,
             lifecycle=projection.state,
             error_code=projection.error_code,
-            available_actions=projection.available_actions,
+            available_actions=available_actions,
             latest_dispatch_public_id=latest.public_id if latest is not None else None,
         )
 

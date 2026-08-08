@@ -73,8 +73,8 @@ class Library:
         self.calls.append(("restore", scope, public_id))
         return self._result()
 
-    def retry(self, scope, public_id, *, request_key):
-        self.calls.append(("retry", scope, public_id, request_key))
+    def retry(self, scope, public_id, *, request_key, publish_budget_seconds):
+        self.calls.append(("retry", scope, public_id, request_key, publish_budget_seconds))
         return self._result()
 
     def get_dispatch(self, scope, public_id):
@@ -162,7 +162,14 @@ class Transcript:
         )
 
 
-def client_for(library=None, submission=None, transcript=None, *, user_id=7):
+def client_for(
+    library=None,
+    submission=None,
+    transcript=None,
+    *,
+    user_id=7,
+    save_enabled=True,
+):
     from app.api.library_routes import build_library_router
 
     library = library or Library()
@@ -175,6 +182,7 @@ def client_for(library=None, submission=None, transcript=None, *, user_id=7):
             submission,
             transcript,
             publish_budget_seconds=0.25,
+            save_enabled=save_enabled,
             scope_dependency=lambda: UserScope(user_id),
         )
     )
@@ -328,11 +336,32 @@ def test_patch_archive_restore_retry_dispatch_and_transcript_contracts():
     assert library.calls[2][0] == "restore"
     assert library.calls[3][:3] == ("retry", UserScope(7), "item-public")
     assert library.calls[3][3].startswith("web:7:")
+    assert library.calls[3][4] == 0.25
     assert dispatch.json()["item_public_id"] == "item-public"
     assert page.json()["next_cursor"] == "opaque-next"
     assert transcript.calls == [
         (UserScope(7), "item-public", {"limit": 12, "cursor": "opaque-current"})
     ]
+
+
+def test_read_only_mode_blocks_batch_and_retry_before_service_calls():
+    client, library, submission, _ = client_for(save_enabled=False)
+
+    with client:
+        batch = client.post(
+            "/api/v1/library/items:batch",
+            headers={"Idempotency-Key": "read-only", "X-CSRF-Token": "csrf"},
+            json={"urls": ["https://youtu.be/dQw4w9WgXcQ"]},
+        )
+        retry = client.post(
+            "/api/v1/library/items/item-public:retry",
+            headers={"Idempotency-Key": "read-only", "X-CSRF-Token": "csrf"},
+        )
+
+    assert batch.status_code == retry.status_code == 503
+    assert batch.json() == retry.json() == {"detail": "save_disabled"}
+    assert submission.calls == []
+    assert library.calls == []
 
 
 def test_service_failures_map_to_safe_404_409_and_422_statuses():

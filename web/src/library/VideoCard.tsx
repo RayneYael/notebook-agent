@@ -16,12 +16,12 @@ export function formatDuration(seconds: number | null): string | null {
 
 export function VideoCard({ item }: { item: LibraryItem }) {
   const duration = formatDuration(item.duration_sec);
-  const title = item.title?.trim() || "正在等待视频信息";
+  const title = item.title?.trim() || "视频信息尚未准备好";
   return (
     <article className="video-card" data-lifecycle={item.lifecycle}>
       <Link className="video-card__link" to={`/videos/${item.public_id}`} aria-label={`${title}，查看详情`}>
         <div className="video-card__cover">
-          {item.cover_url ? <img src={item.cover_url} alt="" width={960} height={540} loading="lazy" decoding="async" /> : <div className="cover-placeholder" aria-hidden="true"><span>YT</span></div>}
+          {item.cover_url ? <img src={item.cover_url} alt="" width={960} height={540} loading="lazy" decoding="async" /> : <div className="cover-placeholder" aria-hidden="true"><span>暂无封面</span></div>}
           {duration ? <span className="duration-badge">{duration}</span> : null}
         </div>
         <div className="video-card__body">
@@ -32,7 +32,7 @@ export function VideoCard({ item }: { item: LibraryItem }) {
           <h2>{title}</h2>
           {item.author ? <p className="video-card__author">{item.author}</p> : null}
           {item.why_saved ? <blockquote>{item.why_saved}</blockquote> : null}
-          {item.lifecycle === "failed" ? <p className="card-hint">可在详情页安全重试</p> : null}
+          {item.lifecycle === "failed" ? <p className="card-hint">打开详情后可重新整理</p> : null}
         </div>
       </Link>
     </article>

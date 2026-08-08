@@ -162,6 +162,11 @@
             "title": "Max Save Batch Size",
             "type": "integer"
           },
+          "save_enabled": {
+            "default": true,
+            "title": "Save Enabled",
+            "type": "boolean"
+          },
           "summary_generation": {
             "default": false,
             "title": "Summary Generation",
@@ -1750,6 +1755,16 @@
               }
             },
             "description": "Too Many Requests"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "security": [
@@ -1817,6 +1832,16 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
         "security": [

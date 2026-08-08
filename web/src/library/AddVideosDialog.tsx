@@ -11,13 +11,13 @@ interface AddVideosDialogProps {
 }
 
 const resultCopy: Record<string, string> = {
-  queued: "已加入队列",
-  already_exists: "已在资料库中",
+  queued: "已添加，等待整理",
+  already_exists: "资料库中已有此视频",
   unsupported_url: "暂不支持这个链接",
   invalid_url: "链接格式不正确",
-  queue_unavailable: "队列暂时不可用",
-  create_failed: "保存失败，请稍后重试",
-  quota_exceeded: "已达到当前保存额度",
+  queue_unavailable: "暂时无法开始整理，请稍后重试",
+  create_failed: "添加失败，请稍后重试",
+  quota_exceeded: "已达到保存上限",
 };
 
 export function AddVideosDialog({
@@ -54,7 +54,7 @@ export function AddVideosDialog({
     event.preventDefault();
     const urls = rawUrls.split(/\r?\n/).map((value) => value.trim()).filter(Boolean);
     if (urls.length === 0) {
-      setError("请至少添加一个 YouTube 链接。");
+      setError("请至少粘贴一个 YouTube 链接。");
       return;
     }
     if (urls.length > 10) {
@@ -71,7 +71,7 @@ export function AddVideosDialog({
       onSubmitted?.(nextResult);
     } catch {
       if (submissionGeneration !== submissionGenerationRef.current) return;
-      setError("这次提交没有完成，请检查网络后重试。");
+      setError("添加未完成，请检查网络后重试。");
     } finally {
       if (submissionGeneration === submissionGenerationRef.current) setSubmitting(false);
     }
@@ -90,20 +90,19 @@ export function AddVideosDialog({
       <form className="add-form" onSubmit={handleSubmit}>
         <header className="dialog-header">
           <div>
-            <p className="eyebrow">批量保存 · 最多 10 个</p>
+            <p className="eyebrow">一次最多添加 10 个</p>
             <h2 id="add-dialog-title">添加 YouTube 视频</h2>
           </div>
-          <button className="icon-button" type="button" aria-label="关闭" onClick={onClose}>×</button>
+          <button className="icon-button" type="button" aria-label="关闭添加视频窗口" onClick={onClose}>×</button>
         </header>
         <label className="field">
-          <span>视频链接，每行一个</span>
+          <span>YouTube 链接，每行一个</span>
           <textarea
             name="urls"
             autoComplete="off"
             spellCheck={false}
             rows={6}
             value={rawUrls}
-            placeholder="https://www.youtube.com/watch?v=…"
             onChange={(event) => setRawUrls(event.target.value)}
           />
         </label>
@@ -114,23 +113,23 @@ export function AddVideosDialog({
             autoComplete="off"
             value={whySaved}
             maxLength={500}
-            placeholder="例如：周末精读，准备项目调研"
+            placeholder="例如：用于周末精读或项目调研"
             onChange={(event) => setWhySaved(event.target.value)}
           />
         </label>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
         {result ? (
-          <ol className="submission-results" aria-label="提交结果" aria-live="polite">
+          <ol className="submission-results" aria-label="添加结果" aria-live="polite">
             {result.results.map((item) => (
               <li key={`${item.input_index}-${item.status}`} data-status={item.status}>
-                <span>{item.input_index + 1}</span>
-                <strong>{resultCopy[item.status] ?? "请求已处理"}</strong>
+                <span>第 {item.input_index + 1} 个链接</span>
+                <strong>{resultCopy[item.status] ?? "未能确认处理结果，请稍后查看资料库"}</strong>
               </li>
             ))}
           </ol>
         ) : null}
         <button className="button button--primary button--wide" disabled={submitting} type="submit">
-          {submitting ? "正在提交…" : "开始整理"}
+          {submitting ? "正在添加…" : "添加并整理"}
         </button>
       </form>
     </dialog>

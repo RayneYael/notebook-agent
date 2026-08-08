@@ -33,3 +33,4 @@ output/playwright/
 
 # Local Codex/OMX runtime state
 .omx/
+.gstack/

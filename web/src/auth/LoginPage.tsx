@@ -79,27 +79,27 @@ export function LoginPage({
           <span>Notebook Agent</span>
         </a>
         <p className="eyebrow">你的私人视频资料库</p>
-        <h1 id="login-title">把稍后再看，变成真正读过。</h1>
-        <p className="login-intro">用你已经在使用的聊天账号确认身份。浏览器不会要求密码，也不会创建假的渠道账号。</p>
+        <h1 id="login-title">登录你的视频资料库</h1>
+        <p className="login-intro">使用已经绑定的聊天账号确认身份，无需设置新密码。</p>
 
         {challenge ? (
           <div className="challenge-card" aria-live="polite">
             <span className="step-number">01</span>
             <div>
-              <p>在 {challenge.target_channel === "telegram" ? "Telegram" : "微信"} 中发送：</p>
+              <p>请在 {challenge.target_channel === "telegram" ? "Telegram" : "微信"} 中发送这条登录指令：</p>
               <code>{challenge.command}</code>
               <p className="muted">
                 {exchange.isSuccess
                   ? "登录已确认，正在打开资料库…"
-                  : "确认后，本页会自动进入资料库。登录码 10 分钟内有效。"}
+                  : "发送后请留在本页；确认完成会自动进入资料库。这条登录指令会在短时间后失效。"}
               </p>
             </div>
           </div>
         ) : capabilities.isPending ? (
-          <p className="muted" aria-live="polite">正在读取可用登录方式…</p>
+          <p className="muted" aria-live="polite">正在加载登录方式…</p>
         ) : capabilities.isError ? (
           <div>
-            <p className="inline-error" role="alert">无法读取可用登录方式，请重试。</p>
+            <p className="inline-error" role="alert">登录方式暂时无法加载，请检查网络后重试。</p>
             <button
               className="button button--quiet button--wide"
               type="button"
@@ -132,15 +132,17 @@ export function LoginPage({
         )}
         {loginFailed ? (
           <div>
-            <p className="inline-error" role="alert">登录请求没有完成，请重新开始。</p>
+            <p className="inline-error" role="alert">
+              {challenge ? "登录没有完成，请重新获取登录指令。" : "暂时无法开始登录，请重试。"}
+            </p>
             {challenge ? (
               <button className="button button--quiet button--wide" type="button" onClick={restartLogin}>
-                重新开始
+                重新获取
               </button>
             ) : null}
           </div>
         ) : null}
-        <p className="privacy-note">登录令牌只保存在安全 Cookie 中，不写入浏览器存储。</p>
+        <p className="privacy-note">登录后只会显示你自己的资料库。</p>
       </section>
     </main>
   );

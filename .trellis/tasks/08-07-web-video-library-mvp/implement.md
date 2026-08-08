@@ -85,7 +85,7 @@
 - [x] Run frontend lint, typecheck, unit tests, and production build.
 - [ ] Run Alembic upgrade/current/check plus isolated downgrade/upgrade/backfill
   evidence when PostgreSQL is available.
-- [ ] Use the live-test ownership workflow for dev server and browser smoke;
+- [x] Use the live-test ownership workflow for dev server and browser smoke;
   capture a 390x844 screenshot, console/network errors, responsive overflow,
   keyboard flow, and the core route journey.
 - [x] Run `git diff --check` and Trellis validation.

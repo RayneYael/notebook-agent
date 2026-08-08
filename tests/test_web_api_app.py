@@ -90,7 +90,12 @@ class UnusedService:
         raise AssertionError(f"unexpected service call: {name}")
 
 
-def make_client(*, static_dir: Path | None = None, library=None):
+def make_client(
+    *,
+    static_dir: Path | None = None,
+    library=None,
+    save_enabled: bool = True,
+):
     auth = FakeAuth()
     library = library or FakeLibrary()
     app = create_app(
@@ -103,6 +108,7 @@ def make_client(*, static_dir: Path | None = None, library=None):
         expected_origin=ORIGIN,
         cookie_secure=True,
         publish_budget_seconds=1.0,
+        save_enabled=save_enabled,
         static_dir=static_dir,
     )
     client = TestClient(app, base_url=ORIGIN)
@@ -264,8 +270,9 @@ def test_every_protected_mutation_requires_origin_fetch_metadata_and_bound_csrf(
 
 def test_retry_quota_is_a_safe_429_with_a_bounded_retry_hint():
     class QuotaLibrary(FakeLibrary):
-        def retry(self, _scope, _public_id, *, request_key):
+        def retry(self, _scope, _public_id, *, request_key, publish_budget_seconds):
             assert request_key.startswith("web:7:")
+            assert publish_budget_seconds == 1.0
             raise LibraryConflict("quota_exceeded")
 
     client, _ = make_client(library=QuotaLibrary())
@@ -291,6 +298,38 @@ def test_retry_quota_is_a_safe_429_with_a_bounded_retry_hint():
     assert response.json() == {
         "code": "quota_exceeded",
         "message": "已达到当前保存额度，请稍后重试",
+    }
+
+
+def test_global_save_switch_returns_a_safe_read_only_error_before_writes():
+    client, _ = make_client(save_enabled=False)
+    client.cookies.set(
+        CSRF_COOKIE_NAME,
+        "csrf-secret",
+        domain="kb.example.test",
+        path="/",
+    )
+    headers = {
+        "Origin": ORIGIN,
+        "Sec-Fetch-Site": "same-origin",
+        "X-CSRF-Token": "csrf-secret",
+        "Idempotency-Key": "read-only",
+    }
+
+    batch = client.post(
+        "/api/v1/library/items:batch",
+        headers=headers,
+        json={"urls": ["https://youtu.be/dQw4w9WgXcQ"]},
+    )
+    retry = client.post(
+        "/api/v1/library/items/item-public:retry",
+        headers=headers,
+    )
+
+    assert batch.status_code == retry.status_code == 503
+    assert batch.json() == retry.json() == {
+        "code": "save_disabled",
+        "message": "资料库当前为只读模式，暂时不能添加或重新整理视频",
     }
 
 

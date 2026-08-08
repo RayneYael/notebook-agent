@@ -145,6 +145,105 @@ def test_retry_rejects_active_dispatch_without_publishing():
     assert published == []
 
 
+def test_retry_is_disabled_by_the_global_save_switch_before_database_access():
+    published = []
+    service = ContentLibraryService(
+        lambda: (_ for _ in ()).throw(AssertionError("database must stay untouched")),
+        lambda value: published.append(value) or "task",
+        save_enabled=False,
+    )
+
+    with pytest.raises(LibraryConflict) as caught:
+        service.retry(
+            SimpleNamespace(app_user_id=7),
+            "item-public",
+            request_key="user:retry:read-only",
+            publish_budget_seconds=0.25,
+        )
+
+    assert caught.value.error_code == "save_disabled"
+    assert published == []
+
+
+def test_retry_passes_the_remaining_web_budget_to_the_broker_publisher(monkeypatch):
+    class RetrySession(ScalarSession):
+        def add(self, value):
+            self.added = value
+            value.id = 72
+
+        def flush(self):
+            return None
+
+        def commit(self):
+            return None
+
+    db = RetrySession([item(state="failed"), None, dispatch(state="failed")])
+    observed = []
+
+    def publish(dispatch_id, *, remaining_budget_seconds):
+        observed.append((dispatch_id, remaining_budget_seconds))
+        return "task"
+
+    service = ContentLibraryService(lambda: db, publish)
+    monkeypatch.setattr(service, "_set_dispatch", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(service, "get_item", lambda *_args, **_kwargs: "updated")
+
+    result = service.retry(
+        SimpleNamespace(app_user_id=7),
+        "item-public",
+        request_key="user:retry:budget",
+        publish_budget_seconds=0.25,
+    )
+
+    assert result == "updated"
+    assert observed[0][0] == 72
+    assert 0 < observed[0][1] <= 0.25
+
+
+def test_retry_marks_the_dispatch_unavailable_when_web_budget_is_exhausted(
+    monkeypatch,
+):
+    class RetrySession(ScalarSession):
+        def add(self, value):
+            self.added = value
+            value.id = 72
+
+        def flush(self):
+            return None
+
+        def commit(self):
+            return None
+
+    db = RetrySession([item(state="failed"), None, dispatch(state="failed")])
+    published = []
+    transitions = []
+    service = ContentLibraryService(
+        lambda: db,
+        lambda dispatch_id, **kwargs: published.append((dispatch_id, kwargs)),
+    )
+    clock = iter((10.0, 10.3))
+    monkeypatch.setattr("app.web.library.time.monotonic", lambda: next(clock))
+    monkeypatch.setattr(
+        service,
+        "_set_dispatch",
+        lambda *args, **kwargs: transitions.append((args, kwargs)),
+    )
+    monkeypatch.setattr(service, "get_item", lambda *_args, **_kwargs: "updated")
+
+    result = service.retry(
+        SimpleNamespace(app_user_id=7),
+        "item-public",
+        request_key="user:retry:exhausted",
+        publish_budget_seconds=0.25,
+    )
+
+    assert result == "updated"
+    assert published == []
+    assert transitions == [
+        ((72, 7, "failed"), {"error_code": "queue_unavailable"})
+    ]
+
+
 def test_retry_uses_the_shared_active_ingest_quota_before_publishing():
     class RejectingQuota:
         def acquire_locks(self, _db, _app_user_id):

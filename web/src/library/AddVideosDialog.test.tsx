@@ -34,25 +34,27 @@ describe("add videos dialog", () => {
 
     const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
     await user.type(
-      within(dialog).getByLabelText("视频链接，每行一个"),
+      within(dialog).getByLabelText("YouTube 链接，每行一个"),
       "https://youtu.be/dQw4w9WgXcQ\nhttps://example.com/nope",
     );
     await user.type(within(dialog).getByLabelText("为什么保存（可选）"), "准备周末精读");
-    await user.click(within(dialog).getByRole("button", { name: "开始整理" }));
+    await user.click(within(dialog).getByRole("button", { name: "添加并整理" }));
 
     expect(submit).toHaveBeenCalledWith({
       urls: ["https://youtu.be/dQw4w9WgXcQ", "https://example.com/nope"],
       why_saved: "准备周末精读",
     });
-    expect(await within(dialog).findByText("已加入队列")).toBeInTheDocument();
+    expect(await within(dialog).findByText("已添加，等待整理")).toBeInTheDocument();
     expect(within(dialog).getByText("暂不支持这个链接")).toBeInTheDocument();
-    expect(within(dialog).getByText("已达到当前保存额度")).toBeInTheDocument();
-    expect(within(dialog).getByRole("list", { name: "提交结果" })).toHaveAttribute(
+    expect(within(dialog).getByText("已达到保存上限")).toBeInTheDocument();
+    expect(within(dialog).getByText("第 1 个链接")).toBeInTheDocument();
+    expect(within(dialog).queryByText(/队列暂时不可用|请求已处理/)).not.toBeInTheDocument();
+    expect(within(dialog).getByRole("list", { name: "添加结果" })).toHaveAttribute(
       "aria-live",
       "polite",
     );
-    expect(within(dialog).getByLabelText("视频链接，每行一个")).toHaveAttribute("name", "urls");
-    expect(within(dialog).getByLabelText("视频链接，每行一个")).toHaveAttribute("autocomplete", "off");
+    expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("name", "urls");
+    expect(within(dialog).getByLabelText("YouTube 链接，每行一个")).toHaveAttribute("autocomplete", "off");
     expect(within(dialog).getByLabelText("为什么保存（可选）")).toHaveAttribute("name", "why-saved");
   });
 
@@ -62,10 +64,10 @@ describe("add videos dialog", () => {
 
     render(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
     await user.type(
-      screen.getByLabelText("视频链接，每行一个"),
+      screen.getByLabelText("YouTube 链接，每行一个"),
       Array.from({ length: 11 }, (_, index) => `https://youtu.be/video${index}`).join("\n"),
     );
-    await user.click(screen.getByRole("button", { name: "开始整理" }));
+    await user.click(screen.getByRole("button", { name: "添加并整理" }));
 
     expect(submit).not.toHaveBeenCalled();
     expect(screen.getByRole("alert")).toHaveTextContent("一次最多添加 10 个链接");
@@ -82,18 +84,18 @@ describe("add videos dialog", () => {
       <AddVideosDialog open onClose={() => undefined} submitBatch={submit} />,
     );
 
-    await user.type(screen.getByLabelText("视频链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
     await user.type(screen.getByLabelText("为什么保存（可选）"), "准备周末精读");
-    await user.click(screen.getByRole("button", { name: "开始整理" }));
-    expect(await screen.findByText("已加入队列")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "添加并整理" }));
+    expect(await screen.findByText("已添加，等待整理")).toBeInTheDocument();
 
     rerender(<AddVideosDialog open={false} onClose={() => undefined} submitBatch={submit} />);
     await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
     rerender(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
 
-    expect(screen.getByLabelText("视频链接，每行一个")).toHaveValue("");
+    expect(screen.getByLabelText("YouTube 链接，每行一个")).toHaveValue("");
     expect(screen.getByLabelText("为什么保存（可选）")).toHaveValue("");
-    expect(screen.queryByText("已加入队列")).not.toBeInTheDocument();
+    expect(screen.queryByText("已添加，等待整理")).not.toBeInTheDocument();
   });
 
   it("ignores a submission result that arrives after closing", async () => {
@@ -122,8 +124,8 @@ describe("add videos dialog", () => {
       <AddVideosDialog open onClose={() => undefined} submitBatch={submit} />,
     );
 
-    await user.type(screen.getByLabelText("视频链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
-    await user.click(screen.getByRole("button", { name: "开始整理" }));
+    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.click(screen.getByRole("button", { name: "添加并整理" }));
     rerender(<AddVideosDialog open={false} onClose={() => undefined} submitBatch={submit} />);
     await act(async () => {
       resolveSubmit({
@@ -140,7 +142,7 @@ describe("add videos dialog", () => {
     });
     rerender(<AddVideosDialog open onClose={() => undefined} submitBatch={submit} />);
 
-    expect(screen.queryByText("已加入队列")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "开始整理" })).toBeEnabled();
+    expect(screen.queryByText("已添加，等待整理")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加并整理" })).toBeEnabled();
   });
 });

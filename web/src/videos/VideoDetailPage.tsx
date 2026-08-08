@@ -48,8 +48,14 @@ export function VideoDetailPage() {
   return (
     <>
       <Link className="back-link" to="/library">← 返回资料库</Link>
-      {item.isPending ? <LibraryLoadingState /> : null}
-      {item.isError ? <LibraryErrorState onRetry={() => void item.refetch()} /> : null}
+      {item.isPending ? <LibraryLoadingState label="正在加载视频详情" /> : null}
+      {item.isError ? (
+        <LibraryErrorState
+          onRetry={() => void item.refetch()}
+          title="暂时无法加载视频详情"
+          description="请检查网络后重新加载。"
+        />
+      ) : null}
       {item.data ? (
         <VideoDetailView
           item={item.data}

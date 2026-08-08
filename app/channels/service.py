@@ -101,32 +101,44 @@ class ChannelService:
 
         with self._session_factory() as db:
             tenant = resolve_or_register(db, envelope)
-            if command == "web-login":
-                db.commit()
-                if self._web_auth is None:
-                    return AgentAnswer(
-                        status="failed",
-                        text="网页登录当前不可用，请稍后重试。",
-                        error_code="web_login_unavailable",
-                    )
-                try:
-                    self._web_auth.approve(argument, tenant)
-                except WebAuthError as exc:
-                    return AgentAnswer(
-                        status="failed",
-                        text=str(exc),
-                        error_code=exc.code,
-                    )
-                return AgentAnswer(
-                    status="ok",
-                    text="网页登录已批准，请返回浏览器继续。",
-                )
             diagnostics = RequestDiagnostics.start(
-                envelope.request_id, tenant.app_user_id, envelope.trace_id,
+                envelope.request_id,
+                tenant.app_user_id,
+                envelope.trace_id,
                 allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
                 environment=self._settings.notebook_agent_env,
             )
             diagnostics.event("accepted")
+            if command == "web-login":
+                diagnostics.event("route", route="command")
+                db.commit()
+                if self._web_auth is None:
+                    return self._response_ready(
+                        diagnostics,
+                        AgentAnswer(
+                            status="failed",
+                            text="网页登录当前不可用，请稍后重试。",
+                            error_code="web_login_unavailable",
+                        ),
+                    )
+                try:
+                    self._web_auth.approve(argument, tenant)
+                except WebAuthError as exc:
+                    return self._response_ready(
+                        diagnostics,
+                        AgentAnswer(
+                            status="failed",
+                            text=str(exc),
+                            error_code=exc.code,
+                        ),
+                    )
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="ok",
+                        text="网页登录已批准，请返回浏览器继续。",
+                    ),
+                )
             if command == "start":
                 diagnostics.event("route", route="command")
                 db.commit()

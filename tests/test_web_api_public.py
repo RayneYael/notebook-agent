@@ -31,6 +31,7 @@ def test_public_health_capabilities_and_openapi_are_safe():
     assert capabilities.json() == {
         "supported_platforms": ["youtube"],
         "web_login_channels": ["telegram", "wechat"],
+        "save_enabled": True,
         "max_save_batch_size": 10,
         "transcript_pagination": True,
         "archive": True,
@@ -60,6 +61,16 @@ def test_capabilities_only_advertise_configured_login_channels():
 
     assert capabilities.status_code == 200
     assert capabilities.json()["web_login_channels"] == ["telegram"]
+
+
+def test_capabilities_advertise_read_only_mode_without_hiding_library_reads():
+    app = _load_create_app()(save_enabled=False)
+
+    with TestClient(app, base_url="https://testserver") as client:
+        capabilities = client.get("/api/v1/capabilities")
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["save_enabled"] is False
 
 
 @pytest.mark.parametrize(

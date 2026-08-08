@@ -10,6 +10,7 @@ import { challengePollInterval, LoginPage } from "./LoginPage";
 const capabilities: Capabilities = {
   supported_platforms: ["youtube"],
   web_login_channels: ["telegram", "wechat"],
+  save_enabled: true,
   max_save_batch_size: 10,
   transcript_pagination: true,
   archive: true,
@@ -45,7 +46,12 @@ describe("login page", () => {
     await user.click(await screen.findByRole("button", { name: "使用 Telegram 登录" }));
 
     expect(createChallenge).toHaveBeenCalledWith("telegram");
+    expect(screen.getByRole("heading", { name: "登录你的视频资料库" })).toBeInTheDocument();
+    expect(screen.getByText("请在 Telegram 中发送这条登录指令：")).toBeInTheDocument();
     expect(await screen.findByText("/web-login ABCD-EFGH")).toBeInTheDocument();
+    expect(screen.getByText(/这条登录指令会在短时间后失效/)).toBeInTheDocument();
+    expect(screen.queryByText(/10 分钟/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Cookie|令牌/)).not.toBeInTheDocument();
     expect(screen.queryByText("browser-only-secret")).not.toBeInTheDocument();
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
@@ -113,8 +119,8 @@ describe("login page", () => {
     );
 
     await user.click(await screen.findByRole("button", { name: "使用 Telegram 登录" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("登录请求没有完成，请重新开始");
-    await user.click(screen.getByRole("button", { name: "重新开始" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录没有完成，请重新获取登录指令");
+    await user.click(screen.getByRole("button", { name: "重新获取" }));
 
     expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeEnabled();
     expect(screen.queryByText("/web-login ABCD-EFGH")).not.toBeInTheDocument();
@@ -157,7 +163,7 @@ describe("login page", () => {
       </QueryClientProvider>,
     );
 
-    expect(await screen.findByRole("alert")).toHaveTextContent("无法读取可用登录方式");
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录方式暂时无法加载");
     expect(screen.queryByRole("button", { name: "使用 Telegram 登录" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "重试" }));
     expect(await screen.findByRole("button", { name: "使用微信登录" })).toBeEnabled();

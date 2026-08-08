@@ -24,6 +24,7 @@ def settings(**overrides):
         "web_origin": "https://kb.example.test",
         "web_cookie_secure": True,
         "web_publish_budget_seconds": 1.5,
+        "agent_save_enabled": True,
         "web_static_dir": "web/dist",
         "ingest_max_active_per_user": 10,
         "ingest_daily_new_item_limit": 50,
@@ -69,6 +70,22 @@ def test_runtime_exposes_only_the_enabled_login_channels():
 
     assert response.status_code == 200
     assert response.json()["web_login_channels"] == ["wechat"]
+
+
+def test_runtime_applies_the_global_save_switch_to_web_capabilities():
+    app = build_web_app(
+        settings(agent_save_enabled=False),
+        session_factory=lambda: None,
+        publisher=lambda _dispatch_id: "task",
+        object_store=object(),
+        mount_static=False,
+    )
+
+    with TestClient(app, base_url="https://testserver") as client:
+        response = client.get("/api/v1/capabilities")
+
+    assert response.status_code == 200
+    assert response.json()["save_enabled"] is False
 
 
 @pytest.mark.parametrize(

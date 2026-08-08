@@ -85,6 +85,7 @@ def build_web_app(
             factory,
             publisher,
             quota_policy=submission.quota_policy,
+            save_enabled=settings.agent_save_enabled,
         ),
         submission=submission,
         transcript=TranscriptService(factory, store),
@@ -94,6 +95,7 @@ def build_web_app(
         expected_origin=settings.web_origin,
         cookie_secure=True,
         publish_budget_seconds=settings.web_publish_budget_seconds,
+        save_enabled=settings.agent_save_enabled,
         web_login_channels=settings.web_login_channels,
         static_dir=settings.web_static_dir if mount_static else None,
     )

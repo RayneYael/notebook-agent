@@ -160,9 +160,12 @@ cd ..
 | `WEB_AUTH_SECRET` | Web 必需 | 独立的至少 32 字符随机密钥；不得复用 gateway secret |
 | `WEB_ORIGIN` | Web 必需 | 浏览器看到的精确 HTTPS origin，不含末尾 `/` 或路径 |
 | `WEB_COOKIE_SECURE` | Web 必需 | 保持 `true`；`__Host-` session/CSRF cookie 依赖它 |
+| `WEB_LOGIN_CHANNELS` / `WEB_AUTH_*_TTL_SECONDS` / `WEB_AUTH_ATTEMPT_LIMIT` | Web 必需 | 可用登录渠道、challenge/session 有效期和登录码最大尝试次数；默认渠道为 Telegram + 微信 |
 | `WEB_AUTH_RATE_*` / `WEB_AUTH_*_RETENTION_SECONDS` | Web 必需 | 登录 challenge 的请求者/全局/活动数限流和有界过期清理；保留期不得短于限流窗口 |
 | `WEB_HOST` / `WEB_PORT` | Web 必需 | 默认仅绑定 `127.0.0.1:8000`，由本机 TLS proxy 转发 |
 | `WEB_STATIC_DIR` | Web 必需 | React production build；默认 `web/dist` |
+| `WEB_PUBLISH_BUDGET_SECONDS` | Web 必需 | 单次 Web batch/retry 的 broker 发布总预算，必须为正数 |
+| `WEB_FORWARDED_ALLOW_IPS` | Web 必需 | 仅列出可信反向代理地址；禁止空值和 `*`，默认仅 `127.0.0.1` |
 
 指南后半部分是完整变量字典，标明消费者、默认值、适用场景、secret 属性和重启范围。
 根 `.env`、stdio 的进程级 `MCP_TOKEN`、LangBot plugin 私有 `.env` 是三个不同边界，
@@ -632,7 +635,11 @@ systemd 日志中不应出现问题正文、证据全文、平台 token 或外�
 | Notebook Agent gateway / CLI | `.runtime/logs/notebook-agent-YYYY-MM-DD.log` 与启动终端 | `/var/log/notebook-agent/notebook-agent-YYYY-MM-DD.log` 与 systemd journal | 同一条结构化 INFO 事件同时写 stdout 和每日文件。`NOTEBOOK_AGENT_LOG_DIR` 只控制 Notebook Agent 文件目录。 |
 | LangBot bridge plugin | LangBot plugin 详情页中的有界 stderr 日志 | 同左 | bridge 是独立子进程，**没有 bridge 日志文件**，也不把事件复制进 LangBot core 每日文件。 |
 
-Notebook Agent 文件目录权限为 `0750`，文件权限为 `0640`。文件按日期和大小轮转，默认单文件上限
+在 POSIX 主机上，Notebook Agent 文件目录权限为 `0750`，文件权限为 `0640`；Windows
+使用部署账户继承的 NTFS ACL，不把 POSIX mode 当作有效权限证明。Windows 上线前必须用
+`icacls <NOTEBOOK_AGENT_LOG_DIR>` 确认只有部署账户、`SYSTEM` 和本机管理员可读取；未完成这项检查时，
+保持 `NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false`，并把该目录视为可能泄露检索内容的风险项。
+文件按日期和大小轮转，默认单文件上限
 10 MiB、保留 5 个备份，可通过 `NOTEBOOK_AGENT_LOG_MAX_BYTES` 与
 `NOTEBOOK_AGENT_LOG_BACKUP_COUNT` 调整。文件初始化或后续写入失败时，gateway 继续运行，并在
 stdout/journal 输出一次 `file_logging_unavailable`；成功启用时可看到 `runtime_logging_enabled`。
@@ -789,11 +796,16 @@ WHERE deleted_at IS NOT NULL;
 
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
-3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false` 并安装新的 Python 依赖。
+3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false`，重启或停止 gateway 与 `web-server`，确认 Web capability 已进入只读模式，再安装新的 Python 依赖。
 4. 执行 `alembic upgrade head`，确认 revision `e5f6a7b8c9d0`。
-5. 先启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
-6. 再启动 gateway 与 `web-server` 并检查 health、schema、CLI ask 和 Web 只读路径。
-7. 最后开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED`、重启 gateway 与 `web-server`，再启动 plugin/LangBot。
+5. 在 `web/` 执行 `corepack pnpm install --frozen-lockfile`、`check:api`、`test`、
+   `typecheck`、`lint` 与 `build`，禁止继续提供旧的 `web/dist`。
+6. 启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 queue、CA、Redis 与 MinIO readiness。
+7. 启动 gateway 并检查 health、schema 与 CLI ask。
+8. 启动 `web-server`，从精确 HTTPS origin 检查 `/api/v1/health`、首页、详情页刷新，
+    并确认未知 `/api/*` 返回 JSON 404 而不是 SPA HTML。
+9. 开启 `AGENT_SAVE_ENABLED` 与 `AGENT_ITEM_MANAGEMENT_ENABLED` 并重启 gateway 与 `web-server`。
+10. 最后启动 plugin/LangBot，并按第 8 节验证 required-plugin 与 adapter readiness。
 
 保存路径异常时先设置 `AGENT_SAVE_ENABLED=false` 并重启 gateway 与 `web-server`；这会保留只读检索和
 Web why/archive/restore，同时阻止 channel 与 Web 创建新的 pending action、ContentItem 和 dispatch。
