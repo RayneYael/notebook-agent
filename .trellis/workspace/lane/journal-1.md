@@ -137,3 +137,24 @@ Connected Vercel Production to GitHub main, upgraded Neon to d4e5f6a7b8c9, docum
 ### Status
 
 [OK] **Completed**
+
+
+## Session 6: Tenant-scoped MCP server
+
+**Date**: 2026-08-08
+**Task**: Tenant-scoped MCP server
+**Branch**: `codex/mcp-server-optional-langbot`
+
+### Summary
+
+Added the official MCP v2 stdio and Streamable HTTP adapter, tenant-bound hash-only grants, scope-gated tools, fail-closed mutation readiness, MiXer path-token compatibility, CLI lifecycle operations, durable delete safety, documentation, code-specs, and protocol-level tests.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `c11c9d1` | (see git log) |
+
+### Status
+
+[OK] **Completed**
