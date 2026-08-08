@@ -3,7 +3,7 @@
   "name": "frontend-delivery-integration",
   "title": "Frontend delivery integration and separation",
   "description": "Integrate completed Web UI work, audit the combined frontend, and make the existing web package deployable independently while preserving same-origin authentication.",
-  "status": "in_progress",
+  "status": "review",
   "dev_type": "integration",
   "scope": "frontend-delivery",
   "package": "web",
@@ -15,8 +15,8 @@
   "branch": "codex/frontend-delivery-integration",
   "base_branch": "main",
   "worktree_path": "C:/Users/raede/.codex/worktrees/frontend-delivery-integration",
-  "commit": null,
-  "pr_url": null,
+  "commit": "ef9dec6c0fce939b74e39338dc2b9954c9e39f5b",
+  "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
   "children": [],
   "parent": "08-07-web-video-library-mvp",
@@ -27,6 +27,6 @@
     "docs/environment-configuration.md",
     "docs/deployment.md"
   ],
-  "notes": "The Web code is already a private standalone application package. This task must preserve same-origin cookies and CSRF while allowing the static frontend and Python API to run on separate deployment services.",
+  "notes": "Ready for upstream review. The Web code remains a standalone application package inside the monorepo; static frontend and Python API services may deploy separately behind one HTTPS origin. PR 2 is open and intentionally unmerged. Remaining gates are isolated PostgreSQL validation, live Telegram/WeChat acceptance, the real backend origin, and maintainer-owned Vercel authorization.",
   "meta": {}
 }

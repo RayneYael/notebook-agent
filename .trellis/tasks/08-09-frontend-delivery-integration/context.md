@@ -110,3 +110,15 @@
   `timeout <= 0.35` boundary. With the required placeholder test environment,
   the MCP suite reproduced exactly that one failure. Updating the assertion to
   the new one-second inspect limit produced `18 passed`.
+
+## 2026-08-09 fork and PR handoff
+
+- Verified `origin/codex/web-video-library-mvp@f29b982` was an ancestor of the
+  integration head, then fast-forwarded that fork branch to `ef9dec6` without
+  rewriting history. Neither local nor remote `main` was updated.
+- Updated the existing upstream PR 2 instead of opening a duplicate. It is open,
+  non-draft, and mergeable, and explicitly states that maintainers must review
+  and merge it. No merge action was performed.
+- The only reported check failure is the external Vercel repository-owner
+  authorization link. The PR records that as an environment/ownership gate,
+  not as a passing deployment claim.

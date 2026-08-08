@@ -38,8 +38,8 @@
 
 ## Gate 4 - Handoff
 
-- [ ] Create Lore commits with source integration and delivery-boundary intent.
-- [ ] Fast-forward the existing fork PR branch from the verified integration
+- [x] Create Lore commits with source integration and delivery-boundary intent.
+- [x] Fast-forward the existing fork PR branch from the verified integration
   head; do not push or update `main`.
-- [ ] Update the existing upstream PR without merging; include architecture decision,
+- [x] Update the existing upstream PR without merging; include architecture decision,
   verification, and external deployment gates.
