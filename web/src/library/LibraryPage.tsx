@@ -11,7 +11,7 @@ import type { BatchSubmitInput, BatchSubmitResponse, Capabilities, LibraryPageRe
 import { AddVideosDialog } from "./AddVideosDialog";
 import { collectCollectionNames } from "./collections";
 import { LibraryEmptyState, LibraryErrorState, LibraryLoadingState } from "./LibraryStates";
-import { shouldPollLibrary } from "./lifecycle";
+import { estimateWorkItemProgress, isLibraryWorkItem, shouldPollLibrary } from "./lifecycle";
 import { VideoCard } from "./VideoCard";
 
 interface LibraryPageProps {
@@ -73,6 +73,9 @@ export function LibraryPage({
     selectedCollection ? `#${selectedCollection}` : null,
   ]);
   const totalPages = library.data ? Math.max(1, Math.ceil(library.data.total / library.data.page_size)) : 1;
+  const readableItems = library.data?.items.filter((item) => !isLibraryWorkItem(item)) ?? [];
+  const workItems = library.data?.items.filter(isLibraryWorkItem) ?? [];
+  const workProgress = estimateWorkItemProgress(workItems);
 
   function changeFilter(next: string) {
     setLifecycle(next);
@@ -166,9 +169,38 @@ export function LibraryPage({
       {library.isSuccess && library.data.items.length > 0 ? (
         <>
           <div className="library-summary"><span>{library.data.total} 个视频</span>{shouldPollLibrary(library.data.items) ? <span className="live-note" aria-live="polite"><i />正在自动更新状态</span> : null}</div>
-          <div className="video-grid">
-            {library.data.items.map((item) => <VideoCard item={item} key={item.public_id} />)}
-          </div>
+          {readableItems.length > 0 ? (
+            <section className="library-ready-zone" aria-label="可阅读视频">
+              <div className="video-grid">
+                {readableItems.map((item) => <VideoCard item={item} key={item.public_id} />)}
+              </div>
+            </section>
+          ) : null}
+          {workItems.length > 0 ? (
+            <section className="library-work-zone" aria-labelledby="library-work-zone-title">
+              <header className="library-work-zone__header">
+                <div>
+                  <p className="eyebrow">整理状态</p>
+                  <h2 id="library-work-zone-title">整理队列</h2>
+                </div>
+                <span>{workItems.length} 个视频</span>
+              </header>
+              <p className="library-work-zone__note">
+                整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。
+              </p>
+              <div className="video-grid">
+                {workItems.map((item) => <VideoCard item={item} key={item.public_id} />)}
+              </div>
+              <div className="work-progress">
+                <div className="work-progress__label">
+                  <span>当前整理进度</span>
+                  <strong>约 {workProgress}%</strong>
+                </div>
+                <progress aria-label="当前整理进度" max="100" value={workProgress} />
+                <small>根据当前处理阶段估算</small>
+              </div>
+            </section>
+          ) : null}
           {totalPages > 1 ? (
             <nav className="pagination" aria-label="资料库分页">
               <button className="button button--ghost" disabled={page <= 1} onClick={() => setPage((value) => Math.max(1, value - 1))}>上一页</button>

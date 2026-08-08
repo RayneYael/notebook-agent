@@ -17,3 +17,27 @@ export function shouldPollLibrary(
 ): boolean {
   return items.some(({ lifecycle }) => lifecycle === "queued" || lifecycle === "processing");
 }
+
+const workItemProgress: Partial<Record<LibraryLifecycle, number>> = {
+  queued: 20,
+  processing: 65,
+  needs_action: 100,
+  failed: 100,
+};
+
+export function isLibraryWorkItem(
+  item: Pick<LibraryItemSummary, "lifecycle">,
+): boolean {
+  return workItemProgress[item.lifecycle] !== undefined;
+}
+
+export function estimateWorkItemProgress(
+  items: ReadonlyArray<Pick<LibraryItemSummary, "lifecycle">>,
+): number {
+  if (items.length === 0) return 0;
+  const total = items.reduce(
+    (sum, item) => sum + (workItemProgress[item.lifecycle] ?? 0),
+    0,
+  );
+  return Math.round(total / items.length);
+}

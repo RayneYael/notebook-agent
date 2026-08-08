@@ -81,3 +81,24 @@
   browser, opening the menu set `open`, clicking the Telegram text inside kept
   it open, and clicking the library heading removed `open`. The 5175 deliverable
   tab is left open with the account popover expanded for direct user review.
+
+## 2026-08-09 processing-area hierarchy follow-up
+
+- Owner remained `/root`; full checks, the existing 5175 preview, and its
+  viewport override were handled serially without touching 5173 or 5174.
+- TDD RED proved the old library lacked separate readable/work regions. The
+  minimal implementation groups queued, processing, action-required, and
+  failed items in a lower `整理队列`, while ready items remain above and move
+  there automatically through the existing four-second query polling.
+- The progress indicator is deliberately approximate: queued 20%, processing
+  65%, and terminal action-required/failed states 100%, averaged and rounded.
+  It describes the current workflow stage, not a promise of successful output.
+- Final verification: 13 frontend test files / 54 tests passed; TypeScript,
+  ESLint, OpenAPI stale check, and the Vite production build passed. Desktop
+  browser evidence showed four ready cards, two work cards, a 77px separation,
+  a fine solid divider, progress 83%, and no horizontal overflow.
+- The browser was calibrated to an actual 391x844 viewport for the narrow
+  smoke: both regions remained ordered, the queue header stayed inside its
+  339px content width, progress remained 83%, and no horizontal overflow was
+  present. The viewport override was reset afterward and the 5175 deliverable
+  returned to desktop sizing for user review.

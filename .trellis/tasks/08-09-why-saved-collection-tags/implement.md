@@ -51,6 +51,15 @@
 - [x] Run the shell regression test, full frontend checks, rebuild 5175, and
   verify outside/inside clicks in the browser before committing.
 
+## Gate 7 - Processing-area hierarchy follow-up
+
+- [x] RED: prove readable videos and work items render in separate regions,
+  with explanatory copy and an approximate progress value.
+- [x] GREEN: partition lifecycle states and render a restrained lower queue
+  section without changing API or polling contracts.
+- [x] Verify desktop/mobile layout, progress semantics, full frontend checks,
+  and the refreshed isolated preview before committing.
+
 ## Validation Commands
 
 ```powershell

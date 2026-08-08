@@ -80,6 +80,41 @@ describe("library page", () => {
     expect(screen.getByRole("button", { name: "搜索" })).toHaveTextContent("搜索");
   });
 
+  it("separates work items below readable videos and shows approximate progress", async () => {
+    const processingItem: LibraryItem = {
+      ...readyItem,
+      public_id: "processing-video",
+      title: "正在整理的视频",
+      lifecycle: "processing",
+    };
+    const failedItem: LibraryItem = {
+      ...readyItem,
+      public_id: "failed-video",
+      title: "整理失败的视频",
+      lifecycle: "failed",
+    };
+    renderPage(async () => ({
+      items: [processingItem, readyItem, failedItem],
+      total: 3,
+      page: 1,
+      page_size: 20,
+      is_true_first_empty: false,
+    }));
+
+    const readableRegion = await screen.findByRole("region", { name: "可阅读视频" });
+    expect(within(readableRegion).getByText("理解比收藏重要")).toBeInTheDocument();
+    expect(within(readableRegion).queryByText("正在整理的视频")).not.toBeInTheDocument();
+    expect(within(readableRegion).queryByText("整理失败的视频")).not.toBeInTheDocument();
+
+    const workRegion = screen.getByRole("region", { name: "整理队列" });
+    expect(within(workRegion).getByText("正在整理的视频")).toBeInTheDocument();
+    expect(within(workRegion).getByText("整理失败的视频")).toBeInTheDocument();
+    expect(within(workRegion).queryByText("理解比收藏重要")).not.toBeInTheDocument();
+    expect(within(workRegion).getByText("整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。")).toBeInTheDocument();
+    expect(within(workRegion).getByRole("progressbar", { name: "当前整理进度" })).toHaveAttribute("value", "83");
+    expect(within(workRegion).getByText("约 83%")).toBeInTheDocument();
+  });
+
   it("shows the server-owned read-only state instead of opening the add flow", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
