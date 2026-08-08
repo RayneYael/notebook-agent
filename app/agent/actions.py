@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 from dataclasses import asdict, dataclass
 from typing import Annotated, Literal
 
@@ -27,6 +26,7 @@ from app.ingest.submission import (
     BatchValidationError,
     IngestSubmissionService,
     normalize_item_reference,
+    parse_message_references,
 )
 
 
@@ -559,12 +559,7 @@ class AgentActionRuntime:
         return self._finish(self._failure("invalid_url"))
 
     def _urls_match_message_batch(self, urls: list[str]) -> bool:
-        current = [
-            value.rstrip(".,!?)]}，。！？》」")
-            for value in re.findall(
-                r"https?://[^\s<>]+", self._request.question
-            )
-        ]
+        current = list(parse_message_references(self._request.question).ordered_urls)
         provided = [
             str(value).strip().rstrip(".,!?)]}，。！？》」")
             for value in urls

@@ -229,3 +229,151 @@ if deps.reserve_retrieval(run_step=ctx.run_step, kind=kind) is not EXECUTE:
 # A fresh, tool-free composer may retry only against trusted cached evidence.
 answer = await composer.run(question, deps=ComposerDeps(allowed_citations))
 ```
+
+## Scenario: Exact current-message video references
+
+### 1. Scope / Trigger
+
+Use this contract whenever the current user message contains one or more
+supported video URLs. It prevents semantic nearest-neighbor retrieval and stale
+conversation history from substituting a different saved video for the video
+the user explicitly named.
+
+An explicit current-message reference is a stricter boundary than ordinary
+tenant-scoped retrieval. Tenant scoping answers “whose library”; reference
+scoping answers “which exact items inside that library.” Both are required.
+
+### 2. Signatures
+
+```python
+@dataclass(frozen=True)
+class ParsedMessageReferences:
+    ordered_urls: tuple[str, ...]       # preserves order and duplicates
+    supported_urls: tuple[str, ...]
+    unsupported_urls: tuple[str, ...]
+    references: tuple[tuple[str, str], ...]  # unique (platform, platform_id)
+    semantic_remainder: str
+    @property
+    def is_bare_supported_url_batch(self) -> bool: ...
+
+def parse_message_references(message: str) -> ParsedMessageReferences: ...
+
+class KnowledgeServices:
+    def set_reference_scope(
+        self, references: Iterable[tuple[str, str]] | None
+    ) -> None: ...
+
+def vector_search(
+    db, query_vector, *, user_id: int, k: int = 20,
+    platform: str | None = None,
+    platform_ids: Iterable[str] | None = None,
+) -> list[Hit]: ...
+
+def bm25_search(
+    db, query: str, *, user_id: int, k: int = 20,
+    platform: str | None = None,
+    platform_ids: Iterable[str] | None = None,
+) -> list[Hit]: ...
+```
+
+`None` is the only unrestricted `KnowledgeServices` reference-scope sentinel.
+An explicitly supplied empty or malformed scope must generate false predicates;
+it must never normalize into unrestricted retrieval.
+
+### 3. Contracts
+
+- URL extraction and normalization are server-owned and use the same
+  `normalize_item_reference()` contract as ingestion. Strip only allow-listed
+  trailing punctuation. Adjacent CJK text terminates the URL token and remains
+  semantic text.
+- A bare batch of 1–10 supported URLs routes directly to the existing durable
+  save-confirmation action before retrieval-service construction or any model
+  request. Preserve original URL order and duplicates. Existing unavailable,
+  invalid, unsupported, and batch-limit action outcomes remain authoritative.
+- A supported URL plus semantic text creates an exact `(platform, platform_id)`
+  scope from the current message. Conversation history cannot add, replace, or
+  broaden these references.
+- Vector search, lexical search, result hydration, neighbor hydration, item
+  metadata, and timestamp resolution repeat tenant, active/deleted, ready-state,
+  and exact-reference predicates as applicable. Defense-in-depth citation
+  filtering runs before evidence reaches the planner or trusted Citation cache.
+- A scoped miss is a successful empty tool result, not a retrieval failure. It
+  records exactly one `started` and one `succeeded` tool outcome and cannot
+  invoke Composer without in-scope citations.
+- Explicit URL content questions hide inventory, mutation, and pending-save
+  tools. `save_videos` is exposed only when the semantic text contains a
+  conservative, positive current-message save command; a negated save phrase or
+  a content question cannot inherit save intent from history.
+- Ordinary messages without supported URLs retain unrestricted tenant-scoped
+  hybrid retrieval, management-history follow-ups, convergence budgets, and
+  Composer behavior.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required behavior |
+| --- | --- |
+| bare supported URL batch | durable `save_confirmation_required`; zero model requests; no retrieval service |
+| bare unsupported or malformed URL | existing safe validation code; no accidental supported confirmation |
+| URL plus semantic content question, referenced item ready | every tool result and final citation belongs to an exact referenced item |
+| referenced item absent, deleted, non-ready, or without evidence | `not_found/no_evidence`; no other item fallback and no Composer |
+| model reuses an out-of-scope segment/item ID from history | empty successful lookup; ID never enters trusted citations |
+| malformed non-empty scope reaches a knowledge service | false predicate / zero rows, never unrestricted search |
+| URL content question while an old save/delete action is pending | current question remains retrieval-only; old pending action is unchanged |
+| explicit positive “save this URL” command | `save_videos` may be exposed; current-message URL equality checks still apply |
+| ordinary free-text question | existing hybrid retrieval and management tool behavior unchanged |
+
+### 5. Good / Base / Bad Cases
+
+- Good: history discusses video A, but the current question names video B. All
+  searches and expansions are scoped to B, and only B citations can compose.
+- Good: the current message is a bare URL duplicated three times. The durable
+  confirmation receives the three original values in order without a model.
+- Base: no supported URL is present. The existing tenant-wide Top-5 retrieval
+  and management-history behavior runs unchanged.
+- Bad: embed a missing video ID, accept the tenant's nearest vector hit, and
+  summarize that hit as the requested video.
+- Bad: clear an invalid scope to `()` and interpret `()` as unrestricted, or
+  rely only on prompt wording to keep stale history from choosing a write tool.
+
+### 6. Tests Required
+
+- Parse short/canonical YouTube URLs, trailing punctuation, adjacent Chinese
+  question text, duplicates, unsupported hosts, and semantic remainders.
+- Assert a bare supported URL and batch perform zero model calls, preserve
+  order/duplicates, and do not construct retrieval services.
+- Reproduce saved video A versus current URL B and assert A never appears in
+  tool payloads, trusted citations, Composer input, or the visible answer.
+- Cover ready, absent, deleted, pending, failed, and no-evidence referenced
+  items; no unavailable state may fall back to another active video.
+- Attempt out-of-scope `get_neighbors`, `get_item`, and `open_at` calls and
+  assert empty results plus one truthful tool outcome sequence.
+- Assert scoped URL content questions hide management and pending/save tools,
+  while a positive current-message save command exposes only the valid save
+  route.
+- Re-run ordinary Agent retrieval, action confirmation, management pagination,
+  duplicate delivery, deleted-content, and PostgreSQL tenant-isolation tests.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+# The nearest tenant hit may be a completely different video.
+citations = services.search_segments(video_id)
+
+# Prompt text is not an authorization or subject boundary.
+instructions += "Please use the URL from the current message."
+```
+
+#### Correct
+
+```python
+parsed = parse_message_references(current_question)
+
+if parsed.is_bare_supported_url_batch:
+    return actions.request_confirmation(list(parsed.ordered_urls))
+
+services.set_reference_scope(parsed.references or None)
+# SQL predicates and citation validation both enforce the exact scope.
+citations = services.search_segments(current_question)
+```

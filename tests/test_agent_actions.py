@@ -494,9 +494,11 @@ async def test_bare_batch_retry_requires_complete_order_and_duplicates():
     assert result.answer.status == "ok"
     assert result.answer.error_code == "save_confirmation_required"
     assert result.answer.action_results[0]["count"] == 3
-    assert len(model_calls) == 3
+    # Bare supported URL batches are routed directly to the durable
+    # save-confirmation path; model history cannot alter order or duplicates.
+    assert len(model_calls) == 0
     assert len(pending.request_calls) == 1
-    assert pending.request_calls[0][2] == complete
+    assert pending.request_calls[0][2] == [short_a, short_b, short_a]
     assert submission.calls == []
 
 
@@ -766,7 +768,7 @@ async def test_link_content_question_uses_search_not_write_tool():
         segment_id=3,
         title="source",
         excerpt="evidence",
-        url="https://example.test/source",
+        url="https://youtu.be/dQw4w9WgXcQ?t=42",
     )
     knowledge = FakeKnowledgeServices([citation])
     submission = FakeSubmission(BatchSaveResult(()))
