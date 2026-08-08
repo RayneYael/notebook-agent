@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify privacy, API-contract stability, responsive accessibility, and all required frontend checks."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Review native controls, labels, focus behavior, touch targets, and visual consistency."}

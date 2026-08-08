@@ -1,6 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
 import type { Capabilities, LibraryItem, LibraryPageResponse } from "../api/contracts";
@@ -106,5 +107,40 @@ describe("library page", () => {
 
     expect(await screen.findByRole("button", { name: "暂时无法添加视频" })).toBeDisabled();
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("discovers collection tags and filters through the existing search query", async () => {
+    const allItems = [
+      { ...readyItem, public_id: "one", why_saved: "准备用户访谈 #产品调研" },
+      { ...readyItem, public_id: "two", why_saved: "复习基础概念 #AI_入门" },
+    ];
+    const fetchItems = vi.fn().mockImplementation(async (query) => ({
+      items: query.search ? [allItems[0]] : allItems,
+      total: query.search ? 1 : 2,
+      page: 1,
+      page_size: 20,
+      is_true_first_empty: false,
+    }));
+    const user = userEvent.setup();
+    renderPage(fetchItems);
+
+    const filters = await screen.findByRole("navigation", { name: "收藏夹筛选" });
+    expect(within(filters).getByRole("button", { name: "产品调研" })).toBeInTheDocument();
+    expect(within(filters).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
+    await user.click(within(filters).getByRole("button", { name: "产品调研" }));
+
+    await waitFor(() => expect(fetchItems).toHaveBeenLastCalledWith(
+      expect.objectContaining({ search: "#产品调研" }),
+    ));
+    expect(within(filters).getByRole("button", { name: "产品调研" })).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    expect(within(filters).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "添加视频" }));
+    const dialog = screen.getByRole("dialog", { name: "添加 YouTube 视频" });
+    expect(within(dialog).getByRole("button", { name: "产品调研" })).toBeInTheDocument();
+    expect(within(dialog).getByRole("button", { name: "AI_入门" })).toBeInTheDocument();
   });
 });

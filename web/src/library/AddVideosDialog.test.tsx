@@ -58,6 +58,71 @@ describe("add videos dialog", () => {
     expect(within(dialog).getByLabelText("为什么保存（可选）")).toHaveAttribute("name", "why-saved");
   });
 
+  it("adds an existing collection tag without changing the request contract", async () => {
+    const submit = vi.fn().mockResolvedValue({ results: [] });
+    const user = userEvent.setup();
+    render(
+      <AddVideosDialog
+        open
+        onClose={() => undefined}
+        submitBatch={submit}
+        suggestedCollections={["产品调研", "AI_入门"]}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.type(screen.getByLabelText("为什么保存（可选）"), "准备周末精读");
+    await user.click(screen.getByRole("button", { name: "产品调研" }));
+    expect(screen.getByRole("button", { name: "产品调研" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "添加并整理" }));
+
+    expect(submit).toHaveBeenCalledWith({
+      urls: ["https://youtu.be/dQw4w9WgXcQ"],
+      why_saved: "准备周末精读 #产品调研",
+    });
+  });
+
+  it("validates a new collection and can return to the unclassified default", async () => {
+    const submit = vi.fn().mockResolvedValue({ results: [] });
+    const user = userEvent.setup();
+    render(
+      <AddVideosDialog
+        open
+        onClose={() => undefined}
+        submitBatch={submit}
+        suggestedCollections={["产品调研"]}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("新收藏夹名称"), "名称 有空格");
+    await user.click(screen.getByRole("button", { name: "创建并选择" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("名称只能使用中文、字母、数字、短横线或下划线");
+
+    await user.clear(screen.getByLabelText("新收藏夹名称"));
+    await user.type(screen.getByLabelText("新收藏夹名称"), "访谈笔记");
+    await user.click(screen.getByRole("button", { name: "创建并选择" }));
+    expect(screen.getByRole("button", { name: "访谈笔记" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "未归类" }));
+    expect(screen.getByRole("button", { name: "未归类" })).toHaveAttribute("aria-pressed", "true");
+
+    await user.type(screen.getByLabelText("YouTube 链接，每行一个"), "https://youtu.be/dQw4w9WgXcQ");
+    await user.click(screen.getByRole("button", { name: "添加并整理" }));
+    expect(submit).toHaveBeenCalledWith({
+      urls: ["https://youtu.be/dQw4w9WgXcQ"],
+      why_saved: null,
+    });
+  });
+
+  it("uses a multiline reason field with a native vertical resize affordance", () => {
+    render(<AddVideosDialog open onClose={() => undefined} />);
+
+    const reason = screen.getByLabelText("为什么保存（可选）");
+    expect(reason.tagName).toBe("TEXTAREA");
+    expect(reason).toHaveClass("why-saved-textarea");
+    expect(reason).toHaveAttribute("maxlength", "500");
+    expect(screen.getByText("0 / 500")).toBeInTheDocument();
+  });
+
   it("blocks more than ten non-empty URLs before a network call", async () => {
     const submit = vi.fn();
     const user = userEvent.setup();

@@ -18,7 +18,9 @@
   "commit": "f4f5d50a1a48d7c25b8ed0f5f18024f51ef0c99a",
   "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-09-why-saved-collection-tags"
+  ],
   "parent": "08-04-video-text-kb",
   "relatedFiles": [
     "app/api",

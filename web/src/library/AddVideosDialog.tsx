@@ -2,10 +2,18 @@ import { useEffect, useRef, useState } from "react";
 
 import { submitVideoBatch } from "../api/client";
 import type { BatchSubmitInput, BatchSubmitResponse } from "../api/contracts";
+import {
+  collectCollectionNames,
+  formatWhySaved,
+  parseWhySaved,
+  validateCollectionName,
+  WHY_SAVED_MAX_LENGTH,
+} from "./collections";
 
 interface AddVideosDialogProps {
   open: boolean;
   onClose: () => void;
+  suggestedCollections?: readonly string[];
   submitBatch?: (input: BatchSubmitInput) => Promise<BatchSubmitResponse>;
   onSubmitted?: (result: BatchSubmitResponse) => void;
 }
@@ -23,12 +31,17 @@ const resultCopy: Record<string, string> = {
 export function AddVideosDialog({
   open,
   onClose,
+  suggestedCollections = [],
   submitBatch = submitVideoBatch,
   onSubmitted,
 }: AddVideosDialogProps) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [rawUrls, setRawUrls] = useState("");
   const [whySaved, setWhySaved] = useState("");
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [newCollection, setNewCollection] = useState("");
+  const [createdCollections, setCreatedCollections] = useState<string[]>([]);
+  const [collectionError, setCollectionError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<BatchSubmitResponse | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -45,10 +58,42 @@ export function AddVideosDialog({
     submissionGenerationRef.current += 1;
     setRawUrls("");
     setWhySaved("");
+    setSelectedCollection(null);
+    setNewCollection("");
+    setCreatedCollections([]);
+    setCollectionError(null);
     setError(null);
     setResult(null);
     setSubmitting(false);
   }, [open]);
+
+  const collectionOptions = collectCollectionNames([
+    ...suggestedCollections.map((name) => `#${name}`),
+    ...createdCollections.map((name) => `#${name}`),
+  ]);
+
+  function selectCollection(name: string | null) {
+    setSelectedCollection(name);
+    setCollectionError(null);
+  }
+
+  function createCollection() {
+    const validationError = validateCollectionName(newCollection);
+    if (validationError) {
+      setCollectionError(validationError);
+      return;
+    }
+    const formatted = formatWhySaved("", newCollection);
+    const name = parseWhySaved(formatted.value).collections[0];
+    if (!name) return;
+    setCreatedCollections((current) => collectCollectionNames([
+      ...current.map((value) => `#${value}`),
+      `#${name}`,
+    ]));
+    setSelectedCollection(name);
+    setNewCollection("");
+    setCollectionError(null);
+  }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
@@ -61,11 +106,16 @@ export function AddVideosDialog({
       setError("一次最多添加 10 个链接。");
       return;
     }
+    const formattedWhySaved = formatWhySaved(whySaved, selectedCollection);
+    if (formattedWhySaved.error) {
+      setError(formattedWhySaved.error);
+      return;
+    }
     setError(null);
     setSubmitting(true);
     const submissionGeneration = ++submissionGenerationRef.current;
     try {
-      const nextResult = await submitBatch({ urls, why_saved: whySaved.trim() || null });
+      const nextResult = await submitBatch({ urls, why_saved: formattedWhySaved.value });
       if (submissionGeneration !== submissionGenerationRef.current) return;
       setResult(nextResult);
       onSubmitted?.(nextResult);
@@ -106,17 +156,65 @@ export function AddVideosDialog({
             onChange={(event) => setRawUrls(event.target.value)}
           />
         </label>
-        <label className="field">
-          <span>为什么保存（可选）</span>
-          <input
+        <fieldset className="collection-picker">
+          <legend>保存到收藏夹（可选）</legend>
+          <p className="field-help">选择已有收藏夹，或新建一个标签。未选择时保存为未归类。</p>
+          <div className="collection-options" aria-label="选择收藏夹">
+            <button
+              className="collection-chip"
+              type="button"
+              aria-pressed={selectedCollection === null}
+              onClick={() => selectCollection(null)}
+            >
+              未归类
+            </button>
+            {collectionOptions.map((name) => (
+              <button
+                className="collection-chip"
+                type="button"
+                aria-pressed={selectedCollection?.toLocaleLowerCase("en") === name.toLocaleLowerCase("en")}
+                key={name}
+                onClick={() => selectCollection(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+          <div className="collection-create">
+            <label className="field">
+              <span>新收藏夹名称</span>
+              <input
+                name="new-collection"
+                autoComplete="off"
+                value={newCollection}
+                maxLength={21}
+                placeholder="例如：产品调研"
+                onChange={(event) => setNewCollection(event.target.value)}
+              />
+            </label>
+            <button className="button button--quiet" type="button" onClick={createCollection}>
+              创建并选择
+            </button>
+          </div>
+          {collectionError ? <p className="inline-error" role="alert">{collectionError}</p> : null}
+        </fieldset>
+        <div className="field">
+          <span className="field-label-row">
+            <label htmlFor="why-saved">为什么保存（可选）</label>
+            <small>{whySaved.length} / {WHY_SAVED_MAX_LENGTH}</small>
+          </span>
+          <textarea
+            id="why-saved"
+            className="why-saved-textarea"
             name="why-saved"
             autoComplete="off"
             value={whySaved}
-            maxLength={500}
+            rows={3}
+            maxLength={WHY_SAVED_MAX_LENGTH}
             placeholder="例如：用于周末精读或项目调研"
             onChange={(event) => setWhySaved(event.target.value)}
           />
-        </label>
+        </div>
         {error ? <p className="inline-error" role="alert">{error}</p> : null}
         {result ? (
           <ol className="submission-results" aria-label="添加结果" aria-live="polite">

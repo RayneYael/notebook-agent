@@ -185,6 +185,33 @@ describe("video detail", () => {
     expect(updateWhySaved).toHaveBeenCalledTimes(2);
   });
 
+  it("shows collection tags separately and preserves them when editing the reason", async () => {
+    const user = userEvent.setup();
+    const updateWhySaved = vi.fn().mockResolvedValue(undefined);
+    render(
+      <VideoDetailView
+        item={{ ...item, why_saved: "整理知识管理方法 #产品调研" }}
+        transcriptPages={[]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={updateWhySaved}
+      />,
+    );
+
+    expect(screen.getByLabelText("所属收藏夹")).toHaveTextContent("#产品调研");
+    expect(screen.getByText("整理知识管理方法")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "编辑" }));
+    const reason = screen.getByRole("textbox", { name: "保存说明" });
+    expect(reason).toHaveValue("整理知识管理方法");
+    await user.clear(reason);
+    await user.type(reason, "新的保存说明");
+    await user.click(screen.getByRole("button", { name: "保存说明" }));
+
+    expect(updateWhySaved).toHaveBeenCalledWith("新的保存说明 #产品调研");
+  });
+
   it("maps language codes and cover placeholders to user-facing copy", () => {
     const { rerender } = render(
       <VideoDetailView

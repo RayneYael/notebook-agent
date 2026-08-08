@@ -1,6 +1,8 @@
 import { Link } from "react-router";
 
 import type { LibraryItem } from "../api/contracts";
+import { CollectionTags } from "./CollectionTags";
+import { parseWhySaved } from "./collections";
 import { lifecycleCopy } from "./lifecycle";
 
 export function formatDuration(seconds: number | null): string | null {
@@ -17,6 +19,7 @@ export function formatDuration(seconds: number | null): string | null {
 export function VideoCard({ item }: { item: LibraryItem }) {
   const duration = formatDuration(item.duration_sec);
   const title = item.title?.trim() || "视频信息尚未准备好";
+  const savedContext = parseWhySaved(item.why_saved);
   return (
     <article className="video-card" data-lifecycle={item.lifecycle}>
       <Link className="video-card__link" to={`/videos/${item.public_id}`} aria-label={`${title}，查看详情`}>
@@ -31,7 +34,8 @@ export function VideoCard({ item }: { item: LibraryItem }) {
           </div>
           <h2>{title}</h2>
           {item.author ? <p className="video-card__author">{item.author}</p> : null}
-          {item.why_saved ? <blockquote>{item.why_saved}</blockquote> : null}
+          <CollectionTags names={savedContext.collections} />
+          {savedContext.reason ? <blockquote>{savedContext.reason}</blockquote> : null}
           {item.lifecycle === "failed" ? <p className="card-hint">打开详情后可重新整理</p> : null}
         </div>
       </Link>

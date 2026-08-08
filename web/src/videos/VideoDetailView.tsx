@@ -1,6 +1,12 @@
 import { type FormEvent, useState } from "react";
 
 import type { LibraryItem, TranscriptPage } from "../api/contracts";
+import { CollectionTags } from "../library/CollectionTags";
+import {
+  formatWhySavedWithCollections,
+  parseWhySaved,
+  WHY_SAVED_MAX_LENGTH,
+} from "../library/collections";
 import { lifecycleCopy } from "../library/lifecycle";
 import { formatDuration } from "../library/VideoCard";
 
@@ -63,17 +69,28 @@ export function VideoDetailView({
   transcriptInitialPending = false,
   transcriptError = false,
 }: VideoDetailViewProps) {
+  const savedContext = parseWhySaved(item.why_saved);
   const [editingReason, setEditingReason] = useState(false);
-  const [reason, setReason] = useState(item.why_saved ?? "");
+  const [reason, setReason] = useState(savedContext.reason);
   const blocks = transcriptPages.flatMap((page) => page.blocks);
   const nextCursor = transcriptPages.at(-1)?.next_cursor ?? null;
   const actions = new Set(item.available_actions);
   const language = formatLanguage(item.lang);
+  const collectionSuffixLength = savedContext.collections.reduce(
+    (total, name) => total + name.length + 1,
+    Math.max(0, savedContext.collections.length - 1),
+  );
+  const reasonLimit = Math.max(
+    0,
+    WHY_SAVED_MAX_LENGTH - collectionSuffixLength - (savedContext.collections.length > 0 ? 1 : 0),
+  );
 
   async function submitReason(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await onUpdateWhySaved(reason.trim() || null);
+      const formatted = formatWhySavedWithCollections(reason, savedContext.collections);
+      if (formatted.error) throw new Error(formatted.error);
+      await onUpdateWhySaved(formatted.value);
       setEditingReason(false);
     } catch {
       // The parent mutation renders a safe error while this form stays editable.
@@ -109,12 +126,13 @@ export function VideoDetailView({
           <div><p className="eyebrow">保存说明</p><h2 id="reason-title">为什么保存</h2></div>
           {actions.has("edit_why_saved") ? <button className="text-button" onClick={() => setEditingReason((value) => !value)}>{editingReason ? "取消" : "编辑"}</button> : null}
         </div>
+        <CollectionTags names={savedContext.collections} className="collection-tag-list--detail" />
         {editingReason ? (
           <form onSubmit={submitReason}>
-            <label className="field"><span className="sr-only">保存说明</span><textarea name="why-saved-detail" autoComplete="off" rows={3} maxLength={2000} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
+            <label className="field"><span className="sr-only">保存说明</span><textarea name="why-saved-detail" autoComplete="off" rows={3} maxLength={reasonLimit} value={reason} onChange={(event) => setReason(event.target.value)} /></label>
             <button className="button button--quiet" disabled={actionPending} type="submit">保存说明</button>
           </form>
-        ) : <p>{item.why_saved || "还没有添加保存说明。"}</p>}
+        ) : <p>{savedContext.reason || "还没有添加保存说明。"}</p>}
       </section>
 
       {item.chapters.length > 0 ? (

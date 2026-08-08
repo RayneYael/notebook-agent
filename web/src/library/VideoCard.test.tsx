@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router";
 import { describe, expect, it } from "vitest";
 
@@ -66,5 +66,19 @@ describe("video card", () => {
 
     expect(screen.getByText("打开详情后可重新整理")).toBeInTheDocument();
     expect(screen.queryByText(/安全重试/)).not.toBeInTheDocument();
+  });
+
+  it("separates collection tags from the human save reason", () => {
+    render(
+      <MemoryRouter>
+        <VideoCard item={{ ...baseItem, why_saved: "准备用户访谈 #产品调研 #AI_入门" }} />
+      </MemoryRouter>,
+    );
+
+    const collections = screen.getByLabelText("所属收藏夹");
+    expect(within(collections).getByText("#产品调研")).toBeInTheDocument();
+    expect(within(collections).getByText("#AI_入门")).toBeInTheDocument();
+    expect(screen.getByText("准备用户访谈")).toBeInTheDocument();
+    expect(screen.queryByText("准备用户访谈 #产品调研 #AI_入门")).not.toBeInTheDocument();
   });
 });

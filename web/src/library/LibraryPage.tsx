@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import {
   getCapabilities,
@@ -9,6 +9,7 @@ import {
 } from "../api/client";
 import type { BatchSubmitInput, BatchSubmitResponse, Capabilities, LibraryPageResponse } from "../api/contracts";
 import { AddVideosDialog } from "./AddVideosDialog";
+import { collectCollectionNames } from "./collections";
 import { LibraryEmptyState, LibraryErrorState, LibraryLoadingState } from "./LibraryStates";
 import { shouldPollLibrary } from "./lifecycle";
 import { VideoCard } from "./VideoCard";
@@ -28,11 +29,13 @@ export function LibraryPage({
   const [dialogOpen, setDialogOpen] = useState(false);
   const [searchDraft, setSearchDraft] = useState("");
   const [search, setSearch] = useState("");
+  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  const [knownCollections, setKnownCollections] = useState<string[]>([]);
   const [lifecycle, setLifecycle] = useState("");
   const [sort, setSort] = useState<LibraryQuery["sort"]>("saved_desc");
   const [page, setPage] = useState(1);
   const query: LibraryQuery = {
-    search,
+    search: selectedCollection ? `#${selectedCollection}` : search,
     lifecycle,
     include_archived: lifecycle === "archived",
     sort,
@@ -52,10 +55,34 @@ export function LibraryPage({
     staleTime: 5 * 60_000,
   });
   const saveDisabled = capabilities.data?.save_enabled === false;
+  useEffect(() => {
+    if (!library.data) return;
+    const discovered = collectCollectionNames(library.data.items.map((item) => item.why_saved));
+    setKnownCollections((current) => {
+      const next = collectCollectionNames([
+        ...current.map((name) => `#${name}`),
+        ...discovered.map((name) => `#${name}`),
+      ]);
+      return next.length === current.length && next.every((name, index) => name === current[index])
+        ? current
+        : next;
+    });
+  }, [library.data]);
+  const collectionOptions = collectCollectionNames([
+    ...knownCollections.map((name) => `#${name}`),
+    selectedCollection ? `#${selectedCollection}` : null,
+  ]);
   const totalPages = library.data ? Math.max(1, Math.ceil(library.data.total / library.data.page_size)) : 1;
 
   function changeFilter(next: string) {
     setLifecycle(next);
+    setPage(1);
+  }
+
+  function selectCollection(name: string | null) {
+    setSelectedCollection(name);
+    setSearch("");
+    setSearchDraft("");
     setPage(1);
   }
 
@@ -80,7 +107,7 @@ export function LibraryPage({
         <form
           className="search-box"
           role="search"
-          onSubmit={(event) => { event.preventDefault(); setSearch(searchDraft.trim()); setPage(1); }}
+          onSubmit={(event) => { event.preventDefault(); setSelectedCollection(null); setSearch(searchDraft.trim()); setPage(1); }}
         >
           <label className="sr-only" htmlFor="library-search">搜索标题、作者或保存说明</label>
           <input id="library-search" name="search" type="search" autoComplete="off" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="搜索标题、作者或保存说明" />
@@ -108,11 +135,31 @@ export function LibraryPage({
         </label>
       </section>
 
+      {collectionOptions.length > 0 ? (
+        <nav className="collection-filter" aria-label="收藏夹筛选">
+          <span className="collection-filter__label">收藏夹</span>
+          <div className="collection-options">
+            <button className="collection-chip" type="button" aria-pressed={selectedCollection === null} onClick={() => selectCollection(null)}>全部视频</button>
+            {collectionOptions.map((name) => (
+              <button
+                className="collection-chip"
+                type="button"
+                aria-pressed={selectedCollection?.toLocaleLowerCase("en") === name.toLocaleLowerCase("en")}
+                key={name}
+                onClick={() => selectCollection(name)}
+              >
+                {name}
+              </button>
+            ))}
+          </div>
+        </nav>
+      ) : null}
+
       {library.isPending ? <LibraryLoadingState /> : null}
       {library.isError ? <LibraryErrorState onRetry={() => void library.refetch()} /> : null}
       {library.isSuccess && library.data.items.length === 0 ? (
         <LibraryEmptyState
-          trueFirstEmpty={library.data.is_true_first_empty && !search && !lifecycle}
+          trueFirstEmpty={library.data.is_true_first_empty && !query.search && !lifecycle}
           onAdd={saveDisabled ? undefined : () => setDialogOpen(true)}
         />
       ) : null}
@@ -136,6 +183,7 @@ export function LibraryPage({
         open={dialogOpen && !saveDisabled}
         onClose={() => setDialogOpen(false)}
         submitBatch={submitBatch}
+        suggestedCollections={collectionOptions}
         onSubmitted={() => void queryClient.invalidateQueries({ queryKey: ["library"] })}
       />
     </>
