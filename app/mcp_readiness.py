@@ -33,8 +33,8 @@ READINESS_CHECKS: tuple[str, ...] = (
 # wrapper below also bounds connection/setup failures in Kombu transports that
 # do not consistently honour that value.  A timed-out daemon is never joined
 # indefinitely and cannot keep the MCP process alive during startup.
-_WORKER_INSPECT_TIMEOUT_SECONDS = 0.35
-_WORKER_TOTAL_TIMEOUT_SECONDS = 0.75
+_WORKER_INSPECT_TIMEOUT_SECONDS = 1.0
+_WORKER_TOTAL_TIMEOUT_SECONDS = 3.0
 _REQUIRED_WORKER_QUEUES = frozenset({"ingest", "maintenance"})
 
 
