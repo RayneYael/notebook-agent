@@ -158,3 +158,34 @@ Added the official MCP v2 stdio and Streamable HTTP adapter, tenant-bound hash-o
 ### Status
 
 [OK] **Completed**
+
+
+## Session 7: Deployment environment configuration guide
+
+**Date**: 2026-08-08
+**Task**: Deployment environment configuration guide
+**Branch**: `main`
+
+### Summary
+
+Reorganized the root dotenv template and added scenario-first environment profiles for local read-only MCP, full mutation MCP, Streamable HTTP/MiXer, and optional LangBot, with bilingual quick-start and deployment guidance.
+
+### Main Changes
+
+- Added a canonical environment configuration guide and complete variable matrix.
+- Updated dotenv grouping, stdio grant startup, worker queues, migration head, and bilingual entry points.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `18707d3` | (see git log) |
+
+### Testing
+
+- [OK] 60 focused MCP, diagnostics, provider, and deployment tests passed.
+- [OK] Validated 52 dotenv keys, 54 config consumers, local Markdown links, and git diff hygiene.
+
+### Status
+
+[OK] **Completed**
