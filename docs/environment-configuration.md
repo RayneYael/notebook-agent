@@ -146,9 +146,9 @@ docker compose up -d
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
 ```
 
-至少一个 worker 必须返回 `pong`，并同时监听 `ingest`、`maintenance`。`ingest-completion`
-由 producer 声明为 durable queue；真实 consumer 部署前不要让 worker 监听它，否则
-没有业务 handler 的 worker 会 ack 并丢弃事件。随后签发 full grant：
+至少一个 worker 必须返回 `pong`，并同时监听 `ingest`、`maintenance`。来源通知由默认每
+10 秒运行的 PostgreSQL delivery-ledger poller 在 `maintenance` 中处理；旧
+`ingest-completion` queue 已退役，不要让 worker 监听、消费或重放它。随后签发 full grant：
 
 ```bash
 .venv/bin/python -m app.cli mcp-grant issue --user-id <user-id> --scope full --label local-full
@@ -297,9 +297,9 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 | `BROKER_PUBLISH_MAX_RETRIES` | app submission | `1` | full profile tuning | 否 | app |
 
 本地 Compose Redis 固定使用持久卷、AOF 和 `appendfsync=always`。配置远程
-`REDIS_URL` 时，托管服务必须提供等价的“broker 返回写入成功前已经持久化”保证；
-定期 snapshot 可能在故障时丢失已经确认的 `ingest-completion` 消息，不能满足
-完成 outbox 的 at-least-once 合同。
+`REDIS_URL` 时，托管服务必须提供等价的“broker 返回写入成功前已经持久化”保证，避免
+已确认的 `ingest` task 丢失。completion notification 的 durable source 是 PostgreSQL
+event + delivery ledger；旧 `ingest-completion` queue 不再生产，也不依赖 Redis snapshot。
 
 ### MinIO / S3-compatible storage
 
@@ -354,10 +354,28 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 | `TRASH_PURGE_CLAIM_TIMEOUT_SECONDS` | purge worker | `1800` | item management | 否 | worker |
 | `TRASH_PURGE_MAX_DURATION_SECONDS` | purge worker | `30` | item management | 否 | worker |
 | `TRASH_PURGE_OBJECT_TIMEOUT_SECONDS` | purge object delete | `10` | item management | 否 | worker |
-| `INGEST_COMPLETION_INTERVAL_SECONDS` | Celery beat | `60` | durable completion outbox repair | 否 | beat |
-| `INGEST_COMPLETION_BATCH_SIZE` | maintenance worker | `20` | bounded completion repair | 否 | worker |
-| `INGEST_COMPLETION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
-| `INGEST_COMPLETION_MAX_DURATION_SECONDS` | maintenance worker | `30` | bounded sweep wall-clock budget | 否 | worker |
+| `INGEST_NOTIFICATION_INTERVAL_SECONDS` | Celery beat | `10` | source-channel poll interval; positive | 否 | beat |
+| `INGEST_NOTIFICATION_BATCH_SIZE` | maintenance worker | `20` | bounded delivery claims | 否 | worker |
+| `INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
+| `INGEST_NOTIFICATION_MAX_DURATION_SECONDS` | maintenance worker | `8` | must be below interval | 否 | worker |
+| `INGEST_NOTIFICATION_MAX_ATTEMPTS` | maintenance worker | `5` | retry ceiling before manual re-drive | 否 | worker |
+| `INGEST_NOTIFICATION_RETRY_BASE_SECONDS` | maintenance worker | `5` | exponential backoff base | 否 | worker |
+| `INGEST_NOTIFICATION_RETRY_MAX_SECONDS` | maintenance worker | `300` | exponential backoff cap | 否 | worker |
+| `LANGBOT_OUTBOUND_BASE_URL` | maintenance worker | `http://127.0.0.1:5300` | loopback HTTP or non-loopback HTTPS | 否 | worker |
+| `LANGBOT_OUTBOUND_API_KEY` | maintenance worker | 空 | dedicated LangBot API key | 是 | worker |
+| `LANGBOT_OUTBOUND_TIMEOUT_SECONDS` | maintenance worker | `10` | bounded HTTP timeout | 否 | worker |
+
+`INGEST_COMPLETION_*` variables are legacy Redis publisher compatibility
+settings only; the notification poller does not read or schedule that queue.
+
+The notification poller has no separate health endpoint or public CLI. A completed Beat tick is
+observed through the privacy-safe `notification_poller_heartbeat` line in the maintenance worker's
+runtime log/stdout. It reports only numeric counters, duration, and the oldest eligible delivery age;
+`observability_failed=1` means that the optional backlog read was unavailable and does not mean a
+delivery was changed or dropped. For failed delivery recovery, use the documented
+`redrive_failed_ingest_notification(event_id)` Python hook after correcting LangBot configuration;
+the next Beat tick performs the actual send. Do not re-run ingestion or consume the retired
+`ingest-completion` queue.
 
 关闭 management flag 不会关闭 deleted-content retrieval filters。
 
@@ -399,7 +417,7 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 
 1. 确认改的是正确文件：根 `.env`、stdio process env、plugin private `.env` 或 proxy secret。
 2. 重启表格中列出的消费者；环境变量不会自动热更新。
-3. 运行 `.venv/bin/alembic current`，当前 head 应为 `f6a7b8c9d0e1`。
+3. 运行 `.venv/bin/alembic current`，当前 head 应为 `a1b2c3d4e5f6`。
 4. full profile 检查 Redis、MinIO、Celery `ping` 和 `active_queues`。
 5. MCP 运行 `initialize -> tools/list -> tools/call`；只读应为 3 tools，ready full 应为 10 tools。
 6. LangBot 先检查 gateway health，再确认 required plugin 为 `initialized`，最后做真实渠道 smoke。

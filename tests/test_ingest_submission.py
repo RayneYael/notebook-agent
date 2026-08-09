@@ -134,6 +134,34 @@ class FakeSession:
         return None
 
 
+class BrokenSourceSession(FakeSession):
+    def scalar(self, _statement):
+        raise RuntimeError("source thread database unavailable")
+
+
+def test_source_thread_database_failure_aborts_admission_without_dispatch():
+    store = FakeStore([])
+    published = []
+    service = IngestSubmissionService(
+        lambda: BrokenSourceSession(store),
+        lambda dispatch_id: published.append(dispatch_id),
+    )
+    tenant = TenantContext(57, 9, "wechat", "account", "external")
+
+    result = service.submit_urls(
+        tenant,
+        ["https://youtu.be/dQw4w9WgXcQ"],
+        why_saved=None,
+        request_key="thread:message:save",
+        source_thread_id=12,
+    )
+
+    assert result.results[0].status == "create_failed"
+    assert store.items == []
+    assert store.dispatches == []
+    assert published == []
+
+
 def test_submission_is_tenant_bound_async_and_partial():
     store = FakeStore([None, None])
     published = []

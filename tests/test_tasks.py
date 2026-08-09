@@ -1,9 +1,9 @@
-import pytest
-
+import inspect
 from dataclasses import replace
 from datetime import UTC, datetime
 
 from kombu import Connection
+import pytest
 
 from app.connectors.base import (
     ItemMeta,
@@ -15,6 +15,7 @@ from app.ingest.tasks import (
     IngestTask,
     _claim_dispatch,
     _complete_dispatch,
+    _mark_dispatch_failed,
     _release_dispatch_for_retry,
     build_worker_embedder,
     fetch_text_task,
@@ -346,6 +347,13 @@ def test_dispatch_claim_retry_release_and_completion_are_conditional():
     )
     assert dispatch.state == "completed"
     assert _claim_dispatch(71, "task-1", session_factory=factory) is None
+
+
+def test_terminal_dispatch_hooks_do_not_publish_retired_completion_envelopes():
+    for helper in (_claim_dispatch, _complete_dispatch, _mark_dispatch_failed):
+        source = inspect.getsource(helper)
+        assert "_publish_completion_event_best_effort(" not in source
+        assert "publish_ingest_completion_event(" not in source
 
 
 def test_publisher_sends_only_durable_dispatch_id(monkeypatch):

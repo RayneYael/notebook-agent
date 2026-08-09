@@ -168,12 +168,15 @@ On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the
 ```
 
 The worker and beat are also the durability boundary for terminal ingestion
-events. The producer declares a durable `ingest-completion` queue, but the
-existing worker must not consume that queue until a real idempotent completion
-consumer is deployed. Beat periodically repairs pending/stale outbox claims;
-check its counters and the queue backlog during rollout. The bundled Redis uses
-a persistent volume with AOF `appendfsync=always`; a remote broker must provide
-equivalent durability before acknowledging a published completion message.
+events. The authoritative source-channel notification task runs every
+`INGEST_NOTIFICATION_INTERVAL_SECONDS` (10 seconds by default) on the
+`maintenance` queue and claims PostgreSQL delivery-ledger rows before calling
+LangBot's API. Keep its batch and max-duration budget below the interval. The
+legacy `ingest-completion` Redis queue is retained only for rollback/schema
+compatibility: it has no consumer and terminal ingestion no longer publishes
+new envelopes. During rollout, stop old producers first, verify database event
+coverage, then inspect and explicitly drain any old Redis backlog; do not run a
+queue consumer and the poller together.
 
 After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the gateway:
 

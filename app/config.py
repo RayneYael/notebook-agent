@@ -11,6 +11,9 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from functools import lru_cache
+import ipaddress
+import math
+from urllib.parse import urlparse
 
 from dotenv import load_dotenv
 
@@ -56,6 +59,29 @@ def _require(name: str) -> str:
     if not value:
         raise RuntimeError(f"missing required environment variable: {name}")
     return value
+
+
+def _validate_langbot_outbound_url(value: str) -> None:
+    """Fail closed for an unsafe LangBot outbound endpoint."""
+
+    parsed = urlparse(str(value).strip())
+    if parsed.scheme not in {"http", "https"} or not parsed.hostname:
+        raise ValueError(
+            "LANGBOT_OUTBOUND_BASE_URL must be an absolute HTTP(S) URL"
+        )
+    if parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise ValueError(
+            "LANGBOT_OUTBOUND_BASE_URL must not contain credentials, query, or fragment"
+        )
+    host = parsed.hostname.lower().rstrip(".")
+    try:
+        loopback = ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        loopback = host == "localhost"
+    if not loopback and parsed.scheme != "https":
+        raise ValueError(
+            "LANGBOT_OUTBOUND_BASE_URL must use HTTPS for non-loopback hosts"
+        )
 
 
 @dataclass(frozen=True)
@@ -204,6 +230,50 @@ class Settings:
             "INGEST_COMPLETION_MAX_DURATION_SECONDS", 30.0
         )
     )
+    # PostgreSQL-backed source-channel completion notification poller.  The
+    # legacy ingest-completion publisher settings above remain for rollback
+    # compatibility but are no longer scheduled by the worker.
+    ingest_notification_interval_seconds: int = field(
+        default_factory=lambda: _env_int("INGEST_NOTIFICATION_INTERVAL_SECONDS", 10)
+    )
+    ingest_notification_batch_size: int = field(
+        default_factory=lambda: _env_int("INGEST_NOTIFICATION_BATCH_SIZE", 20)
+    )
+    ingest_notification_claim_timeout_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS", 300
+        )
+    )
+    ingest_notification_max_duration_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "INGEST_NOTIFICATION_MAX_DURATION_SECONDS", 8.0
+        )
+    )
+    ingest_notification_max_attempts: int = field(
+        default_factory=lambda: _env_int("INGEST_NOTIFICATION_MAX_ATTEMPTS", 5)
+    )
+    ingest_notification_retry_base_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "INGEST_NOTIFICATION_RETRY_BASE_SECONDS", 5.0
+        )
+    )
+    ingest_notification_retry_max_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "INGEST_NOTIFICATION_RETRY_MAX_SECONDS", 300.0
+        )
+    )
+    langbot_outbound_base_url: str = field(
+        default_factory=lambda: _env(
+            "LANGBOT_OUTBOUND_BASE_URL", "http://127.0.0.1:5300"
+        )
+        or "http://127.0.0.1:5300"
+    )
+    langbot_outbound_api_key: str | None = field(
+        default_factory=lambda: _env("LANGBOT_OUTBOUND_API_KEY")
+    )
+    langbot_outbound_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("LANGBOT_OUTBOUND_TIMEOUT_SECONDS", 10.0)
+    )
     context_max_turns: int = field(
         default_factory=lambda: _env_int("CONTEXT_MAX_TURNS", 8)
     )
@@ -287,6 +357,64 @@ class Settings:
             raise ValueError(
                 "INGEST_COMPLETION_MAX_DURATION_SECONDS must be positive"
             )
+        if self.ingest_notification_interval_seconds <= 0:
+            raise ValueError("INGEST_NOTIFICATION_INTERVAL_SECONDS must be positive")
+        if (
+            self.ingest_notification_batch_size <= 0
+            or self.ingest_notification_batch_size > 100
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_BATCH_SIZE must be between 1 and 100"
+            )
+        if self.ingest_notification_claim_timeout_seconds <= 0:
+            raise ValueError(
+                "INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS must be positive"
+            )
+        if (
+            not math.isfinite(self.ingest_notification_max_duration_seconds)
+            or self.ingest_notification_max_duration_seconds <= 0
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_MAX_DURATION_SECONDS must be positive"
+            )
+        if (
+            self.ingest_notification_max_duration_seconds
+            >= self.ingest_notification_interval_seconds
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_MAX_DURATION_SECONDS must be less than "
+                "INGEST_NOTIFICATION_INTERVAL_SECONDS"
+            )
+        if self.ingest_notification_max_attempts <= 0:
+            raise ValueError("INGEST_NOTIFICATION_MAX_ATTEMPTS must be positive")
+        if (
+            not math.isfinite(self.ingest_notification_retry_base_seconds)
+            or self.ingest_notification_retry_base_seconds <= 0
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_RETRY_BASE_SECONDS must be positive"
+            )
+        if (
+            not math.isfinite(self.ingest_notification_retry_max_seconds)
+            or self.ingest_notification_retry_max_seconds <= 0
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_RETRY_MAX_SECONDS must be positive"
+            )
+        if (
+            self.ingest_notification_retry_base_seconds
+            > self.ingest_notification_retry_max_seconds
+        ):
+            raise ValueError(
+                "INGEST_NOTIFICATION_RETRY_BASE_SECONDS must not exceed "
+                "INGEST_NOTIFICATION_RETRY_MAX_SECONDS"
+            )
+        if (
+            not math.isfinite(self.langbot_outbound_timeout_seconds)
+            or self.langbot_outbound_timeout_seconds <= 0
+        ):
+            raise ValueError("LANGBOT_OUTBOUND_TIMEOUT_SECONDS must be positive")
+        _validate_langbot_outbound_url(self.langbot_outbound_base_url)
         if (
             self.agent_composer_max_tokens * COMPOSER_VALIDATION_REQUEST_LIMIT
             > self.agent_output_token_limit
@@ -301,6 +429,12 @@ class Settings:
         """Compatibility spelling used by deployment operators."""
 
         return self.ingest_completion_interval_seconds
+
+    @property
+    def ingest_notification_retry_ceiling(self) -> int:
+        """Compatibility alias for the configured notification attempt cap."""
+
+        return self.ingest_notification_max_attempts
 
 
 def _build_database_url() -> str:

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from copy import deepcopy
 from dataclasses import asdict, dataclass
+import inspect
 from typing import Annotated, Literal
 
 from pydantic import Field
@@ -431,11 +432,14 @@ class AgentActionRuntime:
         if unavailable is not None:
             return unavailable
         try:
-            result = self._services.submission.retry_item(  # type: ignore[union-attr]
-                self._request.tenant,
-                item_id,
-                request_key=f"{self._request.thread_public_id}:{self._request.message_id}:retry",
-            )
+            retry = self._services.submission.retry_item  # type: ignore[union-attr]
+            retry_kwargs = {
+                "request_key": f"{self._request.thread_public_id}:{self._request.message_id}:retry",
+                "source_thread_id": self._request.thread_db_id,
+            }
+            if not _accepts_keyword(retry, "source_thread_id"):
+                retry_kwargs.pop("source_thread_id")
+            result = retry(self._request.tenant, item_id, **retry_kwargs)
         except Exception:
             return self._finish(self._failure("retry_not_allowed"))
         if result.status == "queued":
@@ -544,6 +548,7 @@ class AgentActionRuntime:
                 f"{self._request.thread_public_id}:"
                 f"{self._request.message_id}:save"
             ),
+            source_thread_id=self._request.thread_db_id,
         )
 
     def confirm(self) -> ActionOutcome:
@@ -569,6 +574,10 @@ class AgentActionRuntime:
                 f"{self._request.thread_public_id}:"
                 f"{self._request.message_id}:confirm"
             ),
+            # The pending row is bound to the original conversation.  Prefer
+            # its server-owned thread over the current request context so a
+            # future confirmation adapter cannot retarget the dispatch.
+            source_thread_id=result.thread_id or self._request.thread_db_id,
         )
 
     def clarify_confirmation(self) -> ActionOutcome:
@@ -638,14 +647,18 @@ class AgentActionRuntime:
         *,
         why_saved: str | None,
         request_key: str,
+        source_thread_id: int | None = None,
     ) -> ActionOutcome:
         try:
-            result = self._services.submission.submit_urls(
-                self._request.tenant,
-                urls,
-                why_saved=why_saved,
-                request_key=request_key,
-            )
+            submit = self._services.submission.submit_urls
+            submit_kwargs = {
+                "why_saved": why_saved,
+                "request_key": request_key,
+                "source_thread_id": source_thread_id,
+            }
+            if not _accepts_keyword(submit, "source_thread_id"):
+                submit_kwargs.pop("source_thread_id")
+            result = submit(self._request.tenant, urls, **submit_kwargs)
         except BatchValidationError as exc:
             return self._finish(self._failure(exc.error_code))
         except Exception:
@@ -839,3 +852,17 @@ def _delete_outcome_text(rows: tuple[dict, ...]) -> str:
     if known < len(rows):
         parts.append(f"{len(rows) - known} 个条目的删除状态未改变，请稍后重试。")
     return " ".join(parts) or "删除操作未发生。"
+
+
+def _accepts_keyword(callable_obj, name: str) -> bool:
+    """Keep older injected action services source-compatible in tests/tools."""
+
+    try:
+        parameters = inspect.signature(callable_obj).parameters.values()
+    except (TypeError, ValueError):
+        return True
+    return any(
+        parameter.name == name
+        or parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    )
