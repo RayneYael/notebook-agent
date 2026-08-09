@@ -339,18 +339,16 @@ def test_claimed_reservation_and_matching_cleanup(monkeypatch, tmp_path):
 
 
 def test_status_never_prints_environment_values(monkeypatch, capsys):
-    now = int(deployment.time.time())
     monkeypatch.setattr(
         deployment,
         "_active_state",
         lambda: {
             "profile": "full",
             "children": {"worker": 10, "beat": 11},
-            "health_updated_at": now,
-            "checks": {
-                "dependency.database": True,
-                "dependency.redis": False,
-            },
+            "managed_services": [],
+            "health_target_fingerprint": deployment._health_target_fingerprint(
+                "full", {}
+            ),
         },
     )
     monkeypatch.setattr(
@@ -358,13 +356,91 @@ def test_status_never_prints_environment_values(monkeypatch, capsys):
         "_child_pid_matches",
         lambda _name, _pid: True,
     )
+    monkeypatch.setattr(deployment, "load_environment", lambda: {})
+    monkeypatch.setattr(
+        deployment,
+        "_full_runtime_checks",
+        lambda _env: {"database": True, "broker": False},
+    )
+    monkeypatch.setattr(deployment, "_compose_health", lambda *_args: {})
+    monkeypatch.setattr(deployment, "_port_ready", lambda *_args: True)
     monkeypatch.setenv("AGENT_API_KEY", "must-not-appear")
     assert deployment.status() == 1
     output = capsys.readouterr().out
     assert "must-not-appear" not in output
     assert "process.worker: ready" in output
     assert "dependency.database: ready" in output
-    assert "dependency.redis: unavailable" in output
+    assert "dependency.broker: unavailable" in output
+
+
+def test_status_refuses_to_probe_a_different_runtime_target(monkeypatch, capsys):
+    runtime_env = {
+        "DATABASE_URL": "postgresql://role@runtime.example.invalid/notebook",
+        "REDIS_URL": "rediss://runtime-redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://runtime-objects.example.invalid",
+    }
+    status_env = {
+        "DATABASE_URL": "postgresql://role@other.example.invalid/notebook",
+        "REDIS_URL": "rediss://other-redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://other-objects.example.invalid",
+    }
+    monkeypatch.setattr(
+        deployment,
+        "_active_state",
+        lambda: {
+            "profile": "full",
+            "children": {},
+            "managed_services": [],
+            "health_target_fingerprint": deployment._health_target_fingerprint(
+                "full", runtime_env
+            ),
+        },
+    )
+    monkeypatch.setattr(deployment, "load_environment", lambda: status_env)
+    monkeypatch.setattr(
+        deployment,
+        "_full_runtime_checks",
+        lambda _env: pytest.fail("must not probe a different dependency target"),
+    )
+    monkeypatch.setattr(
+        deployment,
+        "_compose_health",
+        lambda *_args: pytest.fail("must not probe a different Compose target"),
+    )
+    monkeypatch.setattr(
+        deployment,
+        "_port_ready",
+        lambda *_args: pytest.fail("must not probe a different listener target"),
+    )
+
+    assert deployment.status() == 1
+    assert "configuration.runtime: unavailable" in capsys.readouterr().out
+
+
+def test_health_target_fingerprint_excludes_passwords_but_detects_targets():
+    first = {
+        "DATABASE_URL": "postgresql://role:first@db.example.invalid/kb",
+        "REDIS_URL": "rediss://default:first@redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://objects.example.invalid",
+        "MINIO_ROOT_PASSWORD": "first",
+    }
+    rotated = {
+        **first,
+        "DATABASE_URL": "postgresql://role:second@db.example.invalid/kb",
+        "REDIS_URL": "rediss://default:second@redis.example.invalid/0",
+        "MINIO_ROOT_PASSWORD": "second",
+    }
+    different_target = {
+        **rotated,
+        "DATABASE_URL": "postgresql://role:second@other.example.invalid/kb",
+    }
+
+    assert deployment._health_target_fingerprint("full", first) == (
+        deployment._health_target_fingerprint("full", rotated)
+    )
+    assert deployment._health_target_fingerprint("full", rotated) != (
+        deployment._health_target_fingerprint("full", different_target)
+    )
 
 
 def test_compose_health_is_redacted(monkeypatch):
@@ -535,72 +611,33 @@ def test_start_installs_signal_forwarding_before_foreground_spawn(
 
 def test_startup_waits_are_cancellable():
     with pytest.raises(deployment.DeploymentError, match="interrupted"):
-        deployment._wait_for_runtime_readiness(
-            "full", {}, {}, should_stop=lambda: True
-        )
-    with pytest.raises(deployment.DeploymentError, match="interrupted"):
         deployment._wait_for_listener(
             "read", {}, {}, should_stop=lambda: True
         )
 
 
-def test_health_snapshot_checks_cancellation_between_bounded_probes(monkeypatch):
-    stop_checks = iter([False, True])
-    monkeypatch.setattr(
-        deployment,
-        "_full_runtime_checks",
-        lambda _env: {"worker": True},
-    )
-    monkeypatch.setattr(
-        deployment,
-        "_compose_health",
-        lambda *_args: pytest.fail("must stop before the next probe"),
-    )
-    with pytest.raises(deployment.DeploymentError, match="interrupted"):
-        deployment._health_snapshot(
-            "full",
-            {},
-            {},
-            (),
-            should_stop=lambda: next(stop_checks),
+def test_full_runtime_check_budget_covers_remote_probes(monkeypatch):
+    captured = {}
+
+    class Result:
+        stdout = (
+            '{"broker": true, "database": true, "maintenance": true, '
+            '"object_store": true, "worker": true}'
         )
 
+    def run(*_args, **kwargs):
+        captured["timeout"] = kwargs["timeout"]
+        return Result()
 
-def test_startup_health_retries_transient_busy_worker(monkeypatch):
-    snapshots = iter(
-        [
-            {"dependency.worker": False, "listener": True},
-            {"dependency.worker": True, "listener": True},
-        ]
+    monkeypatch.setattr(deployment.subprocess, "run", run)
+    assert all(deployment._full_runtime_checks({}).values())
+    assert captured["timeout"] == deployment.FULL_RUNTIME_CHECK_TIMEOUT_SECONDS
+    assert deployment.FULL_RUNTIME_CHECK_TIMEOUT_SECONDS >= 30
+    assert (
+        deployment.STARTUP_WAIT_TIMEOUT_SECONDS
+        > deployment.LISTENER_WAIT_TIMEOUT_SECONDS
     )
-    monkeypatch.setattr(
-        deployment,
-        "_health_snapshot",
-        lambda *_args, **_kwargs: next(snapshots),
-    )
-    monkeypatch.setattr(deployment.time, "sleep", lambda _seconds: None)
-    checks = deployment._wait_for_startup_health(
-        "full", {}, {}, (), should_stop=lambda: False
-    )
-    assert checks == {"dependency.worker": True, "listener": True}
-
-
-def test_runtime_health_requires_consecutive_failures():
-    failures = 0
-    for expected in (1, 2):
-        failures, should_stop = deployment._health_failure_result(
-            {"dependency.worker": False}, failures
-        )
-        assert failures == expected
-        assert should_stop is False
-    failures, should_stop = deployment._health_failure_result(
-        {"dependency.worker": False}, failures
-    )
-    assert failures == deployment.HEALTH_FAILURE_THRESHOLD
-    assert should_stop is True
-    assert deployment._health_failure_result(
-        {"dependency.worker": True}, failures
-    ) == (0, False)
+    assert deployment.STOP_WAIT_TIMEOUT_SECONDS > 10
 
 
 def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_path):
@@ -641,25 +678,19 @@ def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_pa
     monkeypatch.setattr(
         deployment,
         "_component_commands",
-        lambda _profile: {"worker": ["fails"], "beat": ["waits"]},
+        lambda _profile: {
+            "worker": ["waits"],
+            "beat": ["waits"],
+            "mcp": ["fails"],
+        },
     )
     monkeypatch.setattr(deployment, "_spawn_component", create_child)
     monkeypatch.setattr(deployment, "_claim_reservation", lambda *_args: None)
     monkeypatch.setattr(deployment, "_write_state", lambda *_args: None)
     monkeypatch.setattr(
         deployment,
-        "_wait_for_runtime_readiness",
-        lambda *_args, **_kwargs: events.append("worker-ready"),
-    )
-    monkeypatch.setattr(
-        deployment,
         "_wait_for_listener",
         lambda *_args, **_kwargs: events.append("listener-ready"),
-    )
-    monkeypatch.setattr(
-        deployment,
-        "_health_snapshot",
-        lambda *_args, **_kwargs: {"ready": True},
     )
     monkeypatch.setattr(
         deployment,
@@ -668,8 +699,14 @@ def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_pa
     )
     monkeypatch.setattr(deployment.signal, "signal", lambda *_args: None)
     assert deployment.supervise("full", "run-id") == 7
+    assert children[0].terminated is True
     assert children[1].terminated is True
-    assert events[:3] == ["spawn:worker", "worker-ready", "spawn:beat"]
+    assert events[:4] == [
+        "spawn:worker",
+        "spawn:beat",
+        "spawn:mcp",
+        "listener-ready",
+    ]
 
 
 def test_direct_supervisor_invocation_requires_reservation(monkeypatch, tmp_path):

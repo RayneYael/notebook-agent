@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import logging
 from logging.handlers import RotatingFileHandler
@@ -36,7 +37,17 @@ STATE_FILE = STATE_DIR / "runtime.json"
 LOCK_FILE = STATE_DIR / "lifecycle.lock"
 LOG_DIR = STATE_DIR / "logs"
 PROFILES = ("read", "full", "langbot")
-HEALTH_FAILURE_THRESHOLD = 3
+FULL_DEPENDENCY_NAMES = (
+    "database",
+    "broker",
+    "object_store",
+    "maintenance",
+    "worker",
+)
+FULL_RUNTIME_CHECK_TIMEOUT_SECONDS = 45
+LISTENER_WAIT_TIMEOUT_SECONDS = 60
+STARTUP_WAIT_TIMEOUT_SECONDS = 90
+STOP_WAIT_TIMEOUT_SECONDS = 20
 
 
 class DeploymentError(RuntimeError):
@@ -325,6 +336,72 @@ def _database_target(
     if not database_name:
         raise DeploymentError("database URL must include a database name")
     return parsed.hostname.lower(), database_name, parse_qs(parsed.query)
+
+
+def _url_health_target(value: str) -> dict[str, object]:
+    try:
+        parsed = urlparse(value)
+        return {
+            "scheme": parsed.scheme.lower(),
+            "host": (parsed.hostname or "").lower(),
+            "port": parsed.port,
+            "username": parsed.username or "",
+            "path": parsed.path,
+            "sslmode": parse_qs(parsed.query).get("sslmode", []),
+        }
+    except ValueError:
+        return {"invalid": True}
+
+
+def _health_target_fingerprint(
+    profile: str, env: Mapping[str, str]
+) -> str:
+    """Hash non-secret service targets used by an on-demand status probe."""
+
+    database_url = env.get("DATABASE_URL", "").strip()
+    targets: dict[str, object] = {
+        "profile": profile,
+        "database": (
+            _url_health_target(database_url)
+            if database_url
+            else {
+                "host": env.get("POSTGRES_HOST", "localhost").lower(),
+                "port": env.get("POSTGRES_PORT", "5432"),
+                "username": env.get("POSTGRES_USER", "postgres"),
+                "database": env.get("POSTGRES_DB", "kb"),
+            }
+        ),
+        "compose_project": env.get("COMPOSE_PROJECT_NAME", ROOT.name),
+    }
+    if profile in {"full", "langbot"}:
+        redis_url = env.get("REDIS_URL", "").strip()
+        targets["redis"] = (
+            _url_health_target(redis_url)
+            if redis_url
+            else {
+                "host": env.get("REDIS_HOST", "localhost").lower(),
+                "port": env.get("REDIS_PORT", "6379"),
+                "database": env.get("REDIS_DB", "0"),
+            }
+        )
+        targets["object_store"] = {
+            "endpoint": _url_health_target(
+                env.get("MINIO_ENDPOINT_URL", "http://localhost:9000")
+            ),
+            "bucket": env.get("MINIO_BUCKET", "kb-raw"),
+        }
+    if profile in {"read", "full"}:
+        targets["listener"] = {
+            "host": env.get("MCP_HOST", "127.0.0.1").lower(),
+            "port": env.get("MCP_PORT", "8000"),
+        }
+    else:
+        targets["listener"] = {
+            "host": env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1").lower(),
+            "port": env.get("CHANNEL_GATEWAY_PORT", "8765"),
+        }
+    encoded = json.dumps(targets, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(encoded).hexdigest()
 
 
 def _migration_environment(env: Mapping[str, str]) -> dict[str, str]:
@@ -678,10 +755,9 @@ def start(profile: str | None, *, foreground: bool) -> None:
                 STATE_FILE.unlink(missing_ok=True)
                 raise DeploymentError("failed to launch the runtime supervisor") from exc
         assert process is not None
-        # Full startup can perform up to three bounded health snapshots after
-        # worker/listener readiness, so the launcher must outlive that retry
-        # budget instead of killing a supervisor that is still validating.
-        deadline = time.monotonic() + 120
+        # The launcher must outlive the bounded listener wait without killing
+        # a supervisor whose application endpoint is still starting.
+        deadline = time.monotonic() + STARTUP_WAIT_TIMEOUT_SECONDS
         while time.monotonic() < deadline:
             state = _active_state()
             if (
@@ -732,6 +808,7 @@ def _write_state(
     children: Mapping[str, subprocess.Popen],
     checks: Mapping[str, bool],
     managed_services: Sequence[str],
+    env: Mapping[str, str],
 ) -> None:
     STATE_DIR.mkdir(parents=True, exist_ok=True)
     payload = {
@@ -742,6 +819,7 @@ def _write_state(
         "started_at": int(time.time()),
         "children": {name: child.pid for name, child in children.items()},
         "managed_services": list(managed_services),
+        "health_target_fingerprint": _health_target_fingerprint(profile, env),
         "health_updated_at": int(time.time()),
         "checks": dict(checks),
     }
@@ -897,17 +975,14 @@ def _full_runtime_checks(env: Mapping[str, str]) -> dict[str, bool]:
             env=dict(env),
             capture_output=True,
             text=True,
-            timeout=10,
+            timeout=FULL_RUNTIME_CHECK_TIMEOUT_SECONDS,
         )
         value = json.loads(result.stdout)
     except (OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-        return {
-            name: False
-            for name in ("database", "broker", "object_store", "maintenance", "worker")
-        }
+        return {name: False for name in FULL_DEPENDENCY_NAMES}
     if not isinstance(value, dict):
-        return {}
-    return {str(name): bool(ready) for name, ready in value.items()}
+        return {name: False for name in FULL_DEPENDENCY_NAMES}
+    return {name: bool(value.get(name, False)) for name in FULL_DEPENDENCY_NAMES}
 
 
 def _database_ready(env: Mapping[str, str]) -> bool:
@@ -983,28 +1058,6 @@ def _port_ready(host: str, port: int) -> bool:
         return False
 
 
-def _wait_for_runtime_readiness(
-    profile: str,
-    env: Mapping[str, str],
-    children: Mapping[str, subprocess.Popen],
-    should_stop: Callable[[], bool] = lambda: False,
-) -> None:
-    if profile in {"full", "langbot"}:
-        deadline = time.monotonic() + 35
-        while time.monotonic() < deadline:
-            if should_stop():
-                raise DeploymentError("runtime startup was interrupted")
-            if not _children_alive(children):
-                raise DeploymentError("a required background process exited during startup")
-            if all(_full_runtime_checks(env).values()):
-                break
-            time.sleep(0.5)
-        else:
-            raise DeploymentError(
-                "worker or mutation dependencies did not become ready"
-            )
-
-
 def _wait_for_listener(
     profile: str,
     env: Mapping[str, str],
@@ -1021,7 +1074,7 @@ def _wait_for_listener(
         port = int(port_value)
     except (TypeError, ValueError) as exc:
         raise DeploymentError("application listener port must be an integer") from exc
-    deadline = time.monotonic() + 10
+    deadline = time.monotonic() + LISTENER_WAIT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_stop():
             raise DeploymentError("runtime startup was interrupted")
@@ -1031,106 +1084,6 @@ def _wait_for_listener(
             return
         time.sleep(0.1)
     raise DeploymentError("application listener did not become ready")
-
-
-def _health_snapshot(
-    profile: str,
-    env: Mapping[str, str],
-    children: Mapping[str, subprocess.Popen],
-    managed_services: Sequence[str],
-    should_stop: Callable[[], bool] = lambda: False,
-) -> dict[str, bool]:
-    if should_stop():
-        raise DeploymentError("runtime health check was interrupted")
-    checks = {
-        f"process.{name}": child.poll() is None
-        for name, child in children.items()
-    }
-    if profile in {"full", "langbot"}:
-        checks.update(
-            {
-                f"dependency.{name}": ready
-                for name, ready in _full_runtime_checks(env).items()
-            }
-        )
-    else:
-        checks["dependency.database"] = _database_ready(env)
-    if should_stop():
-        raise DeploymentError("runtime health check was interrupted")
-    checks.update(
-        {
-            f"compose.{name}": ready
-            for name, ready in _compose_health(managed_services, env).items()
-        }
-    )
-    if should_stop():
-        raise DeploymentError("runtime health check was interrupted")
-    if profile in {"read", "full"}:
-        host = env.get("MCP_HOST", "127.0.0.1")
-        port = _env_port(env, "MCP_PORT", 8000)
-    else:
-        host = env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1")
-        port = _env_port(env, "CHANNEL_GATEWAY_PORT", 8765)
-    checks["listener"] = _port_ready(host, port)
-    return checks
-
-
-def _update_health_state(run_id: str, checks: Mapping[str, bool]) -> None:
-    state = _read_state()
-    if not state or state.get("run_id") != run_id:
-        return
-    state["checks"] = dict(checks)
-    state["health_updated_at"] = int(time.time())
-    tmp = STATE_FILE.with_suffix(".tmp")
-    tmp.write_text(json.dumps(state, sort_keys=True) + "\n", encoding="utf-8")
-    os.replace(tmp, STATE_FILE)
-
-
-def _failed_health_checks(checks: Mapping[str, bool]) -> tuple[str, ...]:
-    if not checks:
-        return ("snapshot",)
-    return tuple(sorted(name for name, ready in checks.items() if not ready))
-
-
-def _health_failure_result(
-    checks: Mapping[str, bool], previous_failures: int
-) -> tuple[int, bool]:
-    if checks and all(checks.values()):
-        return 0, False
-    failures = previous_failures + 1
-    return failures, failures >= HEALTH_FAILURE_THRESHOLD
-
-
-def _wait_for_startup_health(
-    profile: str,
-    env: Mapping[str, str],
-    children: Mapping[str, subprocess.Popen],
-    managed_services: Sequence[str],
-    *,
-    should_stop: Callable[[], bool],
-) -> dict[str, bool]:
-    checks: dict[str, bool] = {}
-    for attempt in range(1, HEALTH_FAILURE_THRESHOLD + 1):
-        checks = _health_snapshot(
-            profile,
-            env,
-            children,
-            managed_services,
-            should_stop=should_stop,
-        )
-        if checks and all(checks.values()):
-            return checks
-        failed = ", ".join(_failed_health_checks(checks))
-        print(
-            f"startup health attempt {attempt}/{HEALTH_FAILURE_THRESHOLD} failed: {failed}",
-            flush=True,
-        )
-        if attempt < HEALTH_FAILURE_THRESHOLD:
-            time.sleep(1)
-    raise DeploymentError(
-        "runtime health checks failed during startup: "
-        + ", ".join(_failed_health_checks(checks))
-    )
 
 
 def _signal_child_group(child: subprocess.Popen, sig: int) -> None:
@@ -1158,80 +1111,28 @@ def supervise(profile: str, run_id: str) -> int:
     signal.signal(signal.SIGINT, request_stop)
     try:
         commands = _component_commands(profile)
-        if "worker" in commands:
-            children["worker"] = _spawn_component(
-                "worker", commands["worker"], env, logs
-            )
-        _wait_for_runtime_readiness(
-            profile, env, children, should_stop=lambda: stopping
-        )
-        if "beat" in commands:
-            children["beat"] = _spawn_component(
-                "beat", commands["beat"], env, logs
-            )
-        for name in ("mcp", "gateway"):
-            if name in commands:
-                children[name] = _spawn_component(
-                    name, commands[name], env, logs
-                )
+        # Preparation has already validated configuration, started owned
+        # infrastructure, and applied migrations. Launch the complete profile
+        # now; deep dependency probes are diagnostics, not lifecycle gates.
+        for name, command in commands.items():
+            children[name] = _spawn_component(name, command, env, logs)
         _wait_for_listener(profile, env, children, should_stop=lambda: stopping)
         managed_services = build_plan(profile, env).compose_services
-        checks = _wait_for_startup_health(
-            profile,
-            env,
-            children,
-            managed_services,
-            should_stop=lambda: stopping,
-        )
+        checks = {
+            f"process.{name}": child.poll() is None
+            for name, child in children.items()
+        }
+        checks.update({f"compose.{name}": True for name in managed_services})
+        checks["listener"] = True
         _write_state(
-            run_id, profile, children, checks, managed_services
+            run_id, profile, children, checks, managed_services, env
         )
-        next_health_update = time.monotonic() + 10
-        consecutive_health_failures = 0
         while not stopping:
             for child in children.values():
                 if child.poll() is not None:
                     unexpected_exit = True
                     stopping = True
                     break
-            if not stopping and time.monotonic() >= next_health_update:
-                refreshed_checks = _health_snapshot(
-                    profile,
-                    env,
-                    children,
-                    managed_services,
-                    should_stop=lambda: stopping,
-                )
-                _update_health_state(
-                    run_id,
-                    refreshed_checks,
-                )
-                previous_failures = consecutive_health_failures
-                consecutive_health_failures, stop_for_health = (
-                    _health_failure_result(
-                        refreshed_checks, consecutive_health_failures
-                    )
-                )
-                if consecutive_health_failures:
-                    failed = ", ".join(
-                        _failed_health_checks(refreshed_checks)
-                    )
-                    print(
-                        "runtime health degraded "
-                        f"({consecutive_health_failures}/{HEALTH_FAILURE_THRESHOLD}): "
-                        f"{failed}",
-                        flush=True,
-                    )
-                elif previous_failures:
-                    print("runtime health recovered", flush=True)
-                if stop_for_health:
-                    # MCP computes mutation readiness at process startup. Stop
-                    # the whole owned runtime after bounded consecutive
-                    # failures so stale full capabilities cannot persist while
-                    # a single busy-worker probe remains non-fatal.
-                    unexpected_exit = True
-                    stopping = True
-                next_health_update = time.monotonic() + 10
             if not stopping:
                 time.sleep(0.25)
     finally:
@@ -1277,9 +1178,9 @@ def stop() -> None:
                 "runtime startup has not reached a stoppable supervisor state"
             )
         time.sleep(0.1)
-    # A health subprocess may take up to ten seconds to observe cancellation,
-    # followed by the supervisor's bounded ten-second child cleanup.
-    deadline = time.monotonic() + 25
+    # The supervisor has no deep dependency probe in its lifecycle loop, so
+    # this budget only needs to cover signal observation and child cleanup.
+    deadline = time.monotonic() + STOP_WAIT_TIMEOUT_SECONDS
     while time.monotonic() < deadline and _pid_alive(pid):
         time.sleep(0.1)
     if _pid_alive(pid):
@@ -1315,13 +1216,9 @@ def status() -> int:
     if not state:
         print("Notebook Agent: stopped")
         return 1
-    print(f"Notebook Agent: running (profile={state.get('profile')})")
-    raw_checks = state.get("checks", {})
-    checks = (
-        {str(name): bool(value) for name, value in raw_checks.items()}
-        if isinstance(raw_checks, dict)
-        else {}
-    )
+    profile = str(state.get("profile", ""))
+    print(f"Notebook Agent: running (profile={profile})")
+    checks: dict[str, bool] = {}
     children = state.get("children", {})
     if isinstance(children, dict):
         for name, pid in sorted(children.items()):
@@ -1330,15 +1227,42 @@ def status() -> int:
             except (TypeError, ValueError):
                 healthy = False
             checks[f"process.{name}"] = healthy
-    try:
-        stale = time.time() - int(state.get("health_updated_at", 0)) > 30
-    except (TypeError, ValueError):
-        stale = True
+    env = load_environment()
+    expected_target = state.get("health_target_fingerprint")
+    if expected_target != _health_target_fingerprint(profile, env):
+        checks["configuration.runtime"] = False
+    else:
+        if profile in {"full", "langbot"}:
+            checks.update(
+                {
+                    f"dependency.{name}": ready
+                    for name, ready in _full_runtime_checks(env).items()
+                }
+            )
+        else:
+            checks["dependency.database"] = _database_ready(env)
+        raw_services = state.get("managed_services", [])
+        managed_services = (
+            tuple(str(service) for service in raw_services)
+            if isinstance(raw_services, list)
+            else ()
+        )
+        checks.update(
+            {
+                f"compose.{name}": ready
+                for name, ready in _compose_health(managed_services, env).items()
+            }
+        )
+        if profile in {"read", "full"}:
+            host = env.get("MCP_HOST", "127.0.0.1")
+            port = _env_port(env, "MCP_PORT", 8000)
+        else:
+            host = env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1")
+            port = _env_port(env, "CHANNEL_GATEWAY_PORT", 8765)
+        checks["listener"] = _port_ready(host, port)
     for name, healthy in sorted(checks.items()):
         print(f"  {name}: {'ready' if healthy else 'unavailable'}")
-    if stale:
-        print("  health: stale")
-    return 0 if checks and all(checks.values()) and not stale else 1
+    return 0 if checks and all(checks.values()) else 1
 
 
 def logs(component: str | None, *, follow: bool, lines: int) -> int:

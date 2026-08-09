@@ -194,9 +194,12 @@ class LiveEvaluator:
         runtime, self.runtime = self.runtime, None
         try:
             if runtime is not None:
-                await asyncio.wait_for(
-                    runtime.stop(), timeout=_TEARDOWN_TIMEOUT_SECONDS
-                )
+                # MCP's stdio client owns an AnyIO cancel scope that must be
+                # exited by the same asyncio Task that entered it. wait_for()
+                # creates a child Task; timeout() preserves task affinity while
+                # retaining the same bounded cleanup contract.
+                async with asyncio.timeout(_TEARDOWN_TIMEOUT_SECONDS):
+                    await runtime.stop()
         except BaseException:
             cleanup_failed = True
         if self.grant_id is not None:

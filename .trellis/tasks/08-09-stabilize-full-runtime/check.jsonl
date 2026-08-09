@@ -1,0 +1,1 @@
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Verify the implementation retains lifecycle ownership and diagnostic-only dependency health."}
