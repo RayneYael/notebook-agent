@@ -38,6 +38,7 @@ READINESS_CHECKS: tuple[str, ...] = (
 # deadline must leave room for both inspections plus client setup.
 _WORKER_INSPECT_TIMEOUT_SECONDS = 1.0
 _WORKER_TOTAL_TIMEOUT_SECONDS = 5.0
+
 _REQUIRED_WORKER_QUEUES = frozenset({"ingest", "maintenance"})
 
 

@@ -63,6 +63,16 @@ def test_capabilities_only_advertise_configured_login_channels():
     assert capabilities.json()["web_login_channels"] == ["telegram"]
 
 
+def test_capabilities_can_advertise_email_as_the_only_login_route():
+    app = _load_create_app()(web_login_channels=("email",))
+
+    with TestClient(app, base_url="https://testserver") as client:
+        capabilities = client.get("/api/v1/capabilities")
+
+    assert capabilities.status_code == 200
+    assert capabilities.json()["web_login_channels"] == ["email"]
+
+
 def test_capabilities_advertise_read_only_mode_without_hiding_library_reads():
     app = _load_create_app()(save_enabled=False)
 

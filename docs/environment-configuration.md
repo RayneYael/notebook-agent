@@ -568,7 +568,7 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 
 1. 确认改的是正确文件：根 `.env`、stdio process env、plugin private `.env` 或 proxy secret。
 2. 重启表格中列出的消费者；环境变量不会自动热更新。
-3. 运行 `.venv/bin/alembic current`，当前 head 应为 `b2c3d4e5f6a7`。
+3. 运行 `.venv/bin/alembic current`，当前 head 应为 `f1a2b3c4d5e6`。
 4. full profile 检查 Redis、MinIO、Celery `ping` 和 `active_queues`。
 5. MCP 运行 `initialize -> tools/list -> tools/call`；只读应为 3 tools，ready full 应为 10 tools。
 6. Web 运行 OpenAPI check、frontend tests/build，检查 `/api/v1/health`、`/login`、`/library` 和详情页直接刷新；未知 `/api/*` 必须返回 JSON 404。

@@ -435,6 +435,65 @@ class Settings:
         or "127.0.0.1"
     )
 
+    # --- Same-origin Web API / email login ---
+    # Disabled by default so existing channel-only deployments do not acquire
+    # an email-provider dependency merely by upgrading the application.
+    web_auth_enabled: bool = field(
+        default_factory=lambda: _env_bool("WEB_AUTH_ENABLED", False)
+    )
+    web_api_prefix: str = field(
+        default_factory=lambda: _env("WEB_API_PREFIX", "/api/v1") or "/api/v1"
+    )
+    web_public_origin: str | None = field(
+        default_factory=lambda: _env("WEB_PUBLIC_ORIGIN")
+    )
+    web_session_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_SESSION_TTL_SECONDS", 30 * 24 * 60 * 60)
+    )
+    web_auth_code_ttl_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_CODE_TTL_SECONDS", 600)
+    )
+    web_auth_max_attempts: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_MAX_ATTEMPTS", 5)
+    )
+    web_auth_resend_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_RESEND_SECONDS", 60)
+    )
+    web_auth_email_window_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_EMAIL_WINDOW_SECONDS", 900)
+    )
+    web_auth_email_max_sends: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_EMAIL_MAX_SENDS", 3)
+    )
+    web_auth_ip_window_seconds: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_IP_WINDOW_SECONDS", 3600)
+    )
+    web_auth_ip_max_sends: int = field(
+        default_factory=lambda: _env_int("WEB_AUTH_IP_MAX_SENDS", 10)
+    )
+    # An unset provider deliberately keeps development/test mail in-process.
+    # Production Web authentication must select an explicit network provider.
+    email_provider: str | None = field(default_factory=lambda: _env("EMAIL_PROVIDER"))
+    resend_api_key: str | None = field(default_factory=lambda: _env("RESEND_API_KEY"))
+    resend_from_email: str | None = field(default_factory=lambda: _env("RESEND_FROM_EMAIL"))
+    resend_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("RESEND_TIMEOUT_SECONDS", 10.0)
+    )
+    smtp_host: str | None = field(default_factory=lambda: _env("SMTP_HOST"))
+    smtp_port: int = field(default_factory=lambda: _env_int("SMTP_PORT", 587))
+    smtp_username: str | None = field(default_factory=lambda: _env("SMTP_USERNAME"))
+    smtp_password: str | None = field(default_factory=lambda: _env("SMTP_PASSWORD"))
+    smtp_from_email: str | None = field(default_factory=lambda: _env("SMTP_FROM_EMAIL"))
+    smtp_starttls: bool = field(
+        default_factory=lambda: _env_bool("SMTP_STARTTLS", True)
+    )
+    smtp_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("SMTP_TIMEOUT_SECONDS", 10.0)
+    )
+    web_trusted_proxy_hosts: str = field(
+        default_factory=lambda: _env("WEB_TRUSTED_PROXY_HOSTS", "") or ""
+    )
+
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
@@ -462,6 +521,73 @@ class Settings:
             )
         if self.mcp_path != "/" and self.mcp_path.endswith("/"):
             raise ValueError("MCP_PATH must not have a trailing slash")
+        if not self.web_api_prefix.startswith("/") or self.web_api_prefix == "/":
+            raise ValueError("WEB_API_PREFIX must be a non-root absolute path")
+        if self.web_api_prefix.endswith("/"):
+            raise ValueError("WEB_API_PREFIX must not have a trailing slash")
+        if self.web_api_prefix == self.mcp_path or self.web_api_prefix.startswith(self.mcp_path + "/") or self.mcp_path.startswith(self.web_api_prefix + "/"):
+            raise ValueError("WEB_API_PREFIX and MCP_PATH must not overlap")
+        positive_web_values = (
+            self.web_session_ttl_seconds,
+            self.web_auth_code_ttl_seconds,
+            self.web_auth_max_attempts,
+            self.web_auth_resend_seconds,
+            self.web_auth_email_window_seconds,
+            self.web_auth_email_max_sends,
+            self.web_auth_ip_window_seconds,
+            self.web_auth_ip_max_sends,
+        )
+        if (
+            any(value <= 0 for value in positive_web_values)
+            or self.resend_timeout_seconds <= 0
+            or self.smtp_timeout_seconds <= 0
+        ):
+            raise ValueError("Web authentication durations and limits must be positive")
+        if self.web_auth_enabled:
+            parsed_origin = urlsplit(self.web_public_origin or "")
+            if (
+                parsed_origin.scheme != "https"
+                or not parsed_origin.netloc
+                or parsed_origin.path not in {"", "/"}
+                or parsed_origin.query
+                or parsed_origin.fragment
+            ):
+                raise ValueError("WEB_PUBLIC_ORIGIN must be an HTTPS origin when Web auth is enabled")
+            if self.web_public_origin.rstrip("/") != self.web_public_origin:
+                raise ValueError("WEB_PUBLIC_ORIGIN must not have a trailing slash")
+            if not self.web_auth_secret or len(self.web_auth_secret) < 32:
+                raise ValueError("WEB_AUTH_SECRET must be at least 32 characters")
+            provider = (self.email_provider or "").strip().lower()
+            if provider not in {"", "resend", "smtp"}:
+                raise ValueError("EMAIL_PROVIDER must be resend or smtp")
+            if self.notebook_agent_env == "production" and not provider:
+                raise ValueError("production Web auth requires EMAIL_PROVIDER")
+            if provider == "resend" and (
+                not self.resend_api_key or not self.resend_from_email
+            ):
+                raise ValueError("EMAIL_PROVIDER=resend requires RESEND_API_KEY and RESEND_FROM_EMAIL")
+            if provider == "smtp":
+                if not all((
+                    self.smtp_host,
+                    self.smtp_username,
+                    self.smtp_password,
+                    self.smtp_from_email,
+                )):
+                    raise ValueError(
+                        "EMAIL_PROVIDER=smtp requires SMTP_HOST, SMTP_USERNAME, "
+                        "SMTP_PASSWORD, and SMTP_FROM_EMAIL"
+                    )
+                if not 1 <= self.smtp_port <= 65535:
+                    raise ValueError("SMTP_PORT must be between 1 and 65535")
+                smtp_header_values = (
+                    self.smtp_host,
+                    self.smtp_username,
+                    self.smtp_from_email,
+                )
+                if any(
+                    "\n" in value or "\r" in value for value in smtp_header_values
+                ):
+                    raise ValueError("SMTP settings must not contain line breaks")
         if self.agent_composer_max_tokens <= 0:
             raise ValueError("AGENT_COMPOSER_MAX_TOKENS must be positive")
         if self.trash_retention_days <= 0:

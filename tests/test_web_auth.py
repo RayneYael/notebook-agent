@@ -6,8 +6,8 @@ import pytest
 from app.channels.types import TenantContext, UserScope
 from app.config import Settings
 from app.web.auth import (
-    SESSION_COOKIE_NAME,
     CSRF_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
     WebAuthError,
     WebAuthService,
     hash_browser_secret,

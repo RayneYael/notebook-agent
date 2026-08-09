@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/channel-identity-linking.md", "reason": "Web extends trusted identities and transactional cross-tenant linking."}
+{"file": ".trellis/spec/backend/mcp-channel-runtime.md", "reason": "Web and MCP share a process but must preserve separate authentication boundaries."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "New auth/session tables require one migration head and deployment revision sync."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "The feature crosses HTTP, auth, database, channel, agent, and proxy layers."}

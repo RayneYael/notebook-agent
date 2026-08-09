@@ -113,6 +113,7 @@ CREATE TABLE ingest_dispatch (
   id INTEGER PRIMARY KEY,
   public_id TEXT NOT NULL,
   item_id INTEGER NOT NULL,
+  source_thread_id INTEGER,
   request_key TEXT NOT NULL,
   attempt INTEGER NOT NULL DEFAULT 1,
   state TEXT NOT NULL DEFAULT 'pending',
