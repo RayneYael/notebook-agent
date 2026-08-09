@@ -39,7 +39,8 @@ describe("ShowcasePage", () => {
     expect(screen.getByRole("heading", { name: "生成带来源依据的回答" })).toBeInTheDocument();
     expect(screen.getByText(/建立可检索的内容索引/)).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "选一个场景，看答案出处。" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "下次需要答案，直接回到原文。" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "答案与原文，一步之遥" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "下次需要答案，直接回到原文。" })).not.toBeInTheDocument();
     expect(container.querySelectorAll(".showcase-audience__icon")).toHaveLength(4);
     expect(screen.getByRole("heading", { name: "跨平台收集" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "多渠道使用者" })).not.toBeInTheDocument();

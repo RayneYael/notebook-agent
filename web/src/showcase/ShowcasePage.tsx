@@ -587,7 +587,7 @@ export function ShowcasePage() {
 
         <section className="showcase-cta" aria-labelledby="showcase-cta-title">
           <p className="showcase-overline">YOUR KNOWLEDGE / YOUR EVIDENCE</p>
-          <h2 id="showcase-cta-title">下次需要答案，<br />直接回到原文。</h2>
+          <h2 id="showcase-cta-title">答案与原文，<br />一步之遥</h2>
           <RouteLink className="showcase-button showcase-button--dark" to="/login">进入私人资料库 <ArrowIcon /></RouteLink>
           <p className="showcase-cta__note">本页展示已经实现的 YouTube 资料库流程 · 可用登录入口以当前部署配置为准</p>
         </section>
