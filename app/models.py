@@ -479,6 +479,13 @@ class IngestDispatch(Base):
         ForeignKey("content_item.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # Immutable source conversation captured by the admission transaction.
+    # ``NULL`` is intentional for MCP/CLI and unsupported channels; the
+    # notification poller must never infer a target from a later identity.
+    source_thread_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("conversation_thread.id", ondelete="SET NULL"),
+    )
     request_key: Mapped[str] = mapped_column(Text, nullable=False)
     attempt: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default="1"
@@ -514,6 +521,7 @@ class IngestDispatch(Base):
             created_at.desc(),
             "item_id",
         ),
+        Index("ix_ingest_dispatch_source_thread", "source_thread_id"),
     )
 
 
@@ -587,6 +595,99 @@ class IngestCompletionEvent(Base):
             "ix_ingest_completion_event_publish_claim",
             "publish_state",
             "claimed_at",
+        ),
+    )
+
+
+class IngestCompletionDelivery(Base):
+    """Claim/ack ledger for one completion-event handler.
+
+    A missing row represents a pending delivery.  Rows are created only when
+    a poller claims an event, which keeps the ledger compatible with events
+    written by older producers and makes ``(event_id, handler_key)`` the
+    durable idempotency key.
+    """
+
+    __tablename__ = "ingest_completion_delivery"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    event_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("ingest_completion_event.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    handler_key: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="claimed"
+    )
+    disposition: Mapped[str | None] = mapped_column(Text)
+    claim_token: Mapped[str | None] = mapped_column(Text)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    attempts: Mapped[int] = mapped_column(Integer, nullable=False, server_default="1")
+    next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_error_code: Mapped[str | None] = mapped_column(Text)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "event_id",
+            "handler_key",
+            name="uq_ingest_completion_delivery_event_handler",
+        ),
+        CheckConstraint(
+            "status IN ('claimed', 'succeeded', 'failed')",
+            name="ck_ingest_completion_delivery_status",
+        ),
+        CheckConstraint(
+            "attempts >= 1",
+            name="ck_ingest_completion_delivery_attempts",
+        ),
+        CheckConstraint(
+            "last_error_code IS NULL OR last_error_code IN "
+            "('outbound_api_key_missing', 'invalid_outbound_target', "
+            "'outbound_auth_rejected', 'outbound_contract_invalid', "
+            "'outbound_target_not_found', 'outbound_rate_limited', "
+            "'outbound_server_error', 'outbound_http_4xx', "
+            "'outbound_http_status', 'outbound_timeout', "
+            "'outbound_connect_failed', 'outbound_transport_failed', "
+            "'redirect_rejected', 'notification_deferred', "
+            "'notification_internal_failure', 'retry_exhausted', 'manual_redrive')",
+            name="ck_ingest_completion_delivery_error_code",
+        ),
+        CheckConstraint(
+            "(status = 'claimed' AND claim_token IS NOT NULL AND claimed_at IS NOT NULL "
+            "AND disposition IS NULL AND last_error_code IS NULL "
+            "AND next_attempt_at IS NULL AND completed_at IS NULL) OR "
+            "(status = 'succeeded' AND disposition IS NOT NULL AND disposition IN "
+            "('sent', 'skipped_no_channel', 'skipped_deleted', "
+            "'skipped_identity_disabled', 'skipped_owner_disabled', "
+            "'skipped_target_mismatch') "
+            "AND completed_at IS NOT NULL AND claim_token IS NULL "
+            "AND claimed_at IS NULL AND next_attempt_at IS NULL "
+            "AND last_error_code IS NULL) OR "
+            "(status = 'failed' AND last_error_code IS NOT NULL "
+            "AND claim_token IS NULL AND claimed_at IS NULL "
+            "AND completed_at IS NULL AND "
+            "((next_attempt_at IS NOT NULL AND disposition IS NULL) OR "
+            "(next_attempt_at IS NULL AND disposition IS NOT NULL AND disposition IN "
+            "('terminal_failure', 'retry_exhausted'))))",
+            name="ck_ingest_completion_delivery_state_contract",
+        ),
+        Index(
+            "ix_ingest_completion_delivery_claim",
+            "status",
+            "next_attempt_at",
+            "claimed_at",
+        ),
+        Index(
+            "ix_ingest_completion_delivery_event",
+            "event_id",
         ),
     )
 

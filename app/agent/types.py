@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from typing_extensions import TypedDict
 
 from pydantic import BaseModel, ConfigDict, Field, PrivateAttr
 
+from app.agent.context import TurnContext
 from app.channels.types import TenantContext
 
 
@@ -86,6 +87,10 @@ class AgentRequest:
     # message id of the newest completed turn before the current message;
     # model/tool arguments never carry it.
     latest_turn_message_id: str | None = None
+    # A bounded, immutable projection of trusted prior-turn focus.  Appended
+    # with a default to preserve positional compatibility for integrations
+    # that construct AgentRequest directly.
+    context: TurnContext = field(default_factory=TurnContext)
 
     def __post_init__(self) -> None:
         if not self.question.strip():

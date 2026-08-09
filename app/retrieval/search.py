@@ -39,6 +39,7 @@ def vector_search(
     platform: str | None = None,
     platform_ids: Iterable[str] | None = None,
     platform_id: str | None = None,
+    item_id: int | None = None,
 ) -> list[Hit]:
     distance = Segment.embedding.cosine_distance(query_vector)
     predicates = [
@@ -53,6 +54,8 @@ def vector_search(
     if platform_ids is not None or platform_id is not None:
         values = tuple(platform_ids) if platform_ids is not None else (platform_id,)
         predicates.append(ContentItem.platform_id.in_(values) if values else false())
+    if item_id is not None:
+        predicates.append(Segment.item_id == item_id)
     stmt = (
         select(Segment, ContentItem, (1 - distance).label("score"))
         .join(ContentItem)
@@ -72,6 +75,7 @@ def bm25_search(
     platform: str | None = None,
     platform_ids: Iterable[str] | None = None,
     platform_id: str | None = None,
+    item_id: int | None = None,
 ) -> list[Hit]:
     is_zh = bool(re.search(r"[\u3400-\u9fff]", query))
     predicates = [
@@ -85,6 +89,8 @@ def bm25_search(
     if platform_ids is not None or platform_id is not None:
         values = tuple(platform_ids) if platform_ids is not None else (platform_id,)
         predicates.append(ContentItem.platform_id.in_(values) if values else false())
+    if item_id is not None:
+        predicates.append(Segment.item_id == item_id)
     base = select(Segment, ContentItem).join(ContentItem).where(*predicates)
     if is_zh:
         score = func.similarity(Segment.text, query)

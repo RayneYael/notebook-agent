@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Verify the simplified entry point does not weaken MCP authentication, listener safety, or fail-closed readiness."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Verify exactly one Beat and a live worker on both queues remain required for mutation readiness."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify migrations remain single-head, bounded, and correctly separated from runtime connections."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Verify all child processes receive consistent trusted CA configuration and logs remain redacted."}
+{"file":"docs/environment-configuration.md","reason":"Audit variable precedence, minimal profiles, and separation of root, MCP token, and LangBot plugin secrets."}
+{"file":"docs/deployment.md","reason":"Audit lifecycle ownership, startup order, dependency readiness, logs, and rollback behavior."}

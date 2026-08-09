@@ -100,6 +100,12 @@ retry_item_ingestion
 - Stdio requires `MCP_TOKEN` and resolves its scope before registering tools.
   Stdout contains protocol bytes only; diagnostics use stderr or the bounded
   private log sink.
+- A parent process that captures stdio-server diagnostics in a seekable file
+  must open the child stderr target with append semantics. Parent reads must
+  not move the subprocess's shared write offset backwards. The capture file
+  must outlive transport shutdown so final diagnostics can be drained, while
+  shutdown remains hard-bounded and run-owned grants are still revoked when
+  transport cleanup fails or times out.
 - Streamable HTTP prefers `Authorization: Bearer <token>`. Optional MiXer
   compatibility accepts `https://host/<MCP_PATH>/c/<opaque-token>` only when
   `MCP_URL_TOKEN_MODE=true`. Query tokens are rejected, HTTPS is required for
@@ -162,6 +168,9 @@ MCP_TOKEN=<stdio-only raw bearer, process environment>
   natural language and zero calls for slash commands and invalid schemas.
 - Start a real stdio subprocess and assert protocol-clean stdout, token/scope
   resolution, discovery, and representative invocation.
+- Cover stdio capture shutdown: final diagnostics emitted during transport
+  close remain readable, the capture file is closed, teardown is bounded, and
+  cancellation propagates while run-owned grant revocation is still attempted.
 - Exercise the Streamable HTTP ASGI app for missing/malformed/read/full/revoked
   credentials, Bearer/path parity, HTTPS enforcement, query rejection, custom
   paths, session initialization, discovery, calls, and secret-free failures.

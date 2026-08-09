@@ -42,10 +42,12 @@ Browser -> HTTPS reverse proxy -> /*        -> React static service
                                `-> /api/v1  -> Notebook Agent web-server
                                                (WEB_SERVE_STATIC=false)
 
-                 terminal dispatch -> durable outbox row
+                 terminal dispatch -> durable PostgreSQL outbox row
                                                   |
-                    Redis `ingest-completion` queue
-                 (future idempotent consumer only)
+                 delivery ledger poller on `maintenance`
+                              (default every 10 seconds)
+                                                  |
+                       LangBot source bot + conversation
 ```
 
 安全边界有一个重要限制：`gateway-server` 只允许绑定 `127.0.0.1`、`::1` 或
@@ -121,6 +123,35 @@ embedding；模型 provider 通过标准环境变量取得同一 bundle。两个
 python3.11 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev]'
+```
+
+通用单机部署优先使用统一入口，而不是复制完整配置并分别打开多个终端：
+
+```bash
+./scripts/notebook-agent init --profile read     # 或 full / langbot
+./scripts/notebook-agent start
+./scripts/notebook-agent status
+```
+
+启动器生成最小 `.env.runtime`、按 profile 启动必要的本地 Compose service、执行迁移，并在
+同一 supervisor 下管理 MCP/Gateway、一个双队列 Celery worker 和唯一的 Celery Beat。
+这些组件仍为独立进程。`stop` 只停止启动器拥有且身份匹配的应用进程；持久卷和外部数据库、
+Redis、MinIO 不会被停止或删除。日志位于 `.runtime/deployment/logs/`，通过
+`./scripts/notebook-agent logs <component>` 查看。
+启动期健康探测会容忍单 worker 正忙导致的一次瞬时 readiness miss；运行期只有连续三次
+健康失败才关闭整组 runtime。每次失败及具体检查项都会写入 `supervisor.log`。
+
+容器或 systemd 可使用 `start --foreground`，由外层 service manager 管理 supervisor。
+生产 secret manager 注入值优先于 `.env` 和生成文件。若 `DATABASE_URL` 是 Neon pooled
+runtime URL，还必须向启动命令提供 direct `MIGRATION_DATABASE_URL`；启动器拒绝使用 pooled
+URL 执行 Alembic。主机安装、TLS proxy、systemd hardening 和 firewall 仍由平台部署流程负责。
+该 lifecycle launcher 面向 Linux/macOS；Windows 环境继续使用下面的直接 Python/Celery
+命令。组件日志按 `NOTEBOOK_AGENT_LOG_MAX_BYTES` 与
+`NOTEBOOK_AGENT_LOG_BACKUP_COUNT` 轮转。
+
+需要完全手工管理进程时，可以继续复制完整参考：
+
+```bash
 cp .env.example .env
 cd web
 corepack pnpm install --frozen-lockfile
@@ -199,7 +230,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `a7b8c9d0e1f2`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `b2c3d4e5f6a7`，`alembic check` 应显示没有新的 upgrade operation。
 
 本地 Compose Redis 使用持久卷、AOF 和 `appendfsync=always`，使 Celery 接收到的
 persistent 完成消息在确认 publish 前落盘。确认配置没有被覆盖：
@@ -210,7 +241,8 @@ docker compose exec -T redis redis-cli CONFIG GET appendfsync
 ```
 
 期望分别返回 `yes` 和 `always`。远程 `REDIS_URL` 必须指向提供等价“写入确认前持久化”
-保证的托管实例；仅有高可用或定期 snapshot 不足以支撑完成事件的 at-least-once 合同。
+保证的托管实例，避免已经确认的 `ingest` broker task 丢失。completion notification 的
+at-least-once source of truth 是 PostgreSQL event + delivery ledger，不依赖 Redis snapshot。
 
 如果 Agent 自身也容器化，数据库主机应使用 Compose service 名 `postgres`；如果
 Agent 运行在宿主机，使用当前示例中的 `localhost:5432`。
@@ -260,7 +292,7 @@ curl --fail http://127.0.0.1:9000/minio/health/ready
 
 通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG` 且本地实例报告
 `appendonly=yes`、`appendfsync=always`、MinIO ready endpoint
-返回成功、schema 为 `a7b8c9d0e1f2 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+返回成功、schema 为 `b2c3d4e5f6a7 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
 在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
@@ -269,7 +301,7 @@ worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 
 .venv/bin/celery -A app.ingest.tasks.celery_app worker \
   --loglevel=INFO --queues=ingest,maintenance
 
-# 只启动一个 beat 实例；它同时投递 completion outbox 补偿和 purge task。
+# 只启动一个 beat 实例；它投递 source-channel notification poller 和 purge task。
 .venv/bin/celery -A app.ingest.tasks.celery_app beat --loglevel=INFO
 ```
 
@@ -279,16 +311,88 @@ worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect ping
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
 
-# Redis transport: inspect the durable completion backlog without consuming it.
+# Legacy Redis transport: inspect the retired completion backlog without consuming it.
 docker compose exec -T redis redis-cli LLEN ingest-completion
 ```
 
 至少一个目标 worker 必须返回 `pong`，且 active queue 包含 `ingest` 与 `maintenance`。
-`ingest-completion` 已由 producer 声明为 durable queue，但在真实通知/编排 consumer
-部署前，**不要**把它加入现有 worker 的 `--queues`；没有业务 handler 的 worker 会 ack
-并丢弃事件。worker 必须拥有
+`ingest-completion` 已由旧 producer 声明为 durable queue，但当前 poller 从 PostgreSQL
+直接读取 completion event；不要把该 queue 加入现有 worker，也不要恢复旧 producer。
+发布 poller 前先停旧版本 producer、确认数据库事件覆盖，再按运维授权清理 backlog。
+worker 必须拥有
 PostgreSQL、Redis、MinIO、`ZHIPU_API_KEY` 和可信 CA 配置；不得在 gateway 请求进程内同步
 执行 metadata、字幕、MinIO、chunk 或 embedding。worker 的任务参数只应是内部 dispatch ID。
+
+### 6.1.1 source-channel notification heartbeat and recovery
+
+每次 maintenance poller tick 完成后，worker 会写一条固定的
+`notification_poller_heartbeat` diagnostic。它只包含 `heartbeat`、
+`claimed/succeeded/skipped/failed/deferred`、`duration_ms`、
+`oldest_eligible_backlog_age_seconds` 和必要时的数值
+`observability_failed=1`；不包含 bot、conversation、用户、标题、URL、消息或异常文本。
+`oldest_eligible_backlog_age_seconds=0` 表示当前没有可领取事件。该 heartbeat 不是 MCP
+readiness 依赖；它用于确认 Beat + maintenance worker 仍在运行。
+
+在配置的 runtime log 或 worker stdout/journal 中查看最近 heartbeat（路径取决于部署的
+`NOTEBOOK_AGENT_LOG_DIR`）：
+
+```bash
+grep '"event":"notification_poller_heartbeat"' \
+  .runtime/logs/notebook-agent-$(date +%F).log | tail -n 5
+```
+
+数据库 backlog/failed-ledger 检查必须使用受保护的 operator 连接。下面的查询只返回计数和
+时间年龄，不读取目标地址或通知正文；`300` 应替换成实际的
+`INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS`：
+
+```bash
+docker compose exec -T postgres psql \
+  -U "${POSTGRES_USER:-postgres}" -d "${POSTGRES_DB:-kb}" \
+  -v claim_timeout_seconds="${INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS:-300}" \
+  -c "
+SELECT count(*) AS eligible_count,
+       COALESCE(EXTRACT(EPOCH FROM (clock_timestamp() - min(e.created_at)))::bigint, 0)
+         AS oldest_eligible_backlog_age_seconds
+FROM ingest_completion_event AS e
+LEFT JOIN ingest_completion_delivery AS d
+  ON d.event_id = e.id
+ AND d.handler_key = 'source-channel.notification.v1'
+WHERE d.id IS NULL
+   OR (d.status = 'failed' AND d.next_attempt_at IS NOT NULL
+       AND d.next_attempt_at <= now())
+   OR (d.status = 'claimed'
+       AND (d.claimed_at IS NULL OR d.claimed_at <= now()
+            - (:'claim_timeout_seconds' || ' seconds')::interval));
+
+SELECT count(*) FILTER (WHERE status = 'failed') AS failed_count,
+       count(*) FILTER (WHERE status = 'failed' AND disposition = 'retry_exhausted')
+         AS retry_exhausted_count
+FROM ingest_completion_delivery
+WHERE handler_key = 'source-channel.notification.v1';
+"
+```
+
+After fixing the LangBot API key/network or target configuration, a failed row can be manually
+re-driven through the implemented Python hook. There is no separate public CLI or HTTP endpoint:
+
+```bash
+EVENT_ID=123 .venv/bin/python - <<'PY'
+import os
+
+from app.ingest.notifications import redrive_failed_ingest_notification
+
+event_id = int(os.environ["EVENT_ID"])
+if not redrive_failed_ingest_notification(event_id):
+    raise SystemExit("no failed source-channel delivery for event")
+print("notification_redrive_queued")
+PY
+```
+
+The hook resets the selected failed delivery, clears any terminal disposition, and makes it eligible
+for the next Beat tick; it does not re-run ingestion and does not send an HTTP request inline. Confirm the next
+heartbeat and failed-ledger count before considering the incident resolved. If the poller is paused,
+stop only its Beat entry and preserve PostgreSQL event/ledger rows; do not drain or replay the retired
+`ingest-completion` queue as a notification workaround.
 
 ### 6.2 gateway
 
@@ -420,7 +524,7 @@ MiXer 等 URL-only 客户端只有在显式设置 `MCP_URL_TOKEN_MODE=true` 后�
 
 MCP 进程可用性不等于数据库、模型、embedding、Redis、MinIO、Celery 或 maintenance
 readiness。read-only 问答可以不启动 Redis/MinIO/worker；启用 full 的保存、重试和
-回收站操作前，必须检查相应依赖和 migration `a7b8c9d0e1f2 (head)`。
+回收站操作前，必须检查相应依赖和 migration `b2c3d4e5f6a7 (head)`。
 
 ## 7. 安装 LangBot 桥接（可选）
 
@@ -837,7 +941,7 @@ WHERE deleted_at IS NOT NULL;
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
 3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false`，重启 gateway 并停止 `web-server`，从而冻结全部 Web 写入，再安装新的 Python 依赖。仅重启而不停止 `web-server` 只能禁用 batch/retry，不能禁用备注、归档和恢复。
-4. 执行 `alembic upgrade head`，确认 revision `a7b8c9d0e1f2`。
+4. 执行 `alembic upgrade head`，确认 revision `b2c3d4e5f6a7`。
 5. 在 `web/` 执行 `corepack pnpm install --frozen-lockfile`、`check:api`、`test`、
    `typecheck`、`lint` 与 `build`，禁止继续提供旧的 `web/dist`。
 6. 启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 ingest queue、completion outbox publisher、CA、Redis AOF 与 MinIO readiness。
@@ -857,10 +961,10 @@ WHERE deleted_at IS NOT NULL;
 downgrade 删除 action/dispatch audit。回滚与重启都不得重置 Telegram/微信身份、微信扫码登录、
 conversation history、已有 content 或 MinIO 对象。
 
-Completion publisher/consumer 出现异常时，先停止 beat 的 completion 补偿与真实
-`ingest-completion` consumer，不停止 ingestion 真相写入；保留
-`ingest_completion_event` 的 pending/claimed rows。代码回滚也保留该表，恢复新 worker
-后再由 sweep 补发；不得通过清空 Redis queue 或删除 outbox 来“修复”重复消息。
+Completion notification poller 出现异常时，只停止 beat 的 notification entry，不停止
+ingestion 真相写入或其他 `maintenance` 工作；保留 `ingest_completion_event` 与
+`ingest_completion_delivery` rows。代码回滚也保留这些表，修复后由下一 tick 继续；不得通过
+重跑 ingestion、恢复旧 publisher/consumer、清空 Redis queue 或删除 event/ledger 来“修复”通知。
 
 LangBot 版本升级必须重新验证：sender ID、bot UUID、conversation ID、平台 message
 ID、plugin event 顺序、monitoring 隐私补丁和两个 adapter 并发。不能假设 4.10.6

@@ -23,6 +23,51 @@
 | 已安装 LangBot plugin 目录下的私有 `.env` | bridge 的 `CHANNEL_GATEWAY_SECRET`、URL、bot UUID 映射 | 不放 Agent provider key 或数据库 DSN |
 | reverse proxy / secret manager | 公网 TLS、访问日志策略、生产 secret | 不把 URL capability 记录到普通 access log |
 
+## 一键配置与启动（推荐）
+
+安装 Python 依赖后，部署者不需要复制完整 `.env.example`。选择一个运行模式即可：
+
+```bash
+./scripts/notebook-agent init --profile read     # 只读 HTTP MCP
+./scripts/notebook-agent init --profile full     # MCP + worker + Beat
+./scripts/notebook-agent init --profile langbot  # 后台任务 + LangBot gateway
+./scripts/notebook-agent start
+```
+
+交互式 `init` 只询问 embedding 和 Agent provider key；本地 PostgreSQL、MinIO 和
+LangBot gateway secret 使用安全随机值。结果写入 gitignored 的 `.env.runtime`，权限为
+`0600`，且只包含 secret 和 profile 选择，不复制后面的默认值目录。改变 profile 时使用
+`init --force --profile ...`；已有生成的数据库 secret 会保留，避免使现有 volume 失配。
+
+非交互模式在调用 `init` 前至少设置 `ZHIPU_API_KEY`；模型凭据可以使用
+`AGENT_API_KEY`，也可以继续使用 PydanticAI provider 原生环境变量。启动器按以下优先级
+解析配置：
+
+```text
+调用进程环境 > 用户维护的根 .env > 生成的 .env.runtime > app.config 默认值
+```
+
+因此生产环境可以一直由 secret manager 注入变量；启动器不会把外部环境反写到文件。
+`DATABASE_URL`、远程 `REDIS_URL` 或远程 `MINIO_ENDPOINT_URL` 会使对应服务被视为外部
+依赖，不会由生命周期命令启动或停止。Neon runtime URL 若使用 pooler，必须另行提供
+operator-only 的 `MIGRATION_DATABASE_URL`（direct host）；该值只在迁移子进程中临时覆盖
+`DATABASE_URL`，不会输出到状态或日志。
+
+```bash
+./scripts/notebook-agent status
+./scripts/notebook-agent logs [supervisor|mcp|worker|beat|gateway]
+./scripts/notebook-agent stop
+./scripts/notebook-agent restart
+```
+
+`start` 默认后台运行；`start --foreground` 适合容器或外部 service manager。`stop` 只向
+状态文件中记录且命令身份匹配的 supervisor 发信号，不按进程名或端口批量终止。worker 与
+Beat 对部署者是一个生命周期，但仍为独立 OS 进程，并且一个 supervisor 只创建一个 Beat。
+启动器默认拒绝非 loopback 的 `MCP_HOST`；只有已经配置 TLS reverse proxy 并明确接受绑定
+边界时，才同时设置 `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK=true`。
+
+`.env.example` 仍是完整高级变量参考，下面的手动 profile 片段也继续受支持。
+
 ## 共同准备
 
 ```bash
@@ -147,9 +192,9 @@ docker compose up -d
 .venv/bin/celery -A app.ingest.tasks.celery_app inspect active_queues
 ```
 
-至少一个 worker 必须返回 `pong`，并同时监听 `ingest`、`maintenance`。`ingest-completion`
-由 producer 声明为 durable queue；真实 consumer 部署前不要让 worker 监听它，否则
-没有业务 handler 的 worker 会 ack 并丢弃事件。随后签发 full grant：
+至少一个 worker 必须返回 `pong`，并同时监听 `ingest`、`maintenance`。来源通知由默认每
+10 秒运行的 PostgreSQL delivery-ledger poller 在 `maintenance` 中处理；旧
+`ingest-completion` queue 已退役，不要让 worker 监听、消费或重放它。随后签发 full grant：
 
 ```bash
 .venv/bin/python -m app.cli mcp-grant issue --user-id <user-id> --scope full --label local-full
@@ -351,6 +396,7 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | 变量 | 消费者 | 默认值/示例 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
 | `DATABASE_URL` | app、CLI、worker、Alembic | 未设置；优先于 `POSTGRES_*` | 托管/外部 PostgreSQL | 是，通常含密码 | app、worker、CLI 新进程 |
+| `MIGRATION_DATABASE_URL` | 一键启动器的 Alembic 子进程 | 未设置；Neon pooled runtime 时必须为 direct URL | 仅一键迁移 | 是，通常含密码 | 下次启动/迁移 |
 | `POSTGRES_USER` | Compose、URL fallback | `postgres` | 本地 Compose | 否 | PostgreSQL 与所有 DB client |
 | `POSTGRES_PASSWORD` | Compose、URL fallback | `changeme` 仅占位 | 本地 Compose 必填 | 是 | PostgreSQL 与所有 DB client |
 | `POSTGRES_DB` | Compose、URL fallback | `kb` | 本地 Compose | 否 | PostgreSQL 与所有 DB client |
@@ -369,9 +415,9 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | `BROKER_PUBLISH_MAX_RETRIES` | app submission | `1` | full profile tuning | 否 | app |
 
 本地 Compose Redis 固定使用持久卷、AOF 和 `appendfsync=always`。配置远程
-`REDIS_URL` 时，托管服务必须提供等价的“broker 返回写入成功前已经持久化”保证；
-定期 snapshot 可能在故障时丢失已经确认的 `ingest-completion` 消息，不能满足
-完成 outbox 的 at-least-once 合同。
+`REDIS_URL` 时，托管服务必须提供等价的“broker 返回写入成功前已经持久化”保证，避免
+已确认的 `ingest` task 丢失。completion notification 的 durable source 是 PostgreSQL
+event + delivery ledger；旧 `ingest-completion` queue 不再生产，也不依赖 Redis snapshot。
 
 ### MinIO / S3-compatible storage
 
@@ -436,6 +482,28 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | `INGEST_MAX_SEGMENTS_PER_ITEM` | worker | `5000` | 单条最终检索片段数上限 | 否 | worker、同步 ingest CLI |
 | `INGEST_MAX_EMBEDDING_CHARS_PER_ITEM` | worker | `2000000` | 单条所有 embedding 输入字符的累计上限 | 否 | worker、同步 ingest CLI |
 | `YOUTUBE_FETCH_TIMEOUT_SECONDS` | YouTube connector | `30` | metadata 与字幕获取的单调用总时限 | 否 | worker、同步 ingest CLI |
+| `INGEST_NOTIFICATION_INTERVAL_SECONDS` | Celery beat | `10` | source-channel poll interval; positive | 否 | beat |
+| `INGEST_NOTIFICATION_BATCH_SIZE` | maintenance worker | `20` | bounded delivery claims | 否 | worker |
+| `INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
+| `INGEST_NOTIFICATION_MAX_DURATION_SECONDS` | maintenance worker | `8` | must be below interval | 否 | worker |
+| `INGEST_NOTIFICATION_MAX_ATTEMPTS` | maintenance worker | `5` | retry ceiling before manual re-drive | 否 | worker |
+| `INGEST_NOTIFICATION_RETRY_BASE_SECONDS` | maintenance worker | `5` | exponential backoff base | 否 | worker |
+| `INGEST_NOTIFICATION_RETRY_MAX_SECONDS` | maintenance worker | `300` | exponential backoff cap | 否 | worker |
+| `LANGBOT_OUTBOUND_BASE_URL` | maintenance worker | `http://127.0.0.1:5300` | loopback HTTP or non-loopback HTTPS | 否 | worker |
+| `LANGBOT_OUTBOUND_API_KEY` | maintenance worker | 空 | dedicated LangBot API key | 是 | worker |
+| `LANGBOT_OUTBOUND_TIMEOUT_SECONDS` | maintenance worker | `10` | bounded HTTP timeout | 否 | worker |
+
+`INGEST_COMPLETION_*` variables are legacy Redis publisher compatibility
+settings only; the notification poller does not read or schedule that queue.
+
+The notification poller has no separate health endpoint or public CLI. A completed Beat tick is
+observed through the privacy-safe `notification_poller_heartbeat` line in the maintenance worker's
+runtime log/stdout. It reports only numeric counters, duration, and the oldest eligible delivery age;
+`observability_failed=1` means that the optional backlog read was unavailable and does not mean a
+delivery was changed or dropped. For failed delivery recovery, use the documented
+`redrive_failed_ingest_notification(event_id)` Python hook after correcting LangBot configuration;
+the next Beat tick performs the actual send. Do not re-run ingestion or consume the retired
+`ingest-completion` queue.
 
 关闭 management flag 不会关闭 deleted-content retrieval filters。
 
@@ -478,6 +546,7 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | 变量 | 消费者 | 默认值 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
 | `MCP_HOST` | HTTP server | `127.0.0.1` | Streamable HTTP | 否 | MCP server |
+| `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK` | 一键启动器 | `false` | 已有 TLS proxy 且明确允许 MCP 非 loopback 绑定 | 否 | 下次一键启动 |
 | `MCP_PORT` | HTTP server | `8000` | Streamable HTTP | 否 | MCP server |
 | `MCP_PATH` | HTTP server/proxy | `/mcp` | Streamable HTTP | 否 | MCP server、proxy |
 | `MCP_URL_TOKEN_MODE` | HTTP auth middleware | `false` | URL-only client 才开启 | 否 | MCP server |
@@ -499,7 +568,7 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 
 1. 确认改的是正确文件：根 `.env`、stdio process env、plugin private `.env` 或 proxy secret。
 2. 重启表格中列出的消费者；环境变量不会自动热更新。
-3. 运行 `.venv/bin/alembic current`，当前 head 应为 `a7b8c9d0e1f2`。
+3. 运行 `.venv/bin/alembic current`，当前 head 应为 `b2c3d4e5f6a7`。
 4. full profile 检查 Redis、MinIO、Celery `ping` 和 `active_queues`。
 5. MCP 运行 `initialize -> tools/list -> tools/call`；只读应为 3 tools，ready full 应为 10 tools。
 6. Web 运行 OpenAPI check、frontend tests/build，检查 `/api/v1/health`、`/login`、`/library` 和详情页直接刷新；未知 `/api/*` 必须返回 JSON 404。

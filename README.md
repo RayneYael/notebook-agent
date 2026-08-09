@@ -102,6 +102,8 @@ YouTube is the currently supported end-to-end ingestion source. The data model r
 
 - Python 3.11+
 - Docker and Docker Compose
+- Linux or macOS for the bundled lifecycle launcher (`fcntl`, `ps`, signals,
+  and process groups); Windows can continue using the documented direct commands
 - An agent model API and a Zhipu Embedding API key
 - LangBot 4.10.6 and Telegram/WeChat credentials only for the optional personal-channel integration
 
@@ -115,12 +117,29 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
-cp .env.example .env
-# Choose a runtime profile in docs/environment-configuration.md, then fill
-# only the database/provider/infrastructure values that profile requires.
+# Prompts only for the embedding and Agent provider keys. Local database and
+# object-storage passwords are generated into the ignored, mode-0600
+# .env.runtime file.
+./scripts/notebook-agent init --profile read
+./scripts/notebook-agent start
+```
 
-docker compose up -d
-alembic upgrade head
+Choose `read` for Streamable HTTP MCP without background ingestion, `full` for
+MCP plus Redis/MinIO/one worker/one Beat, or `langbot` for the background stack
+plus the private LangBot gateway. For non-interactive setup, provide
+`ZHIPU_API_KEY` and, when the selected provider requires it, `AGENT_API_KEY`
+or the provider's native credential variable before `init`.
+Existing process variables and a user-authored `.env` override generated
+values.
+
+Lifecycle commands manage only application processes owned by this launcher;
+Compose data volumes and externally managed services are preserved:
+
+```bash
+./scripts/notebook-agent status
+./scripts/notebook-agent logs mcp
+./scripts/notebook-agent stop
+./scripts/notebook-agent restart
 ```
 
 ### 3. Start the Core MCP Server
@@ -160,6 +179,11 @@ tools.
 
 ### 4. Start the Worker and Gateway
 
+The one-command `full` and `langbot` profiles start the worker and the single
+Beat instance under one supervisor. The processes remain separate so a Beat
+failure is visible and a second managed Beat cannot be started. The direct
+commands below remain supported for advanced process managers.
+
 On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the ingestion worker:
 
 ```bash
@@ -168,12 +192,15 @@ On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the
 ```
 
 The worker and beat are also the durability boundary for terminal ingestion
-events. The producer declares a durable `ingest-completion` queue, but the
-existing worker must not consume that queue until a real idempotent completion
-consumer is deployed. Beat periodically repairs pending/stale outbox claims;
-check its counters and the queue backlog during rollout. The bundled Redis uses
-a persistent volume with AOF `appendfsync=always`; a remote broker must provide
-equivalent durability before acknowledging a published completion message.
+events. The authoritative source-channel notification task runs every
+`INGEST_NOTIFICATION_INTERVAL_SECONDS` (10 seconds by default) on the
+`maintenance` queue and claims PostgreSQL delivery-ledger rows before calling
+LangBot's API. Keep its batch and max-duration budget below the interval. The
+legacy `ingest-completion` Redis queue is retained only for rollback/schema
+compatibility: it has no consumer and terminal ingestion no longer publishes
+new envelopes. During rollout, stop old producers first, verify database event
+coverage, then inspect and explicitly drain any old Redis backlog; do not run a
+queue consumer and the poller together.
 
 After the worker is ready, change `AGENT_SAVE_ENABLED` to `true` and start the gateway:
 

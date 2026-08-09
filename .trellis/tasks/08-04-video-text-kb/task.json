@@ -22,7 +22,8 @@
     "08-05-knowledge-retrieval-agent",
     "08-05-youtube-subtitle-track-reliability",
     "08-07-web-video-library-mvp",
-    "08-09-video-worker-completion-queue"
+    "08-09-video-worker-completion-queue",
+    "08-09-ingest-completion-consumer"
   ],
   "parent": null,
   "relatedFiles": [],

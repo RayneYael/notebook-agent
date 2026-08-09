@@ -24,12 +24,13 @@ _STAGES = frozenset({
     "model_attempt", "tool_call", "embedding_started", "embedding_completed",
     "embedding_failed", "retrieval_started", "retrieval_completed", "retrieval_failed",
     "citation_validated", "context_compressed", "agent_failed", "action_validated",
+    "recovery", "todo_used",
     "completion_event_created", "completion_event_enqueued",
     "completion_event_publish_failed", "completion_event_sweep",
 })
 _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
-    "search_segments", "get_neighbors", "get_item", "open_at",
+    "search_segments", "get_neighbors", "get_item", "open_at", "todo_write",
     "request_save_confirmation", "save_videos", "confirm_video_save",
     "clarify_save_confirmation", "cancel_video_save", "list_saved_items",
     "get_saved_item", "update_saved_item", "delete_saved_items",
@@ -38,6 +39,17 @@ _TOOLS = frozenset({
 })
 _LIMITS = frozenset({"request", "tool_calls", "output_tokens", "unknown"})
 _AGENT_PHASES = frozenset({"retrieval", "answer"})
+_RECOVERY_CATEGORIES = frozenset({
+    "transient_read", "read_unavailable", "missing_context",
+    "policy_or_security", "side_effect_indeterminate", "provider_failure",
+    "answer_validation",
+})
+_RECOVERY_ACTIONS = frozenset({
+    "retry_same_read", "use_existing_evidence", "return_partial",
+    "ask_clarification", "report_unavailable", "reformulate_search",
+    "repair_answer",
+})
+_RECOVERY_OUTCOMES = frozenset({"granted", "consumed", "denied", "exhausted"})
 _ERRORS = frozenset({
     "-", "no_evidence", "embedding_unavailable", "retrieval_unavailable",
     "timeout", "limit", "answer_unavailable", "runtime_error", "not_found",
@@ -57,6 +69,8 @@ _ERRORS = frozenset({
     "channel_unavailable", "challenge_invalid", "challenge_expired",
     "challenge_used", "account_disabled", "web_login_unavailable",
     "ingestion_failed", "transient_fetch_failed", "ingest_too_large", "completion_publish_failed",
+    "transient_read", "read_unavailable", "answer_validation", "provider_failure",
+    "todo_incomplete", "item_scope_required",
 })
 
 
@@ -295,7 +309,12 @@ class RequestDiagnostics:
               exception: BaseException | None = None,
               duration_ms: int | None = None,
               agent_phase: str | None = None,
-              http_status: int | None = None) -> None:
+              http_status: int | None = None,
+              error_category: str | None = None,
+              recovery_action: str | None = None,
+              recovery_outcome: str | None = None,
+              recovery_count: int | None = None,
+              todo_used: bool | None = None) -> None:
         try:
             payload: dict[str, Any] = {
                 "event": "knowledge_request",
@@ -310,6 +329,16 @@ class RequestDiagnostics:
             if tool_name in _TOOLS: payload["tool_name"] = tool_name
             if tool_outcome in {"started", "succeeded", "failed", "skipped"}: payload["tool_outcome"] = tool_outcome
             if agent_phase in _AGENT_PHASES: payload["agent_phase"] = agent_phase
+            if error_category in _RECOVERY_CATEGORIES:
+                payload["error_category"] = error_category
+            if recovery_action in _RECOVERY_ACTIONS:
+                payload["recovery_action"] = recovery_action
+            if recovery_outcome in _RECOVERY_OUTCOMES:
+                payload["recovery_outcome"] = recovery_outcome
+            if isinstance(recovery_count, int) and not isinstance(recovery_count, bool):
+                payload["recovery_count"] = max(0, recovery_count)
+            if isinstance(todo_used, bool):
+                payload["todo_used"] = todo_used
             safe_http_status = _safe_http_status(http_status)
             if safe_http_status is not None: payload["http_status"] = safe_http_status
             if self.environment == "development" and exception is not None:

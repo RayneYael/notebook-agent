@@ -64,6 +64,47 @@ def test_diagnostics_allow_phase_and_skipped_tool_without_content(caplog):
     assert answer_limit["limit_kind"] == "output_tokens"
 
 
+def test_diagnostics_allow_bounded_todo_and_recovery_error_codes_without_content(caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+    private_todo = "choose https://private.example/item/42"
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event(
+            "tool_call",
+            tool_name="todo_write",
+            tool_outcome="succeeded",
+            call_index=1,
+            result_count=1,
+            agent_phase="retrieval",
+            todo_used=True,
+        )
+        diagnostics.event(
+            "agent_failed",
+            error_code="todo_incomplete",
+            agent_phase="retrieval",
+            error_category="missing_context",
+            recovery_outcome="denied",
+            recovery_count=2,
+        )
+        diagnostics.event(
+            "agent_failed",
+            error_code="item_scope_required",
+            agent_phase="retrieval",
+            error_category="policy_or_security",
+            recovery_outcome="denied",
+            recovery_count=2,
+        )
+
+    todo, incomplete, scope = [record.diagnostic_payload for record in caplog.records[-3:]]
+    assert todo["tool_name"] == "todo_write"
+    assert todo["todo_used"] is True
+    assert incomplete["error_code"] == "todo_incomplete"
+    assert scope["error_code"] == "item_scope_required"
+    serialized = json.dumps([todo, incomplete, scope])
+    assert private_todo not in serialized
+    assert "https://" not in serialized
+
+
 @pytest.mark.parametrize("status", [400, 422, 429, 500, 503])
 def test_diagnostics_projects_only_valid_http_status_without_error_body(caplog, status):
     body_sentinel = f"PRIVATE-provider-body-{status}"

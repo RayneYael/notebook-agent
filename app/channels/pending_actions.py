@@ -37,6 +37,9 @@ class ConfirmationResult:
     results: tuple[dict, ...] = ()
     error_code: str | None = None
     action_id: int | None = None
+    # Server-owned origin thread retained through confirmation.  This is an
+    # internal routing value and is never part of model/tool arguments.
+    thread_id: int | None = None
     replayed: bool = False
     # Only request responses carry this one-time display value.  Confirmation
     # tools never accept it as an argument; the service parses the raw user
@@ -156,6 +159,7 @@ class PendingConfirmationService:
                     "confirmed",
                     urls=urls,
                     action_id=replay.id,
+                    thread_id=replay.thread_id,
                     replayed=True,
                 )
 
@@ -179,6 +183,7 @@ class PendingConfirmationService:
                 "confirmed",
                 urls=urls,
                 action_id=current.id,
+                thread_id=current.thread_id,
             )
 
     def cancel_save(

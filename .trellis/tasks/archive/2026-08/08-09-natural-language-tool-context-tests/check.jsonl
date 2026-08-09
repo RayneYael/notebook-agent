@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/mcp-channel-runtime.md", "reason": "检查 MCP 10 tools、readiness、grant 与 secret 安全"}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "检查真实模型 trace、检索预算和 evidence-first"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "检查 destructive confirmation 与持久状态隔离"}
+{"file": ".trellis/spec/backend/ingest-completion-queue.md", "reason": "检查 Redis/Celery/ingestion 完整链路"}

@@ -19,7 +19,13 @@ from sqlalchemy.orm import Session
 from app.channels.types import UserScope
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
-from app.models import AppUser, ContentItem, IngestDispatch
+from app.models import (
+    AppUser,
+    ChannelIdentity,
+    ContentItem,
+    ConversationThread,
+    IngestDispatch,
+)
 from app.limits import normalize_why_saved
 
 
@@ -523,6 +529,7 @@ class IngestSubmissionService:
         why_saved: str | None,
         request_key: str,
         publish_budget_seconds: float | None = None,
+        source_thread_id: int | None = None,
     ) -> BatchSaveResult:
         if not request_key.strip():
             raise ValueError("request key is required")
@@ -547,6 +554,7 @@ class IngestSubmissionService:
                     why_saved=why_saved,
                     request_key=request_key,
                     publish_deadline=deadline,
+                    source_thread_id=source_thread_id,
                 )
             )
         return BatchSaveResult(tuple(results))
@@ -559,6 +567,7 @@ class IngestSubmissionService:
         why_saved: str | None,
         request_key: str,
         publish_deadline: float | None,
+        source_thread_id: int | None,
     ) -> SaveItemResult:
         reference = prepared.reference
         if reference is None:
@@ -570,6 +579,13 @@ class IngestSubmissionService:
                     db, tenant.app_user_id
                 ):
                     raise RuntimeError("tenant does not exist")
+                # Resolve the source target while the item/dispatch admission
+                # transaction is open.  A failed or unsupported validation is
+                # deliberately fail-closed to ``NULL``; it must never retarget
+                # a notification to a later linked identity.
+                validated_source_thread_id = self._validated_source_thread_id(
+                    db, tenant, source_thread_id
+                )
                 existing = db.scalar(
                     select(ContentItem).where(
                         ContentItem.user_id == tenant.app_user_id,
@@ -680,6 +696,7 @@ class IngestSubmissionService:
                     request_key=request_key,
                     attempt=attempt,
                     state="pending",
+                    source_thread_id=validated_source_thread_id,
                 )
                 db.add(dispatch)
                 db.flush()
@@ -764,6 +781,7 @@ class IngestSubmissionService:
         *,
         request_key: str,
         publish_budget_seconds: float | None = None,
+        source_thread_id: int | None = None,
     ) -> SaveItemResult:
         """Queue one stable failed item for its next durable attempt.
 
@@ -802,6 +820,9 @@ class IngestSubmissionService:
                         item_id=item_id,
                         safe_error_code="item_not_found",
                     )
+                validated_source_thread_id = self._validated_source_thread_id(
+                    db, tenant, source_thread_id
+                )
                 item = db.scalar(
                     select(ContentItem)
                     .where(ContentItem.id == item_id, ContentItem.user_id == tenant.app_user_id)
@@ -861,6 +882,7 @@ class IngestSubmissionService:
                     request_key=request_key,
                     attempt=(latest.attempt + 1) if latest is not None else 1,
                     state="pending",
+                    source_thread_id=validated_source_thread_id,
                 )
                 db.add(dispatch)
                 db.flush()
@@ -999,6 +1021,61 @@ class IngestSubmissionService:
             app_user_id,
             include_new_item_limits=include_new_item_limits,
         )
+
+    @staticmethod
+    def _validated_source_thread_id(
+        db: Session,
+        tenant: TenantContext,
+        source_thread_id: int | None,
+    ) -> int | None:
+        """Validate a server-owned source conversation in the admission tx.
+
+        The caller supplies this value from ``AgentRequest.thread_db_id`` (or
+        the trusted pending-action thread).  MCP/CLI and unsupported channels
+        intentionally return ``None``.  A stale, cross-tenant, disabled, or
+        routing-mismatched thread also returns ``None`` rather than allowing a
+        guessed or newly linked target to receive a notification.
+        """
+
+        if source_thread_id is None:
+            return None
+        if isinstance(source_thread_id, bool):
+            return None
+        try:
+            thread_id = int(source_thread_id)
+        except (TypeError, ValueError):
+            return None
+        if thread_id <= 0 or tenant.channel not in {"telegram", "wechat"}:
+            return None
+        thread = db.scalar(
+            select(ConversationThread)
+            .where(ConversationThread.id == thread_id)
+            .with_for_update()
+        )
+        if thread is None:
+            return None
+        if (
+            thread.app_user_id != tenant.app_user_id
+            or thread.channel_identity_id != tenant.channel_identity_id
+            or thread.channel != tenant.channel
+            or thread.channel not in {"telegram", "wechat"}
+            or thread.account_id != tenant.account_id
+        ):
+            return None
+        identity = db.get(ChannelIdentity, thread.channel_identity_id)
+        if identity is None or identity.disabled_at is not None:
+            return None
+        if (
+            identity.app_user_id != tenant.app_user_id
+            or identity.channel != thread.channel
+            or identity.account_id != thread.account_id
+            or identity.external_user_id != tenant.external_user_id
+        ):
+            return None
+        owner = db.get(AppUser, thread.app_user_id)
+        if owner is None or owner.disabled_at is not None:
+            return None
+        return thread.id
 
     @staticmethod
     def _already_exists(

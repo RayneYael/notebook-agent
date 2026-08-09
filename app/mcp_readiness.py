@@ -33,8 +33,11 @@ READINESS_CHECKS: tuple[str, ...] = (
 # wrapper below also bounds connection/setup failures in Kombu transports that
 # do not consistently honour that value.  A timed-out daemon is never joined
 # indefinitely and cannot keep the MCP process alive during startup.
+# ``ping`` and ``active_queues`` each wait up to this value.  A multi-worker
+# cluster can legitimately need the full broadcast window, so the outer hard
+# deadline must leave room for both inspections plus client setup.
 _WORKER_INSPECT_TIMEOUT_SECONDS = 1.0
-_WORKER_TOTAL_TIMEOUT_SECONDS = 3.0
+_WORKER_TOTAL_TIMEOUT_SECONDS = 5.0
 _REQUIRED_WORKER_QUEUES = frozenset({"ingest", "maintenance"})
 
 

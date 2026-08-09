@@ -17,6 +17,7 @@ coverage/
 # Docker volumes / local data
 data/
 .runtime/
+.eval-results/
 
 # OS
 .DS_Store
