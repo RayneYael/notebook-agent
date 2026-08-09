@@ -3,7 +3,7 @@
   "name": "frontend-delivery-integration",
   "title": "Frontend delivery integration and separation",
   "description": "Integrate completed Web UI work, audit the combined frontend, and make the existing web package deployable independently while preserving same-origin authentication.",
-  "status": "in_progress",
+  "status": "review",
   "dev_type": "integration",
   "scope": "frontend-delivery",
   "package": "web",
@@ -15,7 +15,7 @@
   "branch": "codex/frontend-delivery-integration",
   "base_branch": "main",
   "worktree_path": "C:/Users/raede/.codex/worktrees/frontend-delivery-integration",
-  "commit": "ef9dec6c0fce939b74e39338dc2b9954c9e39f5b",
+  "commit": "09feca92ac16e6c8c0d61fc1863ea6ad86a99dd3",
   "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
   "children": [
@@ -29,6 +29,6 @@
     "docs/environment-configuration.md",
     "docs/deployment.md"
   ],
-  "notes": "Reopened for the final frontend residual-WIP audit and integration pass. PR 2 remains open and intentionally unmerged. The Web package stays independently buildable inside the monorepo and may deploy separately from the Python API behind one HTTPS origin. Remaining external gates are isolated PostgreSQL validation, live Telegram/WeChat acceptance, real Linux host/DNS/TLS inventory, and maintainer-owned deployment authorization.",
+  "notes": "Final frontend residual work is integrated and independently reviewed. Product head 09feca9 passed 67 frontend tests, the frozen OpenAPI check, typecheck, lint, production build, and 20 deployment contract tests. PR 2 remains open and intentionally unmerged. The Web package stays independently buildable inside the monorepo and may deploy separately from the Python API behind one HTTPS origin. Remaining external gates are isolated PostgreSQL validation, live Telegram/WeChat acceptance, real Linux host/DNS/TLS inventory, maintainer-owned deployment authorization, and an optional production-size derivative for the oversized brand PNG.",
   "meta": {}
 }

@@ -149,3 +149,47 @@
 - No live server is currently owned by this pass. If a final browser smoke is
   required, `/root` will use a new task-owned loopback port and will not touch
   the existing 5173/5175 listeners.
+
+## 2026-08-09 final residual integration and admission
+
+- Source recovery commits were created without pushing their stale histories:
+  `e4108cf4218fea78140d3c20991e8b530deb2525` for collection/progress/transcript
+  truth boundaries and `f8295a710a784c5c6d868e8a9c9a3dada275071e` for shared brand/login/Showcase
+  presentation. They were integrated here as `f239b12` and `a58d7d5`.
+- Final product head is `09feca92ac16e6c8c0d61fc1863ea6ad86a99dd3`.
+  It preserves outside-click account-menu dismissal, the independently
+  scrolling keyboard-focusable chapter region, search suggestions, collection
+  filters, and backend-provided transcript source URLs and timestamps.
+- Review fixes removed persistent login-channel metadata, made Showcase
+  evidence/reset controls immediately visible when rendered, added screen-reader
+  text for moving content, and retained 44-by-44-pixel minimum targets for new
+  language and transcript controls.
+- The public Showcase no longer embeds long third-party transcript passages.
+  Its moving preview now uses short original paraphrases labeled as "片段要点",
+  while canonical video links, creators, titles, and timestamp evidence remain
+  available for source verification.
+- Fresh frontend admission on the final product head: 13 Vitest files / 67
+  tests passed; frozen OpenAPI check, typecheck, ESLint, and production Vite
+  build passed. The final build emitted 56.04 kB CSS (12.20 kB gzip) and 324.14
+  kB JavaScript (102.39 kB gzip).
+- The latest deployment-contract run passed 20 tests across the Linux templates,
+  health boundary, Web CLI, and Web API composition. Alembic still reports the
+  single expected head `a7b8c9d0e1f2`; `git diff --check` is clean.
+- Independent code review reported APPROVE with no open P1/P2 correctness,
+  security, state, routing, accessibility, mobile, or test-truth blocker. The
+  architecture review classified the delivery as WATCH rather than BLOCK: the
+  task record and public transcript-governance findings are closed here; the
+  remaining non-blocking optimization is a smaller production derivative for
+  the 291 kB, 1254-by-1254 brand PNG.
+- Deployment preparation remains repository-only. No domestic server, DNS,
+  certificate, firewall, production database, or production chat login was
+  changed by this task. The Linux runbook and templates prepare an independently
+  built `web/` package, same-origin `/api/` proxying, paired release directories,
+  release-local migration admission, systemd units, Nginx security headers,
+  immutable asset caching, rollback gates, and API-only mode. Real-host
+  validation and deployment authorization remain external gates.
+- Immediately before the handoff commit, a fresh fetch reported
+  `upstream/main@6539f3b717fc928d787d748213a7c5f52b5e5b96`; the integration branch is
+  32 commits ahead and 0 behind it. The existing fork PR branch remains an
+  ancestor, 4 commits behind this product head, so the authorized update can be
+  a normal fast-forward push with no history rewrite.

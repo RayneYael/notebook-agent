@@ -46,12 +46,12 @@
 
 ## Gate 5 - Final residual frontend integration
 
-- [ ] Create a narrow recovery commit for each residual source worktree while
+- [x] Create a narrow recovery commit for each residual source worktree while
   excluding runtime/build output, machine-local QA paths, and unrelated WIP.
-- [ ] Integrate the collection/progress/transcript commit and the
+- [x] Integrate the collection/progress/transcript commit and the
   brand/login/Showcase commit one at a time, preserving both sides of shared
   stylesheet changes.
-- [ ] Run full frontend tests, frozen OpenAPI check, typecheck, lint, production
+- [x] Run full frontend tests, frozen OpenAPI check, typecheck, lint, production
   build, deployment contract tests, and a final independent code/architecture
   review on the integrated head.
 - [ ] Refresh `upstream/main`, preserve a fast-forward fork push, update PR 2
