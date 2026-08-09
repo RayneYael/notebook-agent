@@ -8,8 +8,8 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 12
-- **Last Active**: 2026-08-09
+- **Total Sessions**: 13
+- **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
 ---
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~336 | Active |
+| `journal-1.md` | ~373 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 13 | 2026-08-10 | Include LangBot gateway in full profile | `4ccfae8c57c741ba76ffdfe124e1a02c62ed38db`, `677f6cf` | `codex/full-includes-langbot` |
 | 12 | 2026-08-09 | Simplify deployment lifecycle | `872c7b7`, `c0dd2d2` | `dev` |
 | 11 | 2026-08-09 | Real-model natural language evaluation | `877459b`, `8e526b7` | `dev` |
 | 10 | 2026-08-09 | Ingest completion source-channel notifications | `42873cc` | `dev` |

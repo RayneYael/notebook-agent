@@ -334,3 +334,40 @@ Added a profile-aware one-command launcher with minimal runtime configuration, s
 ### Status
 
 [OK] **Completed**
+
+
+## Session 13: Include LangBot gateway in full profile
+
+**Date**: 2026-08-10
+**Task**: Include LangBot gateway in full profile
+**Branch**: `codex/full-includes-langbot`
+
+### Summary
+
+Redefined full as worker, Beat, MCP, and Notebook Agent gateway with dual-listener lifecycle checks and aligned operator docs.
+
+### Main Changes
+
+- Added gateway startup, secret handling, dual-listener readiness/status/fingerprint coverage, and fail-fast port collision validation to full.
+- Updated English/Chinese deployment documentation and the stable lifecycle specification.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `4ccfae8c57c741ba76ffdfe124e1a02c62ed38db` | (see git log) |
+| `677f6cf` | (see git log) |
+
+### Testing
+
+- [OK] Affected regression suite: 105 passed.
+- [OK] Independent broader regression: 111 passed, 1 known MCP stdio cold-start test deselected; the timeout reproduces on unmodified dev.
+- [OK] Python compile, shell syntax, diff check, and Trellis validation passed.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Push the reviewed commits to origin/dev while leaving main untouched.
