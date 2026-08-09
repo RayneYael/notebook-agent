@@ -326,3 +326,14 @@
 - A new branch `codex/frontend-video-library-delivery` was created from the
   verified history. The old upstream PR 2 remains open and unmodified by this
   handoff; it will not be closed or merged implicitly.
+
+## 2026-08-09 Git and PR handoff
+
+- Product commit: `b28d6c1d96385c06ddcbf771e713ba2dca62dc83`
+  (`Close the frontend delivery admission gaps`).
+- Fork branch: `raederhans:codex/frontend-video-library-delivery`.
+- New upstream review: https://github.com/deequoique/notebook-agent/pull/4
+- The PR body separates completed code, independent frontend deployment
+  preparation, and remaining real-environment gates. It explicitly records
+  that no production deployment, database migration, PR closure, or automatic
+  merge was performed.

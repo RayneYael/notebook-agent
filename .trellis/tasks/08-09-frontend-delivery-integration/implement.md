@@ -74,5 +74,5 @@
 - [x] Pass the frozen OpenAPI check, 74 frontend tests, typecheck, lint,
   production build, 383 non-external-database Python tests with 8 expected
   skips, compileall, Alembic single-head inspection, and diff check.
-- [ ] Create the new fork branch commit, push it, open a new upstream PR, then
+- [x] Create the new fork branch commit, push it, open a new upstream PR, then
   record the exact commit and PR URL without closing or merging PR 2.
