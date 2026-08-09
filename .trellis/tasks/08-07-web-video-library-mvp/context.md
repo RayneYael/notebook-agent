@@ -107,3 +107,23 @@
 - Keep this task in `review` after PR creation; do not archive it while the real
   PostgreSQL migration roundtrip and manual Telegram/WeChat acceptance remain
   outstanding.
+
+## Unified route-transition closeout (2026-08-09)
+
+- All user-triggered internal page changes now share one route-transition
+  boundary: Library cards, VideoDetail back navigation, the protected wordmark,
+  Showcase login calls-to-action, login success, logout, and unauthorized
+  session exit. In-page anchors, YouTube links, timestamp links, and forms keep
+  their native behavior.
+- Supporting browsers use the native View Transition API: page content exits in
+  220ms and enters in 380ms while the protected top bar stays stable. Browsers
+  without that API use a 380ms CSS enter animation; reduced-motion preference
+  bypasses both paths.
+- TDD evidence: the first route-link, login, and CSS contract run failed with 3
+  failures / 22 passes; the no-native-API compatibility tests then failed with
+  2 failures / 8 passes. Both slices passed after their minimal implementations.
+- Final frontend evidence: OpenAPI stale check, ESLint, TypeScript, Vitest (14
+  files / 74 tests), and production plus demo-flag builds pass. Browser smoke on
+  the owned 5175 fixture verified Library -> VideoDetail -> Library in the
+  current no-native-API browser, correct URLs/headings, and zero console
+  warnings/errors. The verified VideoDetail tab remains open for review.

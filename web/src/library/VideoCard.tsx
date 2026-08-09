@@ -1,6 +1,5 @@
-import { Link } from "react-router";
-
 import type { LibraryItem } from "../api/contracts";
+import { RouteLink } from "../app/RouteTransition";
 import { CollectionTags } from "./CollectionTags";
 import { parseWhySaved } from "./collections";
 import { lifecycleCopy } from "./lifecycle";
@@ -22,7 +21,7 @@ export function VideoCard({ item }: { item: LibraryItem }) {
   const savedContext = parseWhySaved(item.why_saved);
   return (
     <article className="video-card" data-lifecycle={item.lifecycle}>
-      <Link className="video-card__link" to={`/videos/${item.public_id}`} aria-label={`${title}，查看详情`}>
+      <RouteLink className="video-card__link" to={`/videos/${item.public_id}`} aria-label={`${title}，查看详情`}>
         <div className="video-card__cover">
           {item.cover_url ? <img src={item.cover_url} alt="" width={960} height={540} loading="lazy" decoding="async" /> : <div className="cover-placeholder" aria-hidden="true"><span>暂无封面</span></div>}
           {duration ? <span className="duration-badge">{duration}</span> : null}
@@ -38,7 +37,7 @@ export function VideoCard({ item }: { item: LibraryItem }) {
           {savedContext.reason ? <blockquote>{savedContext.reason}</blockquote> : null}
           {item.lifecycle === "failed" ? <p className="card-hint">打开详情后可重新整理</p> : null}
         </div>
-      </Link>
+      </RouteLink>
     </article>
   );
 }

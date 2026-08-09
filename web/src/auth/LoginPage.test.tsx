@@ -126,37 +126,47 @@ describe("login page", () => {
 
   it("opens the local demo library without creating a backend challenge", async () => {
     const createChallenge = vi.fn();
+    const startViewTransition = vi.fn((update: () => void) => update());
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const user = userEvent.setup();
 
-    const { container } = render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/login"]}>
-          <Routes>
-            <Route
-              path="/login"
-              element={
-                <LoginPage
-                  directDemoLogin
-                  loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
-                  createChallenge={createChallenge}
-                />
-              }
-            />
-            <Route path="/library" element={<h1>资料库演示</h1>} />
-          </Routes>
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
+    try {
+      const { container } = render(
+        <QueryClientProvider client={client}>
+          <MemoryRouter initialEntries={["/login"]}>
+            <Routes>
+              <Route
+                path="/login"
+                element={
+                  <LoginPage
+                    directDemoLogin
+                    loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
+                    createChallenge={createChallenge}
+                  />
+                }
+              />
+              <Route path="/library" element={<h1>资料库演示</h1>} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
 
-    await user.click(await screen.findByRole("button", { name: "使用 Telegram 登录" }));
+      await user.click(await screen.findByRole("button", { name: "使用 Telegram 登录" }));
 
-    expect(container.querySelector(".login-page")).toHaveClass("login-page--leaving");
-    expect(screen.getByText("正在进入资料库")).toBeInTheDocument();
-    expect(createChallenge).not.toHaveBeenCalled();
-    expect(
-      await screen.findByRole("heading", { name: "资料库演示" }, { timeout: 1_000 }),
-    ).toBeInTheDocument();
+      expect(container.querySelector(".login-page")).toHaveClass("login-page--leaving");
+      expect(screen.getByText("正在进入资料库")).toBeInTheDocument();
+      expect(createChallenge).not.toHaveBeenCalled();
+      expect(
+        await screen.findByRole("heading", { name: "资料库演示" }, { timeout: 1_000 }),
+      ).toBeInTheDocument();
+      expect(startViewTransition).toHaveBeenCalledOnce();
+    } finally {
+      Reflect.deleteProperty(document, "startViewTransition");
+    }
   });
 
   it("hands the protected app an in-memory demo session for the selected channel", async () => {

@@ -127,6 +127,21 @@
 - [x] Rebuild the owned 5175 preview with the demo flag, run browser smoke for
   both channel rows, and complete final frontend validation.
 
+## Unified route-transition closeout (2026-08-09)
+
+- [x] RED: require Library card and login navigation to use the shared route
+  transition, and lock the 220ms exit / 380ms enter CSS contract.
+- [x] GREEN: route every user-triggered internal page change through one
+  accessible Link/navigate wrapper without intercepting modifier clicks,
+  external links, timestamps, or in-page anchors.
+- [x] RED/GREEN: prove browsers without native View Transition support receive
+  the CSS enter animation, and reduced-motion users receive no route animation.
+- [x] Rebuild the owned 5175 demo preview and verify Library -> VideoDetail ->
+  Library in the real browser with correct routes/headings and no console
+  warnings/errors.
+- [x] Run the final frontend suite: 14 test files / 74 tests, typecheck, lint,
+  build, and OpenAPI stale check all pass.
+
 ## Validation Commands
 
 ```powershell

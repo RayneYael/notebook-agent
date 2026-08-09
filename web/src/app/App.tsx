@@ -6,7 +6,6 @@ import {
   Outlet,
   Route,
   Routes,
-  useNavigate,
 } from "react-router";
 
 import { getSession, logout, setUnauthorizedHandler } from "../api/client";
@@ -17,6 +16,7 @@ import { ShowcasePage } from "../showcase/ShowcasePage";
 import { VideoDetailPage } from "../videos/VideoDetailPage";
 import { AppShell } from "./AppShell";
 import { BrandLogo } from "./BrandLogo";
+import { useRouteNavigate } from "./RouteTransition";
 
 type NavigateFn = (path: string, options: { replace: boolean }) => void;
 
@@ -64,7 +64,7 @@ export function createSessionQueryClient(session: SessionInfo): QueryClient {
 
 function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
   const client = useQueryClient();
-  const navigate = useNavigate();
+  const navigate = useRouteNavigate();
   const session = useQuery({
     queryKey: ["session"],
     queryFn: getSession,
@@ -91,7 +91,7 @@ function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
 }
 
 function LoginRoute({ activateSession }: { activateSession: (session: SessionInfo) => void }) {
-  const navigate = useNavigate();
+  const navigate = useRouteNavigate();
   return (
     <LoginPage
       directDemoLogin={import.meta.env.VITE_LOCAL_DEMO_DIRECT_LOGIN === "true"}
@@ -105,7 +105,7 @@ function LoginRoute({ activateSession }: { activateSession: (session: SessionInf
 
 function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
   const client = useQueryClient();
-  const navigate = useNavigate();
+  const navigate = useRouteNavigate();
   useEffect(() => {
     setUnauthorizedHandler(() => {
       endPrivateSession(client, navigate, rotateClient);

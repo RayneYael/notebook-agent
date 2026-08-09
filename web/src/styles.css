@@ -167,6 +167,30 @@ h2 { line-height: 1.1; }
 .account-popover strong { display: block; margin-bottom: 1rem; }
 .account-popover button { width: 100%; min-height: 44px; border: 0; border-radius: 0.7rem; background: var(--ink); color: white; font-weight: 800; }
 .page-container { width: min(100% - 2rem, 1080px); min-height: calc(100vh - 68px); margin-inline: auto; padding: 2.25rem 0 5rem; }
+
+.page-container,
+.login-page,
+.showcase-page { view-transition-name: app-route; }
+
+::view-transition-old(app-route) {
+  animation: route-page-out 220ms ease-in both;
+}
+
+::view-transition-new(app-route) {
+  animation: route-page-in 380ms cubic-bezier(0.22, 0.72, 0.24, 1) both;
+}
+
+.route-transition--entering :is(.page-container, .login-page, .showcase-page) {
+  animation: route-page-in 380ms cubic-bezier(0.22, 0.72, 0.24, 1) both;
+}
+
+@keyframes route-page-out {
+  to { opacity: 0; transform: translateY(-0.25rem) scale(0.995); }
+}
+
+@keyframes route-page-in {
+  from { opacity: 0; transform: translateY(0.55rem) scale(0.995); }
+}
 .route-loading { min-height: 100vh; display: grid; place-items: center; }
 .route-loading .wordmark__sigil { animation: breathe 1.2s ease-in-out infinite alternate; }
 @keyframes breathe { to { transform: scale(1.08); } }
@@ -408,6 +432,9 @@ h2 { line-height: 1.1; }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(app-route),
+  ::view-transition-new(app-route),
+  .route-transition--entering :is(.page-container, .login-page, .showcase-page) { animation: none !important; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
   .login-card { transition-duration: 80ms !important; }
   .login-page--leaving .login-card { transform: none; filter: none; }

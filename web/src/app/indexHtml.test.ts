@@ -59,6 +59,18 @@ describe("Web document shell", () => {
     );
   });
 
+  it("uses one moderate route transition and removes it for reduced motion", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+    expect(css).toMatch(/\.page-container,[^}]*\.login-page,[^}]*\.showcase-page\s*\{[^}]*view-transition-name:\s*app-route;/);
+    expect(css).toMatch(/::view-transition-old\(app-route\)\s*\{[^}]*route-page-out[^}]*220ms/);
+    expect(css).toMatch(/::view-transition-new\(app-route\)\s*\{[^}]*route-page-in[^}]*380ms/);
+    expect(css).toMatch(/\.route-transition--entering[^}]*\{[^}]*animation:\s*route-page-in 380ms/);
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*::view-transition-old\(app-route\),[\s\S]*::view-transition-new\(app-route\),[\s\S]*\.route-transition--entering[^}]*\{[^}]*animation:\s*none\s*!important;/,
+    );
+  });
+
   it("keeps frequent subtitle controls at a mobile-safe touch size", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 

@@ -1,5 +1,5 @@
 import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link, useParams } from "react-router";
+import { useParams } from "react-router";
 
 import {
   archiveItem,
@@ -10,6 +10,7 @@ import {
   updateWhySaved,
 } from "../api/client";
 import { LibraryErrorState, LibraryLoadingState } from "../library/LibraryStates";
+import { RouteLink } from "../app/RouteTransition";
 import { VideoDetailView } from "./VideoDetailView";
 
 export function VideoDetailPage() {
@@ -47,7 +48,7 @@ export function VideoDetailPage() {
 
   return (
     <>
-      <Link className="back-link" to="/library">← 返回资料库</Link>
+      <RouteLink className="back-link" to="/library">← 返回资料库</RouteLink>
       {item.isPending ? <LibraryLoadingState label="正在加载视频详情" /> : null}
       {item.isError ? (
         <LibraryErrorState

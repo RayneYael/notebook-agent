@@ -1,6 +1,7 @@
 import { render, screen, within } from "@testing-library/react";
-import { MemoryRouter } from "react-router";
-import { describe, expect, it } from "vitest";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router";
+import { describe, expect, it, vi } from "vitest";
 
 import type { LibraryItem } from "../api/contracts";
 import { VideoCard } from "./VideoCard";
@@ -41,6 +42,33 @@ describe("video card", () => {
     expect(screen.getByText("学习提问方式")).toBeInTheDocument();
     expect(container.querySelector("img")).toHaveAttribute("width", "960");
     expect(container.querySelector("img")).toHaveAttribute("height", "540");
+  });
+
+  it("uses the shared route transition when opening a video detail", async () => {
+    const startViewTransition = vi.fn((update: () => void) => update());
+    Object.defineProperty(document, "startViewTransition", {
+      configurable: true,
+      value: startViewTransition,
+    });
+    const user = userEvent.setup();
+
+    try {
+      render(
+        <MemoryRouter initialEntries={["/library"]}>
+          <Routes>
+            <Route path="/library" element={<VideoCard item={baseItem} />} />
+            <Route path="/videos/:id" element={<h1>视频详情</h1>} />
+          </Routes>
+        </MemoryRouter>,
+      );
+
+      await user.click(screen.getByRole("link", { name: /一段值得反复看的访谈/ }));
+
+      expect(startViewTransition).toHaveBeenCalledOnce();
+      expect(screen.getByRole("heading", { name: "视频详情" })).toBeInTheDocument();
+    } finally {
+      Reflect.deleteProperty(document, "startViewTransition");
+    }
   });
 
   it("never invents metadata for a newly queued item", () => {

@@ -1,7 +1,7 @@
 import { useState, type CSSProperties } from "react";
-import { Link } from "react-router";
 
 import { BrandLogo } from "../app/BrandLogo";
+import { RouteLink } from "../app/RouteTransition";
 
 type DemoId = "product" | "ai" | "practice";
 type SummaryLanguage = "zh" | "en";
@@ -293,16 +293,16 @@ export function ShowcasePage() {
       <a className="showcase-skip" href="#showcase-main">跳到主要内容</a>
 
       <header className="showcase-nav">
-        <Link className="showcase-brand" to="/" aria-label="Notebook Agent 首页">
+        <RouteLink className="showcase-brand" to="/" aria-label="Notebook Agent 首页">
           <BrandLogo className="showcase-brand__mark" />
           <span>NOTEBOOK / AGENT</span>
-        </Link>
+        </RouteLink>
         <nav aria-label="展示页导航">
           <a href="#purpose">项目目的</a>
           <a href="#process">使用流程</a>
           <a href="#demo">试用场景</a>
         </nav>
-        <Link className="showcase-nav__cta" to="/login">进入资料库 <ArrowIcon /></Link>
+        <RouteLink className="showcase-nav__cta" to="/login">进入资料库 <ArrowIcon /></RouteLink>
       </header>
 
       <main id="showcase-main" tabIndex={-1}>
@@ -588,16 +588,16 @@ export function ShowcasePage() {
         <section className="showcase-cta" aria-labelledby="showcase-cta-title">
           <p className="showcase-overline">YOUR KNOWLEDGE / YOUR EVIDENCE</p>
           <h2 id="showcase-cta-title">下次需要答案，<br />直接回到原文。</h2>
-          <Link className="showcase-button showcase-button--dark" to="/login">进入私人资料库 <ArrowIcon /></Link>
+          <RouteLink className="showcase-button showcase-button--dark" to="/login">进入私人资料库 <ArrowIcon /></RouteLink>
           <p className="showcase-cta__note">本页展示已经实现的 YouTube 资料库流程 · 可用登录入口以当前部署配置为准</p>
         </section>
       </main>
 
       <footer className="showcase-footer">
-        <Link className="showcase-brand showcase-brand--footer" to="/">
+        <RouteLink className="showcase-brand showcase-brand--footer" to="/">
           <BrandLogo className="showcase-brand__mark" />
           <span>NOTEBOOK / AGENT</span>
-        </Link>
+        </RouteLink>
         <p>Built for EAZO Global Hackathon</p>
         <a href="#showcase-main">回到顶部 ↑</a>
       </footer>

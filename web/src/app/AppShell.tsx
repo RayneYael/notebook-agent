@@ -1,8 +1,8 @@
 import { type ReactNode, useEffect, useRef } from "react";
-import { Link } from "react-router";
 
 import type { LoginChannel } from "../api/contracts";
 import { BrandLogo } from "./BrandLogo";
+import { RouteLink } from "./RouteTransition";
 
 interface AppShellProps {
   children: ReactNode;
@@ -31,10 +31,10 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
       <a className="skip-link" href="#main-content">跳到主要内容</a>
       <header className="topbar">
         <div className="topbar__inner">
-          <Link className="wordmark" to="/library" aria-label="Notebook Agent 资料库">
+          <RouteLink className="wordmark" to="/library" aria-label="Notebook Agent 资料库">
             <BrandLogo className="wordmark__sigil" />
             <span>Notebook Agent</span>
-          </Link>
+          </RouteLink>
           <details className="account-menu" ref={accountMenuRef}>
             <summary aria-label={`打开账户菜单，当前登录方式：${loginChannelLabel}`}>
               <svg aria-hidden="true" viewBox="0 0 24 24">

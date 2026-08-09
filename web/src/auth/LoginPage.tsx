@@ -1,7 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { useNavigate } from "react-router";
 
 import {
   createLoginChallenge,
@@ -17,6 +16,7 @@ import type {
   SessionInfo,
 } from "../api/contracts";
 import { BrandLogo } from "../app/BrandLogo";
+import { useRouteNavigate } from "../app/RouteTransition";
 
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
 
@@ -51,7 +51,7 @@ export function LoginPage({
   onAuthenticated,
   directDemoLogin = false,
 }: LoginPageProps) {
-  const navigate = useNavigate();
+  const navigate = useRouteNavigate();
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
   const [demoLoginChannel, setDemoLoginChannel] = useState<LoginChannel | null>(null);
   const demoLoginTimer = useRef<number | null>(null);
