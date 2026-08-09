@@ -303,3 +303,34 @@ Added a 22-case real-model MCP/context evaluator, verified the complete stack wi
 ### Next Steps
 
 - Run the full 22-case paid evaluation only with explicit operator authorization.
+
+
+## Session 12: Simplify deployment lifecycle
+
+**Date**: 2026-08-09
+**Task**: Simplify deployment lifecycle
+**Branch**: `dev`
+
+### Summary
+
+Added a profile-aware one-command launcher with minimal runtime configuration, supervised worker and Beat lifecycle, readiness checks, secure shutdown, tests, and deployment documentation.
+
+### Main Changes
+
+- Added read/full/langbot initialization and lifecycle commands
+- Documented minimal environment configuration and deployment safety
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `872c7b7` | (see git log) |
+| `c0dd2d2` | (see git log) |
+
+### Testing
+
+- [OK] 35 deployment CLI tests and 102 related regression tests passed
+
+### Status
+
+[OK] **Completed**
