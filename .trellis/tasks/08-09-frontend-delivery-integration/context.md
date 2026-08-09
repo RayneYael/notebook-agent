@@ -193,3 +193,21 @@
   32 commits ahead and 0 behind it. The existing fork PR branch remains an
   ancestor, 4 commits behind this product head, so the authorized update can be
   a normal fast-forward push with no history rewrite.
+
+## 2026-08-09 final fork and PR refresh
+
+- The fork branch `origin/codex/web-video-library-mvp` was verified as an
+  ancestor and fast-forwarded from `988d064` to the record-backed admission
+  head `da027c9`; no force push or `main` update was performed.
+- Existing upstream PR 2 was updated in place rather than duplicated. It now
+  distinguishes implemented product progress, the monorepo package decision,
+  completed Linux/same-origin deployment preparation, fresh 67-frontend-test
+  and 20-deployment-test evidence, and the exact external gates that remain.
+- PR 2 remains open and intentionally unmerged. Its reported Vercel failure is
+  the upstream repository-owner authorization link for a separate health-only
+  project; the PR does not describe that status as proof of the prepared Linux
+  deployment.
+- This final record-only commit follows the product and admission commits. The
+  durable `task.json.commit` intentionally continues to identify product head
+  `09feca92ac16e6c8c0d61fc1863ea6ad86a99dd3` rather than self-referencing this
+  later task-record commit.

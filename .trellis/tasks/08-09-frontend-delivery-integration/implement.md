@@ -54,6 +54,6 @@
 - [x] Run full frontend tests, frozen OpenAPI check, typecheck, lint, production
   build, deployment contract tests, and a final independent code/architecture
   review on the integrated head.
-- [ ] Refresh `upstream/main`, preserve a fast-forward fork push, update PR 2
+- [x] Refresh `upstream/main`, preserve a fast-forward fork push, update PR 2
   with completed frontend work plus deployment-ready and external-gate status,
   and do not merge it.
