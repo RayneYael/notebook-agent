@@ -118,15 +118,16 @@ source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
 # Prompts only for the embedding and Agent provider keys. Local database and
-# object-storage passwords are generated into the ignored, mode-0600
-# .env.runtime file.
+# object-storage passwords, plus the gateway secret required by `full` and
+# `langbot`, are generated into the ignored, mode-0600 .env.runtime file.
 ./scripts/notebook-agent init --profile read
 ./scripts/notebook-agent start
 ```
 
 Choose `read` for Streamable HTTP MCP without background ingestion, `full` for
-MCP plus Redis/MinIO/one worker/one Beat, or `langbot` for the background stack
-plus the private LangBot gateway. For non-interactive setup, provide
+MCP plus the private LangBot gateway, Redis/MinIO, one worker, and one Beat, or
+`langbot` for the same background stack and gateway without MCP. For
+non-interactive setup, provide
 `ZHIPU_API_KEY` and, when the selected provider requires it, `AGENT_API_KEY`
 or the provider's native credential variable before `init`.
 Existing process variables and a user-authored `.env` override generated
@@ -179,10 +180,11 @@ tools.
 
 ### 4. Start the Worker and Gateway
 
-The one-command `full` and `langbot` profiles start the worker and the single
-Beat instance under one supervisor. The processes remain separate so a Beat
-failure is visible and a second managed Beat cannot be started. The direct
-commands below remain supported for advanced process managers.
+The one-command `full` profile starts MCP, the private gateway, the worker, and
+the single Beat instance under one supervisor. `langbot` starts the same
+background processes and gateway without MCP. The processes remain separate so
+a Beat failure is visible and a second managed Beat cannot be started. The
+direct commands below remain supported for advanced process managers.
 
 On the first deployment, keep `AGENT_SAVE_ENABLED=false` in `.env` and start the ingestion worker:
 

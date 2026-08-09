@@ -113,17 +113,17 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
-# 交互模式只询问 Embedding 与 Agent provider key；本地数据库和对象存储密码
-# 会随机生成到被 git 忽略且权限为 0600 的 .env.runtime。
+# 交互模式只询问 Embedding 与 Agent provider key；本地数据库、对象存储密码和
+# full/langbot 所需的 gateway secret 会随机生成到被 git 忽略且权限为 0600 的 .env.runtime。
 ./scripts/notebook-agent init --profile read
 ./scripts/notebook-agent start
 ```
 
-`read` 只启动 Streamable HTTP MCP；`full` 额外启动 Redis、MinIO、一个同时监听
-`ingest,maintenance` 的 worker 和唯一的 Beat；`langbot` 使用完整后台运行时并启动私有
-LangBot gateway。非交互部署应在执行 `init` 前通过进程环境提供 `ZHIPU_API_KEY`；模型
-provider 需要时再提供 `AGENT_API_KEY` 或该 provider 的原生凭据变量。已有进程环境和用户
-维护的 `.env` 优先于生成配置。
+`read` 只启动 Streamable HTTP MCP；`full` 启动 MCP、私有 LangBot gateway、Redis、MinIO、
+一个同时监听 `ingest,maintenance` 的 worker 和唯一的 Beat；`langbot` 使用相同后台运行时
+但只启动私有 gateway，不启动 MCP。非交互部署应在执行 `init` 前通过进程环境提供
+`ZHIPU_API_KEY`；模型 provider 需要时再提供 `AGENT_API_KEY` 或该 provider 的原生凭据
+变量。已有进程环境和用户维护的 `.env` 优先于生成配置。
 
 常用生命周期命令只管理本启动器拥有的应用进程，不删除 Compose volume，也不停止外部服务：
 
@@ -158,9 +158,9 @@ MCP_TOKEN='<raw-token>' \
 
 ### 4. 启动后台任务与 Gateway
 
-一键启动的 `full` / `langbot` profile 会在同一个 supervisor 下启动 worker 与唯一的
-Beat，但仍保持两个独立进程，避免隐藏 Beat 故障或重复调度。下面的直接命令继续供高级
-进程管理器使用。
+一键启动的 `full` profile 会在同一个 supervisor 下启动 MCP、私有 gateway、worker 与唯一
+的 Beat；`langbot` 启动相同的后台进程和 gateway，但不启动 MCP。各组件仍保持独立进程，
+避免隐藏 Beat 故障或重复调度。下面的直接命令继续供高级进程管理器使用。
 
 首次部署时先保持 `.env` 中的 `AGENT_SAVE_ENABLED=false`，启动 ingestion worker：
 

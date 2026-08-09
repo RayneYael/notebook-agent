@@ -122,13 +122,18 @@ python3.11 -m venv .venv
 
 启动器生成最小 `.env.runtime`、按 profile 启动必要的本地 Compose service、执行迁移，并在
 同一 supervisor 下管理 MCP/Gateway、一个双队列 Celery worker 和唯一的 Celery Beat。
+`read` 只包含 MCP；`langbot` 包含 worker、Beat 与 gateway；`full` 是两者的并集，包含
+worker、Beat、MCP 与 gateway。gateway 指 Notebook Agent 自带进程，不会代替外部的
+LangBot core、plugin runtime 或微信 adapter。
 这些组件仍为独立进程。`stop` 只停止启动器拥有且身份匹配的应用进程；持久卷和外部数据库、
 Redis、MinIO 不会被停止或删除。日志位于 `.runtime/deployment/logs/`，通过
 `./scripts/notebook-agent logs <component>` 查看。
-迁移完成后，`full` 会直接拉起 worker、Beat 和 MCP，不会让串行的深度依赖探测阻塞后续
-组件。应用端口开始监听后 `start` 即成功返回；数据库、Redis、MinIO 和 worker 的深度探测
-只在执行 `status` 时按需运行，不占用 supervisor，也不会关闭仍在运行的进程。只有托管
+迁移完成后，`full` 会直接拉起 worker、Beat、MCP 和 LangBot gateway，不会让串行的深度
+依赖探测阻塞后续组件。MCP 与 gateway 两个端口都开始监听后 `start` 才成功返回；数据库、
+Redis、MinIO 和 worker 的深度探测只在执行 `status` 时按需运行，不占用 supervisor，也不会
+关闭仍在运行的进程。只有托管
 子进程真实退出或收到明确的 `stop`/终止信号才关闭整组 runtime。
+`full` 的 `MCP_PORT` 与 `CHANNEL_GATEWAY_PORT` 必须不同，启动器会在任何副作用前拒绝端口冲突。
 启动器会保存不含凭据的依赖目标指纹；如果 `status` 的临时环境覆盖指向另一套数据库、
 Redis、MinIO 或监听地址，它会显示 `configuration.runtime: unavailable` 并拒绝误探测。
 因此使用一次性环境变量启动时，后续 `status` 也应提供相同的目标配置。
