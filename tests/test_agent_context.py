@@ -14,11 +14,13 @@ from app.models import AppUser, ContentItem, ConversationThread, ConversationTur
 
 _CONTENT_DDL = """
 CREATE TABLE content_item (
-  id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, platform TEXT NOT NULL,
-  platform_id TEXT NOT NULL, kind TEXT NOT NULL, url TEXT NOT NULL, title TEXT,
+  id INTEGER PRIMARY KEY, public_id TEXT NOT NULL DEFAULT 'pub', user_id INTEGER NOT NULL,
+  platform TEXT NOT NULL, platform_id TEXT NOT NULL, kind TEXT NOT NULL,
+  url TEXT NOT NULL, title TEXT,
   author TEXT, published_at DATETIME, duration_sec INTEGER, char_count INTEGER,
   lang TEXT, description TEXT, tags TEXT, chapters TEXT, cover_url TEXT,
-  saved_at DATETIME NOT NULL, why_saved TEXT, watch_state TEXT,
+  saved_at DATETIME NOT NULL, why_saved TEXT, archived_at DATETIME,
+  watch_state TEXT,
   watch_pos_sec INTEGER, content_hash TEXT, raw_object_key TEXT,
   text_source TEXT NOT NULL, state TEXT NOT NULL, fail_reason TEXT,
   deleted_at DATETIME, purge_claimed_at DATETIME,

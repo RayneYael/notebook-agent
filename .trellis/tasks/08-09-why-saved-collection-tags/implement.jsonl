@@ -1,0 +1,3 @@
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Use the existing React composition, native control, styling, and accessibility conventions."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Keep collection drafts local and reuse TanStack Query plus the existing search query."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Preserve the generated OpenAPI request and response contract without handwritten API fields."}

@@ -1,51 +1,66 @@
 # Quality Guidelines
 
-> Code quality standards for frontend development.
+> Required frontend checks and review boundaries.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's quality standards here.
-
-Questions to answer:
-- What patterns are forbidden?
-- What linting rules do you enforce?
-- What are your testing requirements?
-- What code review standards apply?
--->
-
-(To be filled by the team)
+Frontend changes must preserve tenant privacy, honest asynchronous states, accessible mobile interaction, and OpenAPI contract alignment. The smallest supported dependency set is preferred.
 
 ---
 
 ## Forbidden Patterns
 
-<!-- Patterns that should never be used and why -->
-
-(To be filled by the team)
+- Browser-supplied tenant, user, channel identity, database, queue task, or object-store identifiers.
+- Auth secrets in Web Storage, query strings, logs, rendered text, or analytics.
+- Wildcard credentialed CORS or direct browser access to the loopback HMAC gateway.
+- LLM calls for the empty state or summary generation.
+- Building transcript text from search segments.
+- Raw `fetch` calls outside `src/api/client.ts`.
+- Manual edits to `openapi.json` or `schema.d.ts`.
+- State-changing GET requests.
+- Mock data in production modules.
+- Silent catch blocks that convert all failures into an empty state.
 
 ---
 
 ## Required Patterns
 
-<!-- Patterns that must always be used -->
-
-(To be filled by the team)
+- Same-origin `fetch` with `credentials: "same-origin"`.
+- CSRF cookie copied to `X-CSRF-Token` for unsafe requests.
+- `Idempotency-Key` on add and retry.
+- 401 handler clears the full query cache.
+- Server-provided `available_actions` controls management buttons.
+- Loading, error, filtered-empty, and true-first-empty are distinct states.
+- API typo routes remain JSON and must never fall through to the SPA shell.
+- Production assets are built by Vite and served from the same origin as FastAPI.
 
 ---
 
 ## Testing Requirements
 
-<!-- What level of testing is expected -->
+Run from `web/`:
 
-(To be filled by the team)
+```text
+pnpm test
+pnpm typecheck
+pnpm lint
+pnpm build
+pnpm check:api
+```
+
+Tests must cover lifecycle copy and polling, true-first-empty behavior, partial batch outcomes, login secret handling, challenge exchange, cache clearing, detail chapters/transcript, and server-derived actions. Use a real browser for native dialog behavior, mobile overflow, SPA refresh, and security headers.
 
 ---
 
 ## Code Review Checklist
 
-<!-- What reviewers should check -->
-
-(To be filled by the team)
+- Does any request or type expose a private/internal ID?
+- Can a previous tenant's cached data survive logout or 401?
+- Are loading, error, and empty states truthfully separated?
+- Is every mutation protected by same-origin and CSRF behavior?
+- Is polling bounded to nonterminal state?
+- Is transcript text sourced from the transcript API?
+- Are mobile controls labeled, focusable, and reachable at 390x844?
+- Do OpenAPI JSON and generated TypeScript pass the stale check?

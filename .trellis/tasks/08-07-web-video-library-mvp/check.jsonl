@@ -1,0 +1,11 @@
+{"file": ".trellis/tasks/08-07-web-video-library-mvp/prd.md", "reason": "Verify every linked-chat acceptance criterion and out-of-scope boundary against the delivered product"}
+{"file": ".trellis/tasks/08-07-web-video-library-mvp/design.md", "reason": "Audit trust boundaries, lifecycle precedence, transcript source, API surface, and rollback"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify the browser cannot reach the loopback gateway and channel login approval remains signed and fail closed"}
+{"file": ".trellis/spec/backend/provider-tls-diagnostics.md", "reason": "Audit same-origin Web diagnostics and provider paths for TLS verification and secret redaction"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Audit challenge/session atomicity, tenant predicates, public IDs, archive state, and migration roundtrip"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Confirm raw database, broker, object-store, connector, and provider details never reach HTTP responses"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Search logs and code paths for login/session/CSRF/URL/transcript leakage"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Require focused RED-GREEN evidence, full regressions, type checks, builds, and browser smoke"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Verify every frontend guide reflects actual implemented React conventions and accessibility behavior"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Check login-to-library-to-worker-to-transcript behavior and safe partial failure end to end"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Verify archived/deleted precedence, all Web and Agent visibility predicates, restore behavior, and the Alembic merge graph"}

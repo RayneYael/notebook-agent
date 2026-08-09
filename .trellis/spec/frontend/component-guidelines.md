@@ -1,59 +1,64 @@
 # Component Guidelines
 
-> How components are built in this project.
+> How React components are built in the Notebook Agent Web client.
 
 ---
 
 ## Overview
 
-<!--
-Document your project's component conventions here.
-
-Questions to answer:
-- What component patterns do you use?
-- How are props defined?
-- How do you handle composition?
-- What accessibility standards apply?
--->
-
-(To be filled by the team)
+Components are plain function components. Pages orchestrate queries and mutations; views receive browser-safe DTOs and callbacks. Components do not infer tenant identity, ingestion state, retry eligibility, or transcript ownership.
 
 ---
 
 ## Component Structure
 
-<!-- Standard structure of a component file -->
+1. Import generated contract aliases with `import type`.
+2. Define a narrow local props interface when the generated DTO is not the complete prop shape.
+3. Derive display-only values during render.
+4. Keep event handlers close to the relevant form or control.
+5. Return semantic HTML before adding ARIA.
 
-(To be filled by the team)
+`VideoDetailPage` owns network state. `VideoDetailView` owns the visual layout and is tested with explicit data and callbacks.
 
 ---
 
 ## Props Conventions
 
-<!-- How props should be defined and typed -->
-
-(To be filled by the team)
+- Accept public IDs and browser-safe DTOs only.
+- Inject network functions only where it materially improves isolated testing, as in `LoginPage`, `LibraryPage`, and `AddVideosDialog`.
+- Do not pass `user_id`, `app_user_id`, `ChannelIdentity`, request keys, raw object keys, task IDs, or ORM objects.
+- Use callbacks for user actions. A presentation component must not import a database or channel concept.
+- Optional data is rendered only when meaningful. Null title uses an honest pending label; null author is omitted rather than invented.
 
 ---
 
 ## Styling Patterns
 
-<!-- How styles are applied (CSS modules, styled-components, Tailwind, etc.) -->
-
-(To be filled by the team)
+- One tracked stylesheet, `src/styles.css`, defines the current small design system.
+- Use CSS custom properties for palette and common surfaces.
+- The mobile layout is the default; desktop changes live in min-width media queries.
+- The desktop page container is capped at `1080px`.
+- Do not add Tailwind, CSS-in-JS, a component framework, or runtime theme state without a separate design decision.
+- Motion must have a `prefers-reduced-motion` fallback.
 
 ---
 
 ## Accessibility
 
-<!-- A11y requirements and patterns -->
-
-(To be filled by the team)
+- Every form field has a programmatic label.
+- Icon-only buttons have an accessible name.
+- Use native `<dialog>`, `<details>`, headings, lists, links, and buttons.
+- Dialogs use `showModal()` so focus and the backdrop are real browser behavior.
+- Async status changes use `aria-live`, `role="alert"`, or `aria-busy` as appropriate.
+- Focus indicators remain visible; keyboard and touch controls are at least 44px high where practical.
+- Thumbnails are decorative when the adjacent title already names the destination.
 
 ---
 
 ## Common Mistakes
 
-<!-- Component-related mistakes your team has made -->
-
-(To be filled by the team)
+- Showing the first-empty Agent card during loading or error states.
+- Treating a YouTube description as an AI summary.
+- Rendering a retry button from lifecycle alone instead of `available_actions`.
+- Setting the `open` attribute before calling `dialog.showModal()`, which creates a non-modal dialog.
+- Inventing placeholder metadata such as “unknown author” for newly queued items.

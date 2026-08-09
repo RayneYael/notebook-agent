@@ -265,6 +265,197 @@ def test_concurrent_duplicate_submission_creates_one_item_and_dispatch(
         assert len(list(db.scalars(select(IngestDispatch)))) == 1
 
 
+def test_concurrent_distinct_submissions_enforce_one_active_item_per_tenant(
+    submission_factory,
+):
+    tenant = _tenant(submission_factory, 51)
+    barrier = Barrier(2)
+    published = []
+    published_lock = Lock()
+
+    def publisher(dispatch_id):
+        with published_lock:
+            published.append(dispatch_id)
+        return f"task-{dispatch_id}"
+
+    service = IngestSubmissionService(
+        submission_factory,
+        publisher,
+        max_active_per_tenant=1,
+    )
+
+    def submit(index):
+        barrier.wait(timeout=5)
+        return service.submit_urls(
+            tenant,
+            [f"https://youtu.be/quotaC0000{index}"],
+            why_saved=None,
+            request_key=f"quota:active:{index}",
+        ).results[0].status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = list(pool.map(submit, (1, 2)))
+
+    assert sorted(statuses) == ["queued", "quota_exceeded"]
+    assert len(published) == 1
+    with submission_factory() as db:
+        assert len(list(db.scalars(select(ContentItem)))) == 1
+        assert len(list(db.scalars(select(IngestDispatch)))) == 1
+
+
+def test_concurrent_distinct_tenants_enforce_one_active_item_globally(
+    submission_factory,
+):
+    tenant_a = _tenant(submission_factory, 54)
+    tenant_b = _tenant(submission_factory, 55)
+    barrier = Barrier(2)
+    published = []
+    published_lock = Lock()
+
+    def publisher(dispatch_id):
+        with published_lock:
+            published.append(dispatch_id)
+        return f"task-{dispatch_id}"
+
+    service = IngestSubmissionService(
+        submission_factory,
+        publisher,
+        max_active_global=1,
+        max_active_per_tenant=10,
+        daily_new_item_limit=10,
+        max_items_per_tenant=10,
+    )
+
+    def submit(index):
+        tenant = tenant_a if index == 1 else tenant_b
+        barrier.wait(timeout=5)
+        return service.submit_urls(
+            tenant,
+            [f"https://youtu.be/quotaG0000{index}"],
+            why_saved=None,
+            request_key=f"quota:global:{index}",
+        ).results[0].status
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        statuses = list(pool.map(submit, (1, 2)))
+
+    assert sorted(statuses) == ["queued", "quota_exceeded"]
+    assert len(published) == 1
+    with submission_factory() as db:
+        assert len(list(db.scalars(select(ContentItem)))) == 1
+        assert len(list(db.scalars(select(IngestDispatch)))) == 1
+
+
+def test_daily_new_item_limit_rejects_the_next_distinct_item(
+    submission_factory,
+):
+    tenant = _tenant(submission_factory, 52)
+    published = []
+    service = IngestSubmissionService(
+        submission_factory,
+        lambda dispatch_id: published.append(dispatch_id)
+        or f"task-{dispatch_id}",
+        daily_new_item_limit=1,
+    )
+
+    first = service.submit_urls(
+        tenant,
+        ["https://youtu.be/quotaD00001"],
+        why_saved=None,
+        request_key="quota:daily:first",
+    )
+    second = service.submit_urls(
+        tenant,
+        ["https://youtu.be/quotaD00002"],
+        why_saved=None,
+        request_key="quota:daily:second",
+    )
+
+    assert first.results[0].status == "queued"
+    assert second.results[0].status == "quota_exceeded"
+    assert len(published) == 1
+    with submission_factory() as db:
+        assert len(list(db.scalars(select(ContentItem)))) == 1
+        assert len(list(db.scalars(select(IngestDispatch)))) == 1
+
+
+def test_daily_dispatch_limit_counts_failed_item_retries(
+    submission_factory,
+):
+    tenant = _tenant(submission_factory, 54)
+    published = []
+
+    def unavailable(dispatch_id):
+        published.append(dispatch_id)
+        raise RuntimeError("private broker failure")
+
+    service = IngestSubmissionService(
+        submission_factory,
+        unavailable,
+        daily_dispatch_limit_per_tenant=1,
+    )
+    url = "https://youtu.be/quotaR00001"
+
+    first = service.submit_urls(
+        tenant,
+        [url],
+        why_saved=None,
+        request_key="quota:retry:first",
+    )
+    second = service.submit_urls(
+        tenant,
+        [url],
+        why_saved=None,
+        request_key="quota:retry:second",
+    )
+
+    assert first.results[0].status == "queue_unavailable"
+    assert second.results[0].status == "quota_exceeded"
+    assert len(published) == 1
+    with submission_factory() as db:
+        assert len(list(db.scalars(select(ContentItem)))) == 1
+        assert len(list(db.scalars(select(IngestDispatch)))) == 1
+
+
+def test_total_item_limit_counts_existing_items_before_creating_a_new_one(
+    submission_factory,
+):
+    tenant = _tenant(submission_factory, 53)
+    with submission_factory() as db:
+        db.add(
+            ContentItem(
+                public_id=uuid4().hex,
+                user_id=tenant.app_user_id,
+                platform="youtube",
+                platform_id="quotaT00001",
+                kind="video",
+                url="https://www.youtube.com/watch?v=quotaT00001",
+                state="ready",
+            )
+        )
+        db.commit()
+    published = []
+    service = IngestSubmissionService(
+        submission_factory,
+        lambda dispatch_id: published.append(dispatch_id)
+        or f"task-{dispatch_id}",
+        max_items_per_tenant=1,
+    )
+
+    result = service.submit_urls(
+        tenant,
+        ["https://youtu.be/quotaT00002"],
+        why_saved=None,
+        request_key="quota:total:second",
+    )
+
+    assert result.results[0].status == "quota_exceeded"
+    assert published == []
+    with submission_factory() as db:
+        assert len(list(db.scalars(select(ContentItem)))) == 1
+        assert list(db.scalars(select(IngestDispatch))) == []
+
+
 def test_fast_worker_transition_is_not_overwritten_by_publish_ack(
     submission_factory,
 ):

@@ -1,0 +1,34 @@
+[Unit]
+Description=Notebook Agent Web schema migration admission
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=notebook-agent
+Group=notebook-agent
+WorkingDirectory=/opt/notebook-agent/current
+EnvironmentFile=/etc/notebook-agent/notebook-agent.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=NOTEBOOK_AGENT_ENV=production
+Environment=NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
+ExecStart=/opt/notebook-agent/current/.venv/bin/alembic upgrade head
+ExecStart=/opt/notebook-agent/current/.venv/bin/alembic current
+ExecStart=/opt/notebook-agent/current/.venv/bin/alembic check
+ExecStart=/usr/bin/touch /opt/notebook-agent/current/.migration-admitted
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/notebook-agent/releases
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027

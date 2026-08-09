@@ -144,6 +144,17 @@ def test_schema_mismatch_fails_closed_without_returning_actual_revision():
     assert "older-revision" not in json.dumps(response.payload)
 
 
+def test_current_web_release_rejects_pre_web_schema_revision():
+    old = probe_database(
+        POOLED_URL,
+        "a7b8c9d0e1f2",
+        connect=connector_with([(1,), ("f6a7b8c9d0e1",)], []),
+    )
+
+    assert old.ready is False
+    assert old.failure_code == "database_schema_mismatch"
+
+
 def test_vercel_config_allowlists_health_routes_and_excludes_local_secrets():
     root = Path(__file__).resolve().parents[1]
     config = json.loads((root / "vercel.json").read_text())
@@ -151,6 +162,7 @@ def test_vercel_config_allowlists_health_routes_and_excludes_local_secrets():
     alembic_config = Config(str(root / "alembic.ini"))
     migration_head = ScriptDirectory.from_config(alembic_config).get_current_head()
     assert config["env"]["EXPECTED_DATABASE_REVISION"] == migration_head
+    assert "EXPECTED_DATABASE_REVISIONS" not in config["env"]
     assert config["outputDirectory"] == "public"
     assert (root / "public" / ".gitkeep").is_file()
 

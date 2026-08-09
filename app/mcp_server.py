@@ -38,6 +38,7 @@ from app.mcp_readiness import (
     assess_mcp_mutation_readiness,
     probe_mcp_worker,
 )
+from app.limits import MAX_WHY_SAVED_CHARS
 
 
 MCP_TOOL_NAMES: tuple[str, ...] = (
@@ -98,7 +99,7 @@ _CONVERSATION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _MCP_PATH_TOKEN_RE = re.compile(r"^/mcp/c/([^/?#]+)\Z")
 _MAX_URL_BATCH = 10
 _MAX_URL_CHARS = 4096
-_MAX_WHY_SAVED_CHARS = 500
+_MAX_WHY_SAVED_CHARS = MAX_WHY_SAVED_CHARS
 _SAFE_ERROR_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 _AUTH_CONTEXT: contextvars.ContextVar[ResolvedMcpGrant | None] = contextvars.ContextVar(
     "mcp_resolved_grant", default=None
@@ -528,16 +529,17 @@ class McpToolFacade:
         if self.management is None or self.submission is None or self.pending is None:
             from app.agent.management import KnowledgeItemManagementService
             from app.channels.pending_actions import PendingConfirmationService
-            from app.ingest.submission import IngestSubmissionService
+            from app.ingest.submission import build_ingest_submission_service
             from app.ingest.tasks import publish_ingest_dispatch
 
             self.management = self.management or KnowledgeItemManagementService(
                 self.session_factory, retention_days=settings.trash_retention_days
             )
             self.pending = self.pending or PendingConfirmationService(self.session_factory)
-            self.submission = self.submission or IngestSubmissionService(
-                self.session_factory, self.publisher or publish_ingest_dispatch,
-                retention_days=settings.trash_retention_days,
+            self.submission = self.submission or build_ingest_submission_service(
+                self.session_factory,
+                self.publisher or publish_ingest_dispatch,
+                settings,
             )
         if self.grant_service is None:
             self.grant_service = McpGrantService(self.session_factory)

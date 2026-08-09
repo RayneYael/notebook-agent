@@ -63,7 +63,6 @@ def probe_database(
         return DatabaseProbe(False, failure_code="database_url_invalid")
     if not expected_revision or not expected_revision.strip():
         return DatabaseProbe(False, failure_code="expected_revision_missing")
-
     try:
         with connect(
             database_url,

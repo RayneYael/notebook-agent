@@ -730,6 +730,7 @@ class AgentActionRuntime:
             "invalid_url": "链接无效，请检查后重新发送。",
             "queue_unavailable": "处理队列暂时不可用，请稍后重试该链接。",
             "create_failed": "创建保存记录失败，请稍后重试。",
+            "quota_exceeded": "已达到当前保存额度，请稍后再试或归档旧内容。",
         }
         details = "\n".join(
             f"- [{value.result_id}] {safe_messages[value.status]}"

@@ -6,8 +6,10 @@ from kombu import Connection
 import pytest
 
 from app.connectors.base import (
+    Cue,
     ItemMeta,
     NeedsASR,
+    TextResult,
     TransientFetchError,
 )
 from app.config import Settings
@@ -18,6 +20,7 @@ from app.ingest.tasks import (
     _mark_dispatch_failed,
     _release_dispatch_for_retry,
     build_worker_embedder,
+    create_item,
     fetch_text_task,
     process_item,
     publish_ingest_dispatch,
@@ -161,6 +164,62 @@ def test_worker_fetches_and_persists_metadata_before_text():
     assert item.state == "needs_asr"
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        TextResult(b"x" * 11, [Cue(0, 1, "ok")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "a"), Cue(1, 2, "b")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "toolong")], "official_cc", "en"),
+    ],
+)
+def test_worker_rejects_oversized_transcript_before_storage_or_embedding(monkeypatch, result):
+    class Item:
+        id = 41
+        user_id = 57
+        platform = "youtube"
+        platform_id = "dQw4w9WgXcQ"
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        chapters = None
+        state = "pending"
+
+    item = Item()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, _model, _item_id): return item
+        def commit(self): return None
+
+    class Connector:
+        def fetch_meta(self, _platform_id): return None
+        def fetch_text(self, _platform_id): return result
+
+    class Store:
+        def put(self, *_args): pytest.fail("oversized content must not reach object storage")
+
+    class Embedder:
+        def embed(self, _texts): pytest.fail("oversized content must not reach the provider")
+
+    limits = replace(
+        Settings(),
+        ingest_max_raw_transcript_bytes=10,
+        ingest_max_cues_per_item=1,
+        ingest_max_text_chars_per_item=5,
+        ingest_max_segments_per_item=2,
+        ingest_max_embedding_chars_per_item=10,
+    )
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: limits)
+
+    with pytest.raises(ValueError, match="ingest_too_large"):
+        process_item(
+            item.id,
+            connector=Connector(),
+            embedder=Embedder(),
+            object_store=Store(),
+            session_factory=lambda: DB(),
+        )
+
+
 def test_cli_ingestion_fetches_metadata_exactly_once():
     class Store:
         item = None
@@ -235,6 +294,66 @@ def test_cli_ingestion_fetches_metadata_exactly_once():
         ("text", "dQw4w9WgXcQ"),
     ]
     assert store.item.title == "one fetch"
+    assert store.item.public_id
+
+
+def test_cli_resave_from_trash_clears_the_web_archive_marker(monkeypatch):
+    deleted_at = datetime(2026, 8, 7, tzinfo=UTC)
+    item = ContentItem(
+        id=41,
+        public_id="restored-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="ready",
+        archived_at=datetime(2026, 8, 6, tzinfo=UTC),
+        deleted_at=deleted_at,
+    )
+    scalar_results = [item, datetime(2026, 8, 8, tzinfo=UTC)]
+
+    class DB:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, model, object_id):
+            if model is AppUser and object_id == 57:
+                return object()
+            return None
+
+        def scalar(self, _statement):
+            return scalar_results.pop(0)
+
+        def commit(self):
+            return None
+
+    class Connector:
+        platform = "youtube"
+
+        def match(self, _url):
+            return "dQw4w9WgXcQ"
+
+    class SettingsProbe:
+        trash_retention_days = 30
+
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: SettingsProbe())
+
+    restored_id = create_item(
+        item.url,
+        user_id=item.user_id,
+        why_saved="restored",
+        connector=Connector(),
+        session_factory=lambda: DB(),
+    )
+
+    assert restored_id == item.id
+    assert item.deleted_at is None
+    assert item.archived_at is None
+    assert item.why_saved == "restored"
 
 
 def test_celery_task_passes_only_dispatch_and_current_task_id(monkeypatch):

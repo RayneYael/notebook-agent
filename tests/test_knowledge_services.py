@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from types import SimpleNamespace
 
 import pytest
 
@@ -138,3 +139,30 @@ def test_search_overfetch_is_bounded_and_public_limit_is_clamped(monkeypatch):
 
     assert service.search_segments("redacted query", limit=999) == []
     assert calls == [("bm25", 1, 50), ("vector", 1, 50)]
+
+
+def test_neighbor_hydration_keeps_deleted_and_archived_items_out():
+    statements: list[str] = []
+
+    class Database:
+        def execute(self, statement):
+            statements.append(str(statement))
+            return SimpleNamespace(
+                one_or_none=lambda: (
+                    SimpleNamespace(id=11, item_id=7, seq=2),
+                    SimpleNamespace(id=7),
+                )
+            )
+
+        def scalars(self, statement):
+            statements.append(str(statement))
+            return SimpleNamespace(all=lambda: [])
+
+    @contextmanager
+    def database():
+        yield Database()
+
+    assert KnowledgeServices(tenant(), database).get_neighbors(11) == []
+    neighbor_query = statements[-1]
+    assert "content_item.deleted_at IS NULL" in neighbor_query
+    assert "content_item.archived_at IS NULL" in neighbor_query

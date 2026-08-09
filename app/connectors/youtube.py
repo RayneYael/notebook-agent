@@ -6,15 +6,15 @@ import json
 import re
 import subprocess
 import sys
-import tempfile
 from datetime import datetime, timezone
-from pathlib import Path
 
 from app.connectors.base import Cue, ItemMeta, NeedsASR, TextResult, TransientFetchError
-from app.ingest.validate import guard_transcript
+from app.ingest.validate import IngestLimitExceeded, guard_transcript
 
 
 _ID_RE = re.compile(r"(?:youtu\.be/|youtube\.com/(?:watch\?.*?v=|shorts/|embed/))([\w-]{11})")
+DEFAULT_MAX_TRANSCRIPT_BYTES = 5_000_000
+DEFAULT_FETCH_TIMEOUT_SECONDS = 30.0
 
 
 def _normalise_language(value: object) -> str:
@@ -57,8 +57,20 @@ def parse_json3(body: bytes) -> list[Cue]:
 class YouTubeConnector:
     platform = "youtube"
 
-    def __init__(self, *, runner=subprocess.run) -> None:
+    def __init__(
+        self,
+        *,
+        runner=subprocess.run,
+        subtitle_runner=subprocess.run,
+        max_transcript_bytes: int = DEFAULT_MAX_TRANSCRIPT_BYTES,
+        fetch_timeout_seconds: float = DEFAULT_FETCH_TIMEOUT_SECONDS,
+    ) -> None:
+        if max_transcript_bytes <= 0 or fetch_timeout_seconds <= 0:
+            raise ValueError("connector limits must be positive")
         self._runner = runner
+        self._subtitle_runner = subtitle_runner
+        self._max_transcript_bytes = max_transcript_bytes
+        self._fetch_timeout_seconds = fetch_timeout_seconds
         self._meta: dict[str, dict] = {}
 
     def match(self, url: str) -> str | None:
@@ -66,25 +78,57 @@ class YouTubeConnector:
         return match.group(1) if match else None
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
-        result = self._runner(
-            [
-                sys.executable,
-                "-m",
-                "yt_dlp",
-                "--extractor-args",
-                "youtube:player_client=android_vr",
-                *args,
-            ],
-            text=True,
-            capture_output=True,
-            check=False,
-        )
+        try:
+            result = self._runner(
+                [
+                    sys.executable,
+                    "-m",
+                    "yt_dlp",
+                    "--ignore-config",
+                    "--socket-timeout",
+                    str(self._fetch_timeout_seconds),
+                    "--extractor-args",
+                    "youtube:player_client=android_vr",
+                    *args,
+                ],
+                text=True,
+                capture_output=True,
+                check=False,
+                timeout=self._fetch_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            raise TransientFetchError("youtube_fetch_timeout") from None
         if result.returncode:
             message = result.stderr.strip() or "yt-dlp failed"
             if "429" in message or "Too Many Requests" in message:
                 raise TransientFetchError(f"YouTube rate limited this video: {message}")
             raise TransientFetchError(message)
         return result
+
+    def _download_subtitle(self, url: str, headers: object) -> bytes:
+        request = json.dumps(
+            {
+                "url": url,
+                "headers": headers if isinstance(headers, dict) else {},
+                "max_bytes": self._max_transcript_bytes,
+                "socket_timeout_seconds": min(10.0, self._fetch_timeout_seconds),
+            }
+        ).encode("utf-8")
+        try:
+            result = self._subtitle_runner(
+                [sys.executable, "-m", "app.connectors.bounded_fetch"],
+                input=request,
+                capture_output=True,
+                check=False,
+                timeout=self._fetch_timeout_seconds,
+            )
+        except subprocess.TimeoutExpired:
+            raise TransientFetchError("subtitle_fetch_timeout") from None
+        if result.returncode == 10 or len(result.stdout) > self._max_transcript_bytes:
+            raise IngestLimitExceeded()
+        if result.returncode:
+            raise TransientFetchError("subtitle_fetch_failed")
+        return bytes(result.stdout)
 
     def fetch_meta(self, platform_id: str) -> ItemMeta:
         url = f"https://www.youtube.com/watch?v={platform_id}"
@@ -155,17 +199,24 @@ class YouTubeConnector:
         if selected is None:
             return NeedsASR()
         source, lang = selected
-        url = f"https://www.youtube.com/watch?v={platform_id}"
-        with tempfile.TemporaryDirectory(prefix="kb-ytdlp-") as temp_dir:
-            output = str(Path(temp_dir) / "subtitle")
-            flags = ["--write-subs"] if source == "official_cc" else ["--write-auto-subs"]
-            self._run(["--no-playlist", "--skip-download", *flags, "--sub-langs", lang, "--sub-format", "json3", "-o", output, url])
-            paths = sorted(Path(temp_dir).glob("*.json3"))
-            if len(paths) > 1:
-                raise TransientFetchError(
-                    f"yt-dlp wrote multiple json3 tracks for requested language {lang}"
-                )
-            body = paths[0].read_bytes() if paths else b""
+        track_group = "subtitles" if source == "official_cc" else "automatic_captions"
+        formats = (data.get(track_group) or {}).get(lang) or []
+        selected_format = next(
+            (
+                item
+                for item in formats
+                if isinstance(item, dict)
+                and item.get("ext") == "json3"
+                and isinstance(item.get("url"), str)
+            ),
+            None,
+        )
+        if selected_format is None:
+            raise TransientFetchError("selected subtitle has no json3 URL")
+        body = self._download_subtitle(
+            selected_format["url"],
+            selected_format.get("http_headers") or data.get("http_headers"),
+        )
         cues = parse_json3(body) if body else []
         guard_transcript(body, cues, platform=self.platform)
         return TextResult(body, cues, source, _base_language(lang))

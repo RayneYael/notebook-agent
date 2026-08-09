@@ -74,6 +74,7 @@ from migrations.versions import d4e5f6a7b8c9_item_management as management_migra
 _CONTENT_DDL = """
 CREATE TABLE content_item (
   id INTEGER PRIMARY KEY,
+  public_id TEXT NOT NULL DEFAULT 'test-public-id',
   user_id INTEGER NOT NULL,
   platform TEXT NOT NULL,
   platform_id TEXT NOT NULL,
@@ -90,6 +91,7 @@ CREATE TABLE content_item (
   chapters TEXT,
   cover_url TEXT,
   saved_at DATETIME NOT NULL,
+  archived_at DATETIME,
   why_saved TEXT,
   watch_state TEXT,
   watch_pos_sec INTEGER,
@@ -204,6 +206,7 @@ def _item(
     *,
     user_id: int = 7,
     saved_at: datetime | None = None,
+    archived_at: datetime | None = None,
     deleted_at: datetime | None = None,
     state: str = "ready",
     why_saved: str | None = None,
@@ -224,6 +227,7 @@ def _item(
         author="Author",
         duration_sec=42,
         saved_at=saved_at or datetime(2026, 8, 1, tzinfo=UTC),
+        archived_at=archived_at,
         why_saved=why_saved,
         text_source="none",
         state=state,
@@ -305,13 +309,15 @@ def test_management_projection_tenant_isolation_trash_and_why_saved(sqlite_facto
                 _item(11, why_saved="  keep   this  ", title="Visible"),
                 _item(12, deleted_at=now - timedelta(days=2), title="Trash"),
                 _item(13, user_id=99, title="Other tenant"),
+                _item(14, why_saved="x" * 600, title="Legacy note"),
             ]
         )
         db.commit()
     service = KnowledgeItemManagementService(sqlite_factory, retention_days=30)
     library = service.list_items(_tenant(), now=now)
-    assert [row.item_id for row in library.items] == [11]
-    assert library.items[0].why_saved == "  keep   this  "
+    assert [row.item_id for row in library.items] == [14, 11]
+    assert library.items[1].why_saved == "  keep   this  "
+    assert service.get_item(_tenant(), 14).why_saved == "x" * 600
     trash = service.list_items(_tenant(), location="trash", now=now)
     assert trash.items[0].item_id == 12
     assert trash.items[0].restorable is True
@@ -336,6 +342,49 @@ def test_management_projection_tenant_isolation_trash_and_why_saved(sqlite_facto
     assert cleared.status == "updated"
     with pytest.raises(InvalidWhySaved):
         service.update_why_saved(_tenant(), 11, "x" * 501)
+
+
+def test_web_archive_stays_hidden_from_channel_management_and_trash_restore_clears_it(
+    sqlite_factory,
+):
+    now = datetime(2026, 8, 8, tzinfo=UTC)
+    with sqlite_factory() as db:
+        db.add(
+            _item(
+                14,
+                archived_at=now - timedelta(days=1),
+                title="Archived outside the active library",
+            )
+        )
+        db.add(
+            _item(
+                15,
+                archived_at=now - timedelta(days=2),
+                deleted_at=now - timedelta(hours=1),
+                title="Deleted state wins",
+            )
+        )
+        db.commit()
+
+    service = KnowledgeItemManagementService(sqlite_factory, retention_days=30)
+    assert service.list_items(_tenant(), now=now).items == []
+    assert [row.item_id for row in service.list_items(
+        _tenant(), location="trash", now=now
+    ).items] == [15]
+    with pytest.raises(ItemNotFound):
+        service.get_item(_tenant(), 14)
+    with pytest.raises(ItemNotFound):
+        service.update_why_saved(_tenant(), 14, "must stay hidden")
+    with pytest.raises(ItemNotFound):
+        service.request_delete_targets(_tenant(), [14])
+
+    restored = service.restore(_tenant(), [15], now=now)
+    assert restored.results[0].status == "restored"
+    with sqlite_factory() as db:
+        restored_item = db.get(ContentItem, 15)
+        assert restored_item.deleted_at is None
+        assert restored_item.archived_at is None
+    assert [row.item_id for row in service.list_items(_tenant(), now=now).items] == [15]
 
 
 def test_management_uses_database_now_for_retention_decisions(sqlite_factory):
@@ -2180,8 +2229,8 @@ def test_purge_claims_are_concurrency_safe_and_object_store_has_bounded_timeouts
             captured.update(kwargs)
             return object()
 
-    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: SettingsProbe())
-    monkeypatch.setattr("app.ingest.tasks.boto3.client", Boto().client)
+    monkeypatch.setattr("app.object_store.get_settings", lambda: SettingsProbe())
+    monkeypatch.setattr("app.object_store.boto3.client", Boto().client)
     RawObjectStore()
     config = captured["config"]
     assert config.connect_timeout == 3
@@ -2214,8 +2263,8 @@ def test_raw_object_store_delete_uses_per_call_remaining_timeout(monkeypatch):
         clients.append((value, kwargs))
         return value
 
-    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: SettingsProbe())
-    monkeypatch.setattr("app.ingest.tasks.boto3.client", client)
+    monkeypatch.setattr("app.object_store.get_settings", lambda: SettingsProbe())
+    monkeypatch.setattr("app.object_store.boto3.client", client)
     store = RawObjectStore()
     store.delete_object("private/key", timeout_seconds=0.137)
     store.delete("private/key-2", timeout_seconds=0.071)

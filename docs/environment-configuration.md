@@ -12,6 +12,7 @@
 | 保存 URL、重试 ingestion、更新/删除/恢复知识条目 | PostgreSQL、Redis、MinIO、Celery worker、Celery beat、Notebook Agent | [B. 完整本地 MCP](#b-完整本地-mcp) |
 | 给 MiXer 或其他远程 MCP client 提供 HTTPS endpoint | 场景 A 或 B 的依赖、Streamable HTTP、TLS reverse proxy | [C. Streamable HTTP / MiXer](#c-streamable-http--mixer) |
 | 接入 Telegram/微信 | gateway-server、已安装的 LangBot bridge plugin、LangBot core/adapters | [D. 可选 LangBot 渠道](#d-可选-langbot-渠道) |
+| 使用私有浏览器视频资料库 | PostgreSQL、静态前端服务或 `web/dist`、web-server、TLS reverse proxy、至少一个登录渠道；保存功能另需场景 B 的依赖 | [E. Same-origin Web library](#e-same-origin-web-library) |
 
 四个容易混淆的配置位置：
 
@@ -315,6 +316,77 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 
 `KB_BOT_CHANNELS` 的 key 是 LangBot bot UUID，不是 Telegram 用户 ID、微信昵称或 `AppUser.id`。bridge pipeline 还必须显式绑定 required plugin；完整步骤见[部署手册的 LangBot 章节](deployment.md#7-安装-langbot-桥接可选)。
 
+## E. Same-origin Web library
+
+这是浏览器端视频资料库的运行入口。`web/` 已经是一个独立的私有 React 应用包，
+不是需要发布到 npm 的组件库。它可以由 Python `web-server` 直接提供，也可以由独立
+静态服务提供；两种模式都必须让浏览器只看到一个 public origin，并把 `/api/v1/*`
+路由到 Python API。完整边界与代理示例见[前端独立部署说明](frontend-deployment.md)。
+
+Web 登录码必须由场景 D 中启用的 Telegram 或微信渠道批准；仅构建前端页面不能替代真实登录渠道。新增视频、失败重试和后台 ingestion 还需要场景 B 的 Redis、MinIO、worker 与 beat。
+
+### 根 `.env` 增量
+
+```dotenv
+# 独立随机 secret；不得复用 CHANNEL_GATEWAY_SECRET。
+WEB_AUTH_SECRET=replace-with-at-least-32-random-characters
+# 浏览器实际看到的精确 origin；production/competition 必须使用 HTTPS，
+# 且不能包含路径、query、userinfo 或末尾斜杠。
+WEB_ORIGIN=https://kb.example.com
+WEB_LOGIN_CHANNELS=telegram,wechat
+WEB_COOKIE_SECURE=true
+
+# 应用绑定 loopback，由同机 TLS reverse proxy 提供公网访问。
+WEB_HOST=127.0.0.1
+WEB_PORT=8000
+WEB_SERVE_STATIC=true
+WEB_STATIC_DIR=web/dist
+WEB_FORWARDED_ALLOW_IPS=127.0.0.1
+WEB_PUBLISH_BUDGET_SECONDS=5
+
+# 首次 rollout 保持 false；worker、queue 和对象存储 ready 后再开启。
+AGENT_SAVE_ENABLED=false
+```
+
+`WEB_COOKIE_SECURE` 在本地和生产都保持 `true`，因为 session/CSRF 使用 `__Host-` cookie 契约。`WEB_FORWARDED_ALLOW_IPS` 只能列出明确受信任的反向代理地址，禁止 `*`。MCP HTTP 与 Web 是两个独立 server profile；两者同机运行时必须配置不同端口，例如保留 MCP `8000`、把 Web 改为 `8001`。
+
+安装和构建：
+
+```bash
+corepack pnpm --dir web install --frozen-lockfile
+corepack pnpm --dir web check:api
+corepack pnpm --dir web test
+corepack pnpm --dir web typecheck
+corepack pnpm --dir web lint
+corepack pnpm --dir web build
+```
+
+启动 gateway、至少一个登录渠道和 Web server。默认 bundled 模式保持
+`WEB_SERVE_STATIC=true`，由该进程同时提供 API 与 `web/dist`：
+
+```bash
+.venv/bin/python -m app.cli gateway-server
+.venv/bin/python -m app.cli web-server
+```
+
+TLS reverse proxy 必须把同一个 public origin 的 `/api/v1/*` 转发到 `web-server`，其余路径提供 SPA；不要把 loopback channel gateway 暴露给浏览器。最小验收：
+
+如果前端静态服务与 Python 后端分开部署，把后端设置为
+`WEB_SERVE_STATIC=false`；这时后端不读取或要求 `WEB_STATIC_DIR` 中存在构建产物，
+但 proxy 仍必须从同一个 public origin 将 `/api/v1/*` 转发到它。不要改成跨 origin
+API URL，也不要加入 wildcard CORS。
+
+```text
+GET /api/v1/health
+GET /
+GET /login
+GET /library
+GET /videos/<public-id>  # 直接刷新仍返回 SPA
+GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
+```
+
+登录后先验证只读资料库；确认 Redis、MinIO、worker/beat 与 ingestion queues ready，再设置 `AGENT_SAVE_ENABLED=true` 并重启 gateway 与 web-server。关闭该开关只禁用新增保存和失败重试，不会禁用备注、归档或恢复；要冻结全部 Web 写入，必须停止 web-server 或在反向代理处隔离写请求。
+
 ## 变量参考
 
 “重启”表示修改后哪些进程必须重新读取环境。数据库/对象存储自身凭据变化还可能需要单独的数据服务操作，不等于只重启应用即可完成轮换。
@@ -400,6 +472,16 @@ event + delivery ledger；旧 `ingest-completion` queue 不再生产，也不依
 | `TRASH_PURGE_CLAIM_TIMEOUT_SECONDS` | purge worker | `1800` | item management | 否 | worker |
 | `TRASH_PURGE_MAX_DURATION_SECONDS` | purge worker | `30` | item management | 否 | worker |
 | `TRASH_PURGE_OBJECT_TIMEOUT_SECONDS` | purge object delete | `10` | item management | 否 | worker |
+| `INGEST_COMPLETION_INTERVAL_SECONDS` | Celery beat | `60` | durable completion outbox repair | 否 | beat |
+| `INGEST_COMPLETION_BATCH_SIZE` | maintenance worker | `20` | bounded completion repair | 否 | worker |
+| `INGEST_COMPLETION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
+| `INGEST_COMPLETION_MAX_DURATION_SECONDS` | maintenance worker | `30` | bounded sweep wall-clock budget | 否 | worker |
+| `INGEST_MAX_RAW_TRANSCRIPT_BYTES` | connector、worker | `5000000` | 单条原始字幕大小上限；对象存储前检查 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_CUES_PER_ITEM` | worker | `50000` | 单条字幕 cue 数上限；provider 调用前检查 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_TEXT_CHARS_PER_ITEM` | worker | `1000000` | 单条字幕正文字符上限 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_SEGMENTS_PER_ITEM` | worker | `5000` | 单条最终检索片段数上限 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_EMBEDDING_CHARS_PER_ITEM` | worker | `2000000` | 单条所有 embedding 输入字符的累计上限 | 否 | worker、同步 ingest CLI |
+| `YOUTUBE_FETCH_TIMEOUT_SECONDS` | YouTube connector | `30` | metadata 与字幕获取的单调用总时限 | 否 | worker、同步 ingest CLI |
 | `INGEST_NOTIFICATION_INTERVAL_SECONDS` | Celery beat | `10` | source-channel poll interval; positive | 否 | beat |
 | `INGEST_NOTIFICATION_BATCH_SIZE` | maintenance worker | `20` | bounded delivery claims | 否 | worker |
 | `INGEST_NOTIFICATION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
@@ -425,6 +507,9 @@ the next Beat tick performs the actual send. Do not re-run ingestion or consume 
 
 关闭 management flag 不会关闭 deleted-content retrieval filters。
 
+五个 `INGEST_MAX_*` 内容上限必须为正数。超过上限的条目会以安全错误码
+`ingest_too_large` 终止，不会把原始字幕、provider 异常或内部路径返回给浏览器；调大前应同时评估 worker 内存、MinIO 容量和 embedding 成本。
+
 ### 日志与运行环境
 
 | 变量 | 消费者 | 默认值 | 何时需要 | Secret | 重启 |
@@ -436,6 +521,25 @@ the next Beat tick performs the actual send. Do not re-run ingestion or consume 
 | `NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT` | app | `false` | 仅本地且 env=development | 否；内容仍敏感 | app |
 
 生产必须保持 `NOTEBOOK_AGENT_ENV=production` 与 `NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false`。
+
+### Same-origin Web library
+
+| 变量 | 消费者 | 默认值/示例 | 何时需要 | Secret | 重启 |
+| --- | --- | --- | --- | --- | --- |
+| `WEB_AUTH_SECRET` | web-server、gateway | 无；至少 32 随机字符 | 所有 Web profile | **是** | web-server、gateway |
+| `WEB_ORIGIN` | web-server | 无；`https://kb.example.com` | 所有 Web profile | 否 | web-server、reverse proxy 若 origin 改变 |
+| `WEB_LOGIN_CHANNELS` | web-server、gateway | `telegram,wechat` | 限定可批准登录码的渠道 | 否 | web-server、gateway |
+| `WEB_AUTH_CHALLENGE_TTL_SECONDS` / `WEB_AUTH_SESSION_TTL_SECONDS` / `WEB_AUTH_ATTEMPT_LIMIT` | Web auth | `600` / `2592000` / `5` | 登录期限与尝试上限 | 否 | web-server、gateway |
+| `WEB_AUTH_RATE_WINDOW_SECONDS` / `WEB_AUTH_RATE_LIMIT_PER_REQUESTER` / `WEB_AUTH_GLOBAL_RATE_LIMIT` / `WEB_AUTH_ACTIVE_CHALLENGE_LIMIT` | Web auth | `60` / `5` / `100` / `3` | challenge 成本保险丝 | 否 | web-server |
+| `WEB_AUTH_CHALLENGE_RETENTION_SECONDS` / `WEB_AUTH_SESSION_RETENTION_SECONDS` | Web auth cleanup | `86400` / `604800` | 有界清理 | 否 | web-server、gateway |
+| `WEB_COOKIE_SECURE` | web-server | `true` | 所有 Web profile；不得关闭 | 否 | web-server |
+| `WEB_HOST` / `WEB_PORT` | web-server | `127.0.0.1` / `8000` | 应用监听；与 MCP 同机时端口必须不同 | 否 | web-server、reverse proxy |
+| `WEB_SERVE_STATIC` | web-server | `true` | `true` 由 Python 提供 `web/dist`；`false` 为同源代理后的 API-only 进程 | 否 | web-server |
+| `WEB_STATIC_DIR` | web-server | `web/dist` | React production build | 否 | web-server |
+| `WEB_PUBLISH_BUDGET_SECONDS` | Web batch/retry | `5` | broker 总等待预算 | 否 | web-server |
+| `WEB_FORWARDED_ALLOW_IPS` | web-server | `127.0.0.1` | 可信 reverse proxy allowlist；禁止 wildcard | 否 | web-server |
+
+`WEB_AUTH_SECRET` 与 `CHANNEL_GATEWAY_SECRET` 必须独立。应用只存储受信任 client address 的 HMAC，不把原始地址、登录码、session token 或 CSRF token 写入诊断日志。
 
 ### MCP transport
 
@@ -464,9 +568,10 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 
 1. 确认改的是正确文件：根 `.env`、stdio process env、plugin private `.env` 或 proxy secret。
 2. 重启表格中列出的消费者；环境变量不会自动热更新。
-3. 运行 `.venv/bin/alembic current`，当前 head 应为 `a1b2c3d4e5f6`。
+3. 运行 `.venv/bin/alembic current`，当前 head 应为 `b2c3d4e5f6a7`。
 4. full profile 检查 Redis、MinIO、Celery `ping` 和 `active_queues`。
 5. MCP 运行 `initialize -> tools/list -> tools/call`；只读应为 3 tools，ready full 应为 10 tools。
-6. LangBot 先检查 gateway health，再确认 required plugin 为 `initialized`，最后做真实渠道 smoke。
+6. Web 运行 OpenAPI check、frontend tests/build，检查 `/api/v1/health`、`/login`、`/library` 和详情页直接刷新；未知 `/api/*` 必须返回 JSON 404。
+7. LangBot 先检查 gateway health，再确认 required plugin 为 `initialized`，最后做真实渠道 smoke。
 
 更完整的启动顺序、systemd、日志、备份、回滚和故障处理见[部署手册](deployment.md)。

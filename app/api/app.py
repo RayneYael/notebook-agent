@@ -1,0 +1,396 @@
+"""FastAPI composition for the same-origin Notebook Agent Web product."""
+
+from __future__ import annotations
+
+import hmac
+import logging
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Literal
+from uuid import uuid4
+
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel, ConfigDict
+from starlette.exceptions import HTTPException as StarletteHTTPException
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
+
+from app.api.auth_routes import build_auth_router
+from app.api.library_routes import build_library_router
+from app.api.library_schemas import ErrorResponse
+from app.channels.types import UserScope
+from app.ingest.submission import MAX_SAVE_BATCH_SIZE
+from app.web.auth import (
+    CSRF_COOKIE_NAME,
+    SESSION_COOKIE_NAME,
+    WebAuthError,
+)
+
+
+logger = logging.getLogger(__name__)
+MAX_WEB_REQUEST_BODY_BYTES = 64 * 1024
+_UNSAFE_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
+_SAFE_HTTP_CODES = frozenset(
+    {
+        "not_found",
+        "validation_error",
+        "invalid_lifecycle",
+        "invalid_sort",
+        "invalid_collection",
+        "why_saved_too_long",
+        "item_archived",
+        "retry_unavailable",
+        "quota_exceeded",
+        "save_disabled",
+        "empty_batch",
+        "batch_too_large",
+        "transcript_unavailable",
+        "transcript_invalid",
+        "transcript_too_large",
+        "ingest_too_large",
+        "session_invalid",
+        "csrf_invalid",
+        "request_too_large",
+    }
+)
+
+
+class HealthResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["ok"] = "ok"
+
+
+class CapabilitiesResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    supported_platforms: tuple[Literal["youtube"], ...] = ("youtube",)
+    web_login_channels: tuple[Literal["telegram", "wechat"], ...] = (
+        "telegram",
+        "wechat",
+    )
+    save_enabled: bool = True
+    max_save_batch_size: int = MAX_SAVE_BATCH_SIZE
+    transcript_pagination: bool = True
+    archive: bool = True
+    summary_generation: bool = False
+    chat: bool = False
+
+
+@dataclass(frozen=True)
+class WebApiServices:
+    """Explicit application-service boundary used by the Web composition root."""
+
+    web_auth: Any
+    library: Any
+    submission: Any
+    transcript: Any
+
+
+_SAFE_MESSAGES = {
+    "not_found": "未找到请求的资源",
+    "validation_error": "请求参数无效",
+    "invalid_lifecycle": "状态筛选无效",
+    "invalid_sort": "排序方式无效",
+    "invalid_collection": "收藏夹筛选无效",
+    "why_saved_too_long": "保存说明过长",
+    "item_archived": "请先恢复该视频",
+    "retry_unavailable": "当前状态不能重试",
+    "quota_exceeded": "已达到当前保存额度，请稍后重试",
+    "save_disabled": "资料库当前为只读模式，暂时不能添加或重新整理视频",
+    "empty_batch": "请至少添加一个链接",
+    "batch_too_large": "一次最多添加 10 个链接",
+    "transcript_unavailable": "全文暂不可用",
+    "transcript_invalid": "全文分页已失效，请重新加载",
+    "transcript_too_large": "全文数据过大",
+    "ingest_too_large": "视频字幕数据超过当前处理上限",
+    "session_invalid": "登录已失效，请重新登录",
+    "csrf_invalid": "请求验证失败，请刷新后重试",
+    "request_too_large": "请求内容过大",
+    "request_failed": "请求无法完成",
+}
+
+
+class RequestBodyLimitMiddleware:
+    """Bound both fixed-length and chunked request bodies before parsing."""
+
+    def __init__(self, app: ASGIApp, *, max_bytes: int) -> None:
+        self.app = app
+        self.max_bytes = max_bytes
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        headers = dict(scope.get("headers", ()))
+        raw_length = headers.get(b"content-length", b"")
+        try:
+            declared_length = int(raw_length) if raw_length else None
+        except ValueError:
+            declared_length = None
+        if declared_length is not None and declared_length > self.max_bytes:
+            await _error_response("request_too_large", 413)(scope, receive, send)
+            return
+
+        received = 0
+        chunks: list[bytes] = []
+        while True:
+            message = await receive()
+            if message["type"] != "http.request":
+                await self.app(scope, receive, send)
+                return
+            chunk = message.get("body", b"")
+            received += len(chunk)
+            if received > self.max_bytes:
+                await _error_response("request_too_large", 413)(scope, receive, send)
+                return
+            chunks.append(chunk)
+            if not message.get("more_body", False):
+                break
+
+        replayed = False
+
+        async def replay_receive() -> Message:
+            nonlocal replayed
+            if not replayed:
+                replayed = True
+                return {
+                    "type": "http.request",
+                    "body": b"".join(chunks),
+                    "more_body": False,
+                }
+            return await receive()
+
+        await self.app(scope, replay_receive, send)
+
+
+def create_app(
+    *,
+    services: WebApiServices | None = None,
+    expected_origin: str | None = None,
+    cookie_secure: bool = True,
+    publish_budget_seconds: float = 5.0,
+    save_enabled: bool = True,
+    web_login_channels: tuple[str, ...] = ("telegram", "wechat"),
+    static_dir: str | Path | None = None,
+) -> FastAPI:
+    """Build public routes, optional authenticated services, and SPA hosting."""
+
+    if services is not None:
+        if not expected_origin or expected_origin.endswith("/"):
+            raise ValueError("expected_origin is required without a trailing slash")
+        if publish_budget_seconds <= 0:
+            raise ValueError("publish budget must be positive")
+    if (
+        not web_login_channels
+        or len(set(web_login_channels)) != len(web_login_channels)
+        or any(
+            channel not in {"telegram", "wechat"}
+            for channel in web_login_channels
+        )
+    ):
+        raise ValueError("web login channels must be unique telegram/wechat values")
+    public_login_channels = tuple(web_login_channels)
+    app = FastAPI(
+        title="Notebook Agent Web API",
+        version="1.0.0",
+        openapi_url="/api/v1/openapi.json",
+        docs_url="/api/v1/docs",
+        redoc_url=None,
+    )
+    app.add_middleware(
+        RequestBodyLimitMiddleware,
+        max_bytes=MAX_WEB_REQUEST_BODY_BYTES,
+    )
+
+    @app.middleware("http")
+    async def secure_web_boundary(request: Request, call_next):
+        request_id = uuid4().hex
+        request.state.request_id = request_id
+        try:
+            if (
+                services is not None
+                and request.method in _UNSAFE_METHODS
+                and request.url.path.startswith("/api/v1/")
+                and not request.url.path.startswith("/api/v1/auth/")
+            ):
+                error = _validate_protected_mutation(
+                    request,
+                    services.web_auth,
+                    expected_origin or "",
+                )
+                if error is not None:
+                    response = error
+                else:
+                    response = await call_next(request)
+            else:
+                response = await call_next(request)
+        except Exception as exc:
+            logger.error(
+                "web_api_failed request_id=%s exception_type=%s",
+                request_id,
+                type(exc).__name__,
+            )
+            response = _error_response("request_failed", 500)
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "no-referrer"
+        response.headers["Permissions-Policy"] = (
+            "camera=(), microphone=(), geolocation=(), payment=()"
+        )
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; script-src 'self'; style-src 'self'; "
+            "img-src 'self' https://i.ytimg.com https://img.youtube.com data:; "
+            "connect-src 'self'; object-src 'none'; base-uri 'none'; "
+            "frame-ancestors 'none'; form-action 'self'"
+        )
+        if expected_origin and expected_origin.startswith("https://"):
+            response.headers["Strict-Transport-Security"] = (
+                "max-age=31536000; includeSubDomains"
+            )
+        if request.url.path.startswith("/assets/") and response.status_code == 200:
+            response.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+        elif request.url.path.startswith("/api/") or response.headers.get(
+            "content-type", ""
+        ).startswith("text/html"):
+            response.headers["Cache-Control"] = "no-store"
+        return response
+
+    @app.exception_handler(StarletteHTTPException)
+    async def safe_http_error(
+        _request: Request, exc: StarletteHTTPException
+    ) -> JSONResponse:
+        raw_code = exc.detail if isinstance(exc.detail, str) else "request_failed"
+        code = raw_code if raw_code in _SAFE_HTTP_CODES else (
+            "not_found" if exc.status_code == 404 else "request_failed"
+        )
+        return _error_response(code, exc.status_code, headers=exc.headers)
+
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation_error(
+        _request: Request, _exc: RequestValidationError
+    ) -> JSONResponse:
+        return _error_response("validation_error", 422)
+
+    @app.get("/api/v1/health", response_model=HealthResponse, tags=["public"])
+    def health() -> HealthResponse:
+        return HealthResponse()
+
+    @app.get(
+        "/api/v1/capabilities",
+        response_model=CapabilitiesResponse,
+        tags=["public"],
+    )
+    def capabilities() -> CapabilitiesResponse:
+        return CapabilitiesResponse(
+            web_login_channels=public_login_channels,
+            save_enabled=save_enabled,
+        )
+
+    if services is not None:
+        app.include_router(
+            build_auth_router(
+                services.web_auth,
+                expected_origin=expected_origin or "",
+                cookie_secure=cookie_secure,
+            )
+        )
+
+        def authenticated_scope(request: Request) -> UserScope:
+            raw_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+            try:
+                session = services.web_auth.resolve_session(raw_token)
+            except WebAuthError as exc:
+                raise HTTPException(
+                    status_code=401,
+                    detail="session_invalid",
+                    headers={"WWW-Authenticate": "Session"},
+                ) from exc
+            return UserScope(session.app_user_id)
+
+        app.include_router(
+            build_library_router(
+                services.library,
+                services.submission,
+                services.transcript,
+                publish_budget_seconds=publish_budget_seconds,
+                save_enabled=save_enabled,
+                scope_dependency=authenticated_scope,
+            )
+        )
+
+    if static_dir is not None:
+        _mount_spa(app, Path(static_dir))
+
+    return app
+
+
+def _validate_protected_mutation(
+    request: Request,
+    web_auth: Any,
+    expected_origin: str,
+) -> JSONResponse | None:
+    if (
+        request.headers.get("origin") != expected_origin
+        or request.headers.get("sec-fetch-site") != "same-origin"
+    ):
+        return _error_response("csrf_invalid", 403)
+    session_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+    cookie_csrf = request.cookies.get(CSRF_COOKIE_NAME, "")
+    header_csrf = request.headers.get("x-csrf-token", "")
+    if (
+        not session_token
+        or not cookie_csrf
+        or not header_csrf
+        or not hmac.compare_digest(cookie_csrf, header_csrf)
+    ):
+        return _error_response("csrf_invalid", 403)
+    try:
+        web_auth.resolve_session(session_token)
+        web_auth.validate_csrf(session_token, header_csrf)
+    except WebAuthError as exc:
+        status = 401 if exc.code == "session_invalid" else 403
+        code = "session_invalid" if status == 401 else "csrf_invalid"
+        return _error_response(code, status)
+    return None
+
+
+def _mount_spa(app: FastAPI, directory: Path) -> None:
+    root = directory.resolve()
+    index = root / "index.html"
+    if not index.is_file():
+        raise ValueError(f"Web build is missing index.html: {root}")
+    assets = root / "assets"
+    if assets.is_dir():
+        app.mount("/assets", StaticFiles(directory=assets), name="web-assets")
+
+    @app.get("/{full_path:path}", include_in_schema=False)
+    def spa_fallback(full_path: str):
+        if full_path == "api" or full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="not_found")
+        return FileResponse(index, media_type="text/html")
+
+
+def _error_response(
+    code: str,
+    status_code: int,
+    *,
+    headers: dict[str, str] | None = None,
+) -> JSONResponse:
+    safe_code = code if code in _SAFE_MESSAGES else "request_failed"
+    return JSONResponse(
+        status_code=status_code,
+        content=ErrorResponse(
+            code=safe_code,
+            message=_SAFE_MESSAGES[safe_code],
+        ).model_dump(),
+        headers=headers,
+    )

@@ -25,6 +25,29 @@ class EmptySuccess(TransientFetchError):
     pass
 
 
+class IngestLimitExceeded(ValueError):
+    """Stable terminal error for content that exceeds configured hard limits."""
+
+    error_code = "ingest_too_large"
+
+    def __init__(self) -> None:
+        super().__init__(self.error_code)
+
+
+def guard_ingest_limits(
+    body: bytes,
+    parsed_cues: list[Cue],
+    *,
+    max_raw_bytes: int,
+    max_cues: int,
+    max_text_chars: int,
+) -> None:
+    if len(body) > max_raw_bytes or len(parsed_cues) > max_cues:
+        raise IngestLimitExceeded()
+    if sum(len(cue.text) for cue in parsed_cues) > max_text_chars:
+        raise IngestLimitExceeded()
+
+
 def guard_transcript(body: bytes, parsed_cues: list[Cue], *, platform: str = "youtube") -> None:
     if not body:
         EMPTY_SUCCESS_TOTAL.labels(platform=platform).inc()

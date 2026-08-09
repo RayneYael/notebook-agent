@@ -45,6 +45,7 @@ def vector_search(
     predicates = [
         ContentItem.user_id == user_id,
         ContentItem.deleted_at.is_(None),
+        ContentItem.archived_at.is_(None),
         ContentItem.state == "ready",
         Segment.embedding.isnot(None),
     ]
@@ -80,6 +81,7 @@ def bm25_search(
     predicates = [
         ContentItem.user_id == user_id,
         ContentItem.deleted_at.is_(None),
+        ContentItem.archived_at.is_(None),
         ContentItem.state == "ready",
     ]
     if platform is not None:
