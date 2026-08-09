@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 9
+- **Total Sessions**: 10
 - **Last Active**: 2026-08-09
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~246 | Active |
+| `journal-1.md` | ~267 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,7 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 10 | 2026-08-09 | Ingest completion source-channel notifications | `42873cc` | `dev` |
 | 9 | 2026-08-09 | Add durable ingestion completion queue | `998baea` | `main` |
 | 8 | 2026-08-09 | Fix exact video reference and session routing | `105d0db` | `main` |
 | 7 | 2026-08-08 | Deployment environment configuration guide | `18707d3` | `main` |

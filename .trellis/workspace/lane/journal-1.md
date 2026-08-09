@@ -244,3 +244,24 @@ Added transactional completion outbox, durable completion queue, bounded repair 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 10: Ingest completion source-channel notifications
+
+**Date**: 2026-08-09
+**Task**: Ingest completion source-channel notifications
+**Branch**: `dev`
+
+### Summary
+
+Added a 10-second Celery Beat poller over durable PostgreSQL completion events, idempotent delivery/retry ledger, trusted source-thread propagation, LangBot outbound notifications, migrations, observability, deployment docs, and unit/PostgreSQL coverage. Archived the completed Trellis task; known bounded-autonomy regressions remain outside this task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `42873cc` | (see git log) |
+
+### Status
+
+[OK] **Completed**
