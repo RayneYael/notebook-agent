@@ -52,7 +52,7 @@
 
 ## Current integration evidence
 
-- The feature branch is based on refreshed `upstream/main` at `a5d244e`. The
+- The feature branch is based on refreshed `upstream/main` at `6539f3b`. The
   integration preserves upstream item-management tools, Composer and
   diagnostics behavior, channel identity linking, diversified retrieval,
   Vercel static-boundary rules, and Neon deployment documentation.
