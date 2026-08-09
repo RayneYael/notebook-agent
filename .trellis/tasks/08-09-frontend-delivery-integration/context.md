@@ -211,3 +211,62 @@
   durable `task.json.commit` intentionally continues to identify product head
   `09feca92ac16e6c8c0d61fc1863ea6ad86a99dd3` rather than self-referencing this
   later task-record commit.
+
+## 2026-08-09 preview asset regression investigation
+
+- The user-visible preview on `127.0.0.1:5175` was still owned by the earlier
+  collection task. Process `79936` (parent `10236`) served
+  `why-saved-collections/web/dist`, not this final integration worktree.
+- That stale source worktree does not contain `BrandLogo.tsx`,
+  `notebook-agent-logo.png`, or `login-halftone-wave.webp`. Browser inspection
+  therefore found a text `N` mark, no image source, and `background-image: none`
+  on both login-page pseudo-elements. The same stale build explains why the
+  user's final Showcase changes appeared to have been discarded.
+- The final product code and assets are present at product head `09feca92` and
+  are already contained by the open fork PR branch. No Showcase recovery from
+  deleted history is required; the preview needs to serve the final integrated
+  build.
+- Live-process handoff owner: `/root`. It will build
+  `frontend-delivery-integration/web`, stop only the validated 5175 preview
+  process tree, and restart the same root fixture against the final `web/dist`.
+  Shared port: `5175`. Fixture:
+  `C:/Users/raede/Desktop/dev/hackathon1/.runtime/authenticated_demo_server.py`.
+  Log: `.runtime/frontend-preview-5175.log` in this worktree. Success requires
+  HTTP 200, loaded logo assets on Library/Showcase/login, restored login
+  halftone pseudo-elements, and final Showcase copy/structure. Stop on build,
+  bind, HTTP, console, or asset failure.
+- The final build succeeded and emitted the expected hashed logo and halftone
+  files. After revalidating the old command line, `/root` stopped only the
+  obsolete 5175 process tree. An initial restart attempt used the old wrapper
+  name `preview_server.py`; that wrapper was no longer present and the process
+  exited before binding, so no incorrect server remained live.
+- The fixture already implements its own `main()` and static-file handler. It
+  was then started directly against the final integration `web/dist`. The live
+  listener is now process `25772` (launcher parent `23264`) on
+  `127.0.0.1:5175`; its command line names
+  `frontend-delivery-integration/web/dist` exactly.
+- HTTP verification returned 200 for `/`, the 291,446-byte hashed logo, and the
+  365,598-byte hashed login background. Static bundle inspection confirmed the
+  final Showcase headline fragments, purpose copy, CTA, `片段要点` semantics,
+  logo reference, login pseudo-element background reference, and Showcase
+  brand styles.
+- Browser automation had captured the stale-page failure before handoff: a
+  text `SPAN` mark with `N`, no image source, and no pseudo-element background.
+  The browser subsequently rejected an automated reload under its local-URL
+  policy, so post-handoff visual confirmation remains a user-tab refresh step;
+  the server, HTTP assets, compiled bundle, and source/test contracts are
+  verified independently.
+- After the handoff, the live server log recorded the current client loading
+  `/library`, the final hashed CSS/JavaScript, the brand logo, and the login
+  halftone asset with HTTP 200. `/favicon.svg` also returned 200 with
+  `image/svg+xml`, and the document references it explicitly. This closes the
+  reported Library/Showcase/login asset-loss symptom on the restored preview.
+- The local fixture intentionally does not implement the real channel login
+  challenge POST; clicking a login method therefore returns 404 in this visual
+  preview. That is a fixture limitation, not evidence that the production auth
+  routes or restored assets failed.
+- Fresh focused regression verification on the final source tree passed 20
+  tests across AppShell, LoginPage, ShowcasePage, and document-shell contracts.
+  No redundant product change was added: the existing tests already require
+  the shared brand image in Library/login and both brand images in Showcase;
+  the reproduced defect came entirely from serving the stale worktree build.
