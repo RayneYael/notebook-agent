@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
@@ -70,8 +70,9 @@ describe("video detail", () => {
     );
 
     expect(screen.getByRole("heading", { name: "章节" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "完整字幕" })).toBeInTheDocument();
-    expect(screen.getByText("来自原视频字幕")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "字幕节选" })).toBeInTheDocument();
+    expect(screen.getByText("根据原视频字幕整理")).toBeInTheDocument();
+    expect(screen.getByText("点击时间跳到原视频对应位置")).toBeInTheDocument();
     expect(screen.queryByText(/搜索切片/)).not.toBeInTheDocument();
     expect(screen.getByText("记录不是终点，理解才是。")).toBeInTheDocument();
     expect(screen.getByText("原视频作者提供的简介，不是 AI 摘要。")).toBeInTheDocument();
@@ -97,6 +98,43 @@ describe("video detail", () => {
     );
 
     expect(screen.getByRole("list", { name: "视频章节" })).toHaveAttribute("tabindex", "0");
+  });
+
+  it("keeps source-provided transcript timestamps inside a keyboard-scrollable reader", () => {
+    const sentenceTranscript: TranscriptPage = {
+      blocks: [
+        {
+          ordinal: 0,
+          start_sec: 60,
+          end_sec: 70,
+          text: "先问最近一次真实经历。再追问当时采用了什么办法！",
+          source_url: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=60",
+        },
+      ],
+      next_cursor: null,
+    };
+    render(
+      <VideoDetailView
+        item={item}
+        transcriptPages={[sentenceTranscript]}
+        onLoadMore={vi.fn()}
+        onArchive={vi.fn()}
+        onRestore={vi.fn()}
+        onRetry={vi.fn()}
+        onUpdateWhySaved={vi.fn()}
+      />,
+    );
+
+    const reader = screen.getByRole("region", { name: "字幕节选，可滚动查看" });
+    expect(reader).toHaveAttribute("tabindex", "0");
+    expect(within(reader).getAllByRole("listitem")).toHaveLength(1);
+    expect(within(reader).getByText("先问最近一次真实经历。再追问当时采用了什么办法！")).toBeInTheDocument();
+    expect(within(reader).getByRole("link", { name: "从 1:00 播放" })).toHaveAttribute(
+      "href",
+      "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=60",
+    );
+    expect(screen.queryByRole("link", { name: "从 1:05 播放" })).not.toBeInTheDocument();
+    expect(screen.getByText("节选 1 段")).toBeInTheDocument();
   });
 
   it("renders an existing non-empty backend summary without generating one", () => {

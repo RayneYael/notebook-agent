@@ -183,8 +183,12 @@ export function VideoDetailView({
 
       <section className="detail-section transcript-section" aria-labelledby="transcript-title">
         <div className="section-heading-row">
-          <div><p className="eyebrow">来自原视频字幕</p><h2 id="transcript-title">完整字幕</h2></div>
-          {blocks.length > 0 ? <span className="block-count">已加载 {blocks.length} 段</span> : null}
+          <div className="transcript-heading-copy">
+            <p className="eyebrow">根据原视频字幕整理</p>
+            <h2 id="transcript-title">字幕节选</h2>
+            <p className="transcript-guide">点击时间跳到原视频对应位置</p>
+          </div>
+          {blocks.length > 0 ? <span className="block-count">节选 {blocks.length} 段</span> : null}
         </div>
         {transcriptError ? (
           <div className="inline-error transcript-error" role="alert" aria-label="字幕加载失败">
@@ -194,18 +198,27 @@ export function VideoDetailView({
         ) : transcriptInitialPending ? (
           <p className="muted" aria-live="polite" aria-busy="true">正在加载字幕…</p>
         ) : blocks.length > 0 ? (
-          <ol className="transcript-list">
-            {blocks.map((block) => (
-              <li key={block.ordinal}>
-                <a href={block.source_url} target="_blank" rel="noreferrer" aria-label={`从 ${formatTimestamp(block.start_sec)} 播放`}>{formatTimestamp(block.start_sec)}</a>
-                <p>{block.text}</p>
-              </li>
-            ))}
-          </ol>
+          <div
+            className="transcript-reader"
+            role="region"
+            aria-label="字幕节选，可滚动查看"
+            tabIndex={0}
+          >
+            <ol className="transcript-list">
+              {blocks.map((block) => (
+                <li key={block.ordinal}>
+                  <a href={block.source_url} target="_blank" rel="noreferrer" aria-label={`从 ${formatTimestamp(block.start_sec)} 播放`}>
+                    <time>{formatTimestamp(block.start_sec)}</time>
+                  </a>
+                  <p>{block.text}</p>
+                </li>
+              ))}
+            </ol>
+            {nextCursor ? <button className="button button--quiet button--wide" disabled={transcriptPending} onClick={onLoadMore}>继续加载字幕</button> : null}
+          </div>
         ) : (
           <p className="muted">{item.lifecycle === "ready" ? "这个视频没有可显示的字幕。" : "整理完成后可查看字幕。"}</p>
         )}
-        {nextCursor ? <button className="button button--quiet button--wide" disabled={transcriptPending} onClick={onLoadMore}>继续加载字幕</button> : null}
       </section>
     </article>
   );

@@ -252,7 +252,12 @@ export function LibraryPage({
                   <span>当前整理进度</span>
                   <strong>约 {workProgress}%</strong>
                 </div>
-                <progress aria-label="当前整理进度" max="100" value={workProgress} />
+                <progress
+                  aria-label="当前整理进度"
+                  aria-valuetext={`约 ${workProgress}%`}
+                  max="100"
+                  value={workProgress}
+                />
                 <small>根据当前处理阶段估算</small>
               </div>
             </section>
