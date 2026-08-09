@@ -265,3 +265,41 @@ Added a 10-second Celery Beat poller over durable PostgreSQL completion events, 
 ### Status
 
 [OK] **Completed**
+
+
+## Session 11: Real-model natural language evaluation
+
+**Date**: 2026-08-09
+**Task**: Real-model natural language evaluation
+**Branch**: `dev`
+
+### Summary
+
+Added a 22-case real-model MCP/context evaluator, verified the complete stack with a 6/6 smoke run, hardened teardown/report privacy, and archived the Trellis task.
+
+### Main Changes
+
+- Added opt-in real-model natural-language catalog, runner, fixtures, trace correlation, scoring, and sanitized reports.
+- Verified PostgreSQL/pgvector, Redis/Celery, MinIO, ingestion, embedding, MCP and context persistence through a dedicated retained-data evaluation user.
+- Hardened stdio diagnostic capture, cancellation, teardown deadlines, grant revocation, production refusal, and safety-critical scoring.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `877459b` | (see git log) |
+| `8e526b7` | (see git log) |
+
+### Testing
+
+- [OK] Catalog 1.0.0: 22 cases valid.
+- [OK] 49 evaluator/diagnostics tests and 4 readiness tests passed.
+- [OK] Paid full-stack smoke: 6 pass / 0 fail / 0 skip.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Run the full 22-case paid evaluation only with explicit operator authorization.
