@@ -38,7 +38,8 @@ export function LibraryPage({
   const [sort, setSort] = useState<LibraryQuery["sort"]>("saved_desc");
   const [page, setPage] = useState(1);
   const query: LibraryQuery = {
-    search: selectedCollection ? `#${selectedCollection}` : search,
+    search,
+    collection: selectedCollection ?? undefined,
     lifecycle,
     include_archived: lifecycle === "archived",
     sort,
@@ -88,6 +89,9 @@ export function LibraryPage({
   const totalPages = library.data ? Math.max(1, Math.ceil(library.data.total / library.data.page_size)) : 1;
   const readableItems = library.data?.items.filter((item) => !isLibraryWorkItem(item)) ?? [];
   const workItems = library.data?.items.filter(isLibraryWorkItem) ?? [];
+  const activeWorkItems = workItems.filter(
+    ({ lifecycle: state }) => state === "queued" || state === "processing",
+  );
   const workProgress = estimateWorkItemProgress(workItems);
   const searchSuggestions = collectSearchSuggestions(library.data?.items ?? [], searchDraft);
 
@@ -247,7 +251,7 @@ export function LibraryPage({
               <div className="video-grid">
                 {workItems.map((item) => <VideoCard item={item} key={item.public_id} />)}
               </div>
-              <div className="work-progress">
+              {activeWorkItems.length > 0 ? <div className="work-progress">
                 <div className="work-progress__label">
                   <span>当前整理进度</span>
                   <strong>约 {workProgress}%</strong>
@@ -258,8 +262,8 @@ export function LibraryPage({
                   max="100"
                   value={workProgress}
                 />
-                <small>根据当前处理阶段估算</small>
-              </div>
+                <small>仅根据正在处理项目的当前阶段估算</small>
+              </div> : null}
             </section>
           ) : null}
           {totalPages > 1 ? (

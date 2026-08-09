@@ -17,6 +17,8 @@ describe("ShowcasePage", () => {
   it("explains the project, audience, workflow, and honest preset-demo boundary", () => {
     const { container } = renderShowcase();
 
+    expect(container.querySelector("[style]")).not.toBeInTheDocument();
+
     expect(screen.getByRole("heading", { name: "让收藏过的知识，再次可用。" })).toBeInTheDocument();
     expect(screen.getByText("散落在视频中的知识与信息，从此成为你的助手与知识库。"))
       .toBeInTheDocument();
@@ -69,7 +71,7 @@ describe("ShowcasePage", () => {
     expect(document.body).toHaveTextContent("视频来源 + 保存说明");
     expect(document.body).toHaveTextContent("字幕与章节 → 内容索引");
     expect(document.body).toHaveTextContent("页面内容、检索结果与回答依据都限定在当前账户范围内");
-    expect(document.body).toHaveTextContent("可用登录入口以当前部署配置为准");
+    expect(document.body).toHaveTextContent("可用入口以部署配置为准");
     expect(document.body).not.toHaveTextContent(/why_saved|tenant|Transcript|Chunks|Hybrid Search|EVIDENCE MODE|混合索引/i);
   });
 
@@ -80,11 +82,10 @@ describe("ShowcasePage", () => {
     expect(screen.queryByText(/不要先推销方案/)).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: /查看这次回答/ }));
 
-    expect(screen.getByText(/不要先推销方案/)).toBeInTheDocument();
-    const typedCharacters = container.querySelectorAll(".demo-typewriter__char");
-    expect(typedCharacters.length).toBeGreaterThan(100);
-    expect(container.querySelector(".demo-typewriter")).toHaveAttribute("aria-hidden", "true");
-    expect(typedCharacters[0]).toHaveStyle("--typing-index: 0");
+    expect(screen.getAllByText(/不要先推销方案/)).toHaveLength(2);
+    const typedSegments = container.querySelectorAll(".demo-typewriter");
+    expect(typedSegments.length).toBeGreaterThan(1);
+    expect(typedSegments[0]).toHaveAttribute("aria-hidden", "true");
     expect(container.querySelector(".demo-answer__lead .sr-only")).toHaveTextContent(
       /不要先推销方案/,
     );
@@ -105,7 +106,7 @@ describe("ShowcasePage", () => {
     expect(screen.getByTestId("demo-subtitle-ticker")).toHaveTextContent(/28×28 image as 784 brightness inputs/);
     await user.click(screen.getByRole("button", { name: /查看这次回答/ }));
 
-    expect(screen.getByText(/784 个输入到 10 个输出/)).toBeInTheDocument();
+    expect(screen.getAllByText(/784 个输入到 10 个输出/)).toHaveLength(2);
     expect(screen.getByRole("link", { name: /03:08/ })).toHaveAttribute(
       "href",
       "https://www.youtube.com/watch?v=aircAruvnKk&t=188s",

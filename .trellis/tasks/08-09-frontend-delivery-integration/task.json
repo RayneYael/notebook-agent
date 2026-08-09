@@ -12,11 +12,11 @@
   "assignee": "codex",
   "createdAt": "2026-08-09",
   "completedAt": null,
-  "branch": "codex/frontend-delivery-integration",
+  "branch": "codex/frontend-video-library-delivery",
   "base_branch": "main",
   "worktree_path": "C:/Users/raede/.codex/worktrees/frontend-delivery-integration",
-  "commit": "09feca92ac16e6c8c0d61fc1863ea6ad86a99dd3",
-  "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
+  "commit": null,
+  "pr_url": null,
   "subtasks": [],
   "children": [
     "08-09-frontend-linux-deployment"
@@ -29,6 +29,6 @@
     "docs/environment-configuration.md",
     "docs/deployment.md"
   ],
-  "notes": "Final frontend residual work is integrated and independently reviewed. Product head 09feca9 passed 67 frontend tests, the frozen OpenAPI check, typecheck, lint, production build, and 20 deployment contract tests. PR 2 remains open and intentionally unmerged. The Web package stays independently buildable inside the monorepo and may deploy separately from the Python API behind one HTTPS origin. Remaining external gates are isolated PostgreSQL validation, live Telegram/WeChat acceptance, real Linux host/DNS/TLS inventory, maintainer-owned deployment authorization, and an optional production-size derivative for the oversized brand PNG.",
+  "notes": "Fresh code/security review approved and architecture review cleared after all P1/P2 findings were fixed. Current admission evidence is 74 frontend tests plus OpenAPI/typecheck/lint/build and 383 passed with 8 environment skips in the non-external-database Python lane. The Web package remains independently buildable inside the monorepo and may deploy separately from the Python API only behind one HTTPS origin. Remaining external gates are isolated PostgreSQL migration/concurrency validation, live Telegram/WeChat acceptance, Redis/MinIO/Celery readiness, real domestic Linux host/DNS/TLS/Nginx/systemd verification, and maintainer-owned migration/deployment authorization. PR 2 remains open and intentionally unmerged; this task will create a separate fresh PR.",
   "meta": {}
 }

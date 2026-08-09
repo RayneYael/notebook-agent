@@ -36,17 +36,31 @@ describe("Web document shell", () => {
     expect(css).not.toContain("--audience-icon-color");
   });
 
-  it("animates demo answers character by character and disables the effect for reduced motion", () => {
+  it("animates demo answer segments without CSP-blocked inline styles", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+    const showcase = readFileSync(resolve(process.cwd(), "src/showcase/ShowcasePage.tsx"), "utf8");
 
     expect(css).toMatch(
-      /\.demo-typewriter__char\s*\{[^}]*animation:[^;}]*demo-character-in[^;}]*forwards;/,
+      /\.demo-typewriter\s*\{[^}]*animation:[^;}]*demo-segment-in[^;}]*forwards;/,
     );
     expect(css).toMatch(
-      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.demo-typewriter__char\s*\{[^}]*animation:\s*none\s*!important;/,
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.demo-typewriter\s*\{[^}]*animation:\s*none\s*!important;/,
     );
+    expect(showcase).not.toContain("style={");
+    expect(showcase).not.toContain("style={{");
+    expect(showcase).not.toContain("--typing-index");
+    expect(showcase).not.toContain("--demo-subtitle-duration");
     expect(css).not.toMatch(/\.demo-evidence\s*\{[^}]*opacity:\s*0;/);
     expect(css).not.toMatch(/\.demo-reset\s*\{[^}]*opacity:\s*0;/);
+  });
+
+  it("keeps local demo authentication out of the production route tree", () => {
+    const app = readFileSync(resolve(process.cwd(), "src/app/App.tsx"), "utf8");
+    const login = readFileSync(resolve(process.cwd(), "src/auth/LoginPage.tsx"), "utf8");
+
+    expect(app).not.toContain("VITE_LOCAL_DEMO_DIRECT_LOGIN");
+    expect(login).not.toContain("directDemoLogin");
+    expect(login).not.toMatch(/authenticated:\s*true/);
   });
 
   it("uses a moderate login exit transition with a reduced-motion fallback", () => {

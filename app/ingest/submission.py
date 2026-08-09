@@ -20,6 +20,7 @@ from app.channels.types import UserScope
 from app.connectors.youtube import YouTubeConnector
 from app.config import get_settings
 from app.models import AppUser, ContentItem, IngestDispatch
+from app.limits import normalize_why_saved
 
 
 MAX_SAVE_BATCH_SIZE = 10
@@ -525,6 +526,7 @@ class IngestSubmissionService:
     ) -> BatchSaveResult:
         if not request_key.strip():
             raise ValueError("request key is required")
+        why_saved = normalize_why_saved(why_saved)
         prepared = prepare_submission(urls)
         deadline = (
             time.monotonic() + float(publish_budget_seconds)
@@ -600,7 +602,7 @@ class IngestSubmissionService:
                         existing.archived_at = None
                         restored_from_trash = True
                         if why_saved is not None:
-                            existing.why_saved = " ".join(why_saved.split())[:500] or None
+                            existing.why_saved = why_saved
                         # A restored ready/no-text/capability item is visible
                         # immediately and does not need a duplicate dispatch.
                         if existing.state not in {"failed", "pending"}:
@@ -1011,7 +1013,6 @@ class IngestSubmissionService:
             state=content.state,
             archived=content.archived_at is not None,
         )
-
     def _existing_result(
         self,
         prepared: PreparedItem,
@@ -1104,3 +1105,26 @@ class IngestSubmissionService:
             # dispatches safely, so never overwrite a faster worker transition
             # or expose persistence details to the Agent.
             return
+
+
+def build_ingest_submission_service(
+    session_factory: Callable[[], Session],
+    publisher: Callable[..., str | None],
+    settings,
+) -> IngestSubmissionService:
+    """Build the production submission service with one shared quota contract."""
+
+    return IngestSubmissionService(
+        session_factory,
+        publisher,
+        retention_days=settings.trash_retention_days,
+        max_active_per_tenant=settings.ingest_max_active_per_user,
+        daily_new_item_limit=settings.ingest_daily_new_item_limit,
+        max_items_per_tenant=settings.ingest_max_items_per_user,
+        max_active_global=settings.ingest_max_active_global,
+        daily_new_item_limit_global=settings.ingest_daily_new_item_limit_global,
+        daily_dispatch_limit_per_tenant=(
+            settings.ingest_daily_dispatch_limit_per_user
+        ),
+        daily_dispatch_limit_global=settings.ingest_daily_dispatch_limit_global,
+    )

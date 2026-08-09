@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes } from "react-router";
+import { MemoryRouter } from "react-router";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Capabilities } from "../api/contracts";
@@ -122,100 +122,6 @@ describe("login page", () => {
     expect(onAuthenticated).toHaveBeenCalledOnce();
     expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
-  });
-
-  it("opens the local demo library without creating a backend challenge", async () => {
-    const createChallenge = vi.fn();
-    const startViewTransition = vi.fn((update: () => void) => update());
-    Object.defineProperty(document, "startViewTransition", {
-      configurable: true,
-      value: startViewTransition,
-    });
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const user = userEvent.setup();
-
-    try {
-      const { container } = render(
-        <QueryClientProvider client={client}>
-          <MemoryRouter initialEntries={["/login"]}>
-            <Routes>
-              <Route
-                path="/login"
-                element={
-                  <LoginPage
-                    directDemoLogin
-                    loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
-                    createChallenge={createChallenge}
-                  />
-                }
-              />
-              <Route path="/library" element={<h1>资料库演示</h1>} />
-            </Routes>
-          </MemoryRouter>
-        </QueryClientProvider>,
-      );
-
-      await user.click(await screen.findByRole("button", { name: "使用 Telegram 登录" }));
-
-      expect(container.querySelector(".login-page")).toHaveClass("login-page--leaving");
-      expect(screen.getByText("正在进入资料库")).toBeInTheDocument();
-      expect(createChallenge).not.toHaveBeenCalled();
-      expect(
-        await screen.findByRole("heading", { name: "资料库演示" }, { timeout: 1_000 }),
-      ).toBeInTheDocument();
-      expect(startViewTransition).toHaveBeenCalledOnce();
-    } finally {
-      Reflect.deleteProperty(document, "startViewTransition");
-    }
-  });
-
-  it("hands the protected app an in-memory demo session for the selected channel", async () => {
-    const onAuthenticated = vi.fn();
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const user = userEvent.setup();
-
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <LoginPage
-            directDemoLogin
-            loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
-            onAuthenticated={onAuthenticated}
-          />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    await user.click(await screen.findByRole("button", { name: "使用微信登录" }));
-
-    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledOnce(), { timeout: 1_000 });
-    expect(onAuthenticated).toHaveBeenCalledWith({
-      authenticated: true,
-      login_channel: "wechat",
-      expires_at: expect.any(String),
-    });
-    expect(window.localStorage).toHaveLength(0);
-    expect(window.sessionStorage).toHaveLength(0);
-  });
-
-  it("keeps both demo methods usable without loading backend capabilities", async () => {
-    const loadCapabilities = vi.fn().mockRejectedValue(new Error("backend unavailable"));
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <LoginPage directDemoLogin loadCapabilities={loadCapabilities} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    await waitFor(() => {
-      expect(screen.getByRole("button", { name: "使用微信登录" })).toBeEnabled();
-      expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeEnabled();
-    });
-    expect(loadCapabilities).not.toHaveBeenCalled();
-    expect(screen.queryByText("正在加载登录方式…")).not.toBeInTheDocument();
   });
 
   it("lets the user restart in place after challenge polling fails", async () => {

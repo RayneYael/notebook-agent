@@ -15,7 +15,7 @@ describe("private cache boundary", () => {
     expect(navigate).toHaveBeenCalledWith("/login", { replace: true });
   });
 
-  it("still clears local tenant data when the server session is already invalid", async () => {
+  it("keeps the private session visible when the server did not confirm logout", async () => {
     const client = new QueryClient();
     client.setQueryData(["library-item", "x"], { private: "previous-user" });
     const navigate = vi.fn();
@@ -24,8 +24,8 @@ describe("private cache boundary", () => {
       logoutAndClear(client, vi.fn().mockRejectedValue(new Error("session expired")), navigate),
     ).rejects.toThrow("session expired");
 
-    expect(client.getQueryData(["library-item", "x"])).toBeUndefined();
-    expect(navigate).toHaveBeenCalledWith("/login", { replace: true });
+    expect(client.getQueryData(["library-item", "x"])).toEqual({ private: "previous-user" });
+    expect(navigate).not.toHaveBeenCalled();
   });
 
   it("rotates the cache so a late old-session mutation cannot rehydrate the active tenant", async () => {

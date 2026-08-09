@@ -56,7 +56,7 @@ _ERRORS = frozenset({
     "save_failed", "save_unavailable", "invalid_url", "batch_too_large", "empty_batch",
     "channel_unavailable", "challenge_invalid", "challenge_expired",
     "challenge_used", "account_disabled", "web_login_unavailable",
-    "ingestion_failed", "transient_fetch_failed", "completion_publish_failed",
+    "ingestion_failed", "transient_fetch_failed", "ingest_too_large", "completion_publish_failed",
 })
 
 

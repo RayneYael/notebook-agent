@@ -9,9 +9,10 @@ interface AppShellProps {
   loginChannel: LoginChannel;
   onLogout: () => void;
   logoutPending?: boolean;
+  logoutError?: string;
 }
 
-export function AppShell({ children, loginChannel, onLogout, logoutPending = false }: AppShellProps) {
+export function AppShell({ children, loginChannel, onLogout, logoutPending = false, logoutError }: AppShellProps) {
   const loginChannelLabel = loginChannel === "telegram" ? "Telegram" : "微信";
   const accountMenuRef = useRef<HTMLDetailsElement>(null);
 
@@ -46,6 +47,7 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
               <p className="eyebrow">登录方式</p>
               <strong>{loginChannelLabel}</strong>
               <button disabled={logoutPending} onClick={onLogout}>退出登录</button>
+              {logoutError ? <p className="account-popover__error" role="alert">{logoutError}</p> : null}
             </div>
           </details>
         </div>

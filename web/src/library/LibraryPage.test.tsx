@@ -113,8 +113,8 @@ describe("library page", () => {
     expect(within(workRegion).getByText("整理失败的视频")).toBeInTheDocument();
     expect(within(workRegion).queryByText("理解比收藏重要")).not.toBeInTheDocument();
     expect(within(workRegion).queryByText("整理完成并可阅读后，会自动移到上方。失败或需要处理的视频会留在这里。")).not.toBeInTheDocument();
-    expect(within(workRegion).getByRole("progressbar", { name: "当前整理进度" })).toHaveAttribute("value", "83");
-    expect(within(workRegion).getByText("约 83%")).toBeInTheDocument();
+    expect(within(workRegion).getByRole("progressbar", { name: "当前整理进度" })).toHaveAttribute("value", "65");
+    expect(within(workRegion).getByText("约 65%")).toBeInTheDocument();
   });
 
   it("shows the server-owned read-only state instead of opening the add flow", async () => {
@@ -146,14 +146,14 @@ describe("library page", () => {
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
-  it("discovers collection tags and filters through the existing search query", async () => {
+  it("discovers collection tags and sends a dedicated exact collection filter", async () => {
     const allItems = [
       { ...readyItem, public_id: "one", why_saved: "准备用户访谈 #产品调研" },
       { ...readyItem, public_id: "two", why_saved: "复习基础概念 #AI_入门" },
     ];
     const fetchItems = vi.fn().mockImplementation(async (query) => ({
-      items: query.search ? [allItems[0]] : allItems,
-      total: query.search ? 1 : 2,
+      items: query.collection ? [allItems[0]] : allItems,
+      total: query.collection ? 1 : 2,
       page: 1,
       page_size: 20,
       is_true_first_empty: false,
@@ -167,7 +167,7 @@ describe("library page", () => {
     await user.click(within(filters).getByRole("button", { name: "产品调研" }));
 
     await waitFor(() => expect(fetchItems).toHaveBeenLastCalledWith(
-      expect.objectContaining({ search: "#产品调研" }),
+      expect.objectContaining({ search: "", collection: "产品调研" }),
     ));
     expect(within(filters).getByRole("button", { name: "产品调研" })).toHaveAttribute(
       "aria-pressed",

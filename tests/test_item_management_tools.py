@@ -309,13 +309,15 @@ def test_management_projection_tenant_isolation_trash_and_why_saved(sqlite_facto
                 _item(11, why_saved="  keep   this  ", title="Visible"),
                 _item(12, deleted_at=now - timedelta(days=2), title="Trash"),
                 _item(13, user_id=99, title="Other tenant"),
+                _item(14, why_saved="x" * 600, title="Legacy note"),
             ]
         )
         db.commit()
     service = KnowledgeItemManagementService(sqlite_factory, retention_days=30)
     library = service.list_items(_tenant(), now=now)
-    assert [row.item_id for row in library.items] == [11]
-    assert library.items[0].why_saved == "  keep   this  "
+    assert [row.item_id for row in library.items] == [14, 11]
+    assert library.items[1].why_saved == "  keep   this  "
+    assert service.get_item(_tenant(), 14).why_saved == "x" * 600
     trash = service.list_items(_tenant(), location="trash", now=now)
     assert trash.items[0].item_id == 12
     assert trash.items[0].restorable is True

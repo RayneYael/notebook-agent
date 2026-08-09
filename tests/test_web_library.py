@@ -87,6 +87,22 @@ def test_available_actions_are_server_derived():
     assert "retry" not in project_lifecycle(item(state="failed"), dispatch(state="running")).available_actions
 
 
+def test_update_why_saved_rejects_501_characters_before_database_access():
+    service = ContentLibraryService(
+        lambda: (_ for _ in ()).throw(AssertionError("database must stay untouched")),
+        lambda _value: "task",
+    )
+
+    with pytest.raises(LibraryConflict) as caught:
+        service.update_why_saved(
+            SimpleNamespace(app_user_id=7),
+            "item-public",
+            "x" * 501,
+        )
+
+    assert caught.value.error_code == "why_saved_too_long"
+
+
 class ScalarSession:
     def __init__(self, values):
         self.values = list(values)
@@ -205,6 +221,33 @@ def test_archived_filter_remains_independent_from_deleted_visibility():
     items_sql = str(db.statements[1])
     assert "content_item.deleted_at IS NULL" in items_sql
     assert "content_item.archived_at IS NOT NULL" in items_sql
+
+
+def test_collection_filter_uses_an_exact_hashtag_token_not_a_like_wildcard():
+    db = QuerySession(scalar_values=[0], scalars_values=[[]])
+
+    ContentLibraryService(lambda: db, lambda _value: "task").list_items(
+        SimpleNamespace(app_user_id=7), collection="AI_入门"
+    )
+
+    statement = db.statements[1]
+    items_sql = str(statement)
+    assert "~*" in items_sql
+    assert "why_saved" in items_sql
+    assert any("#AI_入门" in str(value) for value in statement.compile().params.values())
+
+
+@pytest.mark.parametrize("collection", ["#AI", "bad name", "a" * 21])
+def test_collection_filter_rejects_invalid_names(collection):
+    service = ContentLibraryService(
+        lambda: (_ for _ in ()).throw(AssertionError("database must stay untouched")),
+        lambda _value: "task",
+    )
+
+    with pytest.raises(LibraryConflict) as caught:
+        service.list_items(SimpleNamespace(app_user_id=7), collection=collection)
+
+    assert caught.value.error_code == "invalid_collection"
 
 
 @pytest.mark.parametrize("action", ["archive", "restore"])

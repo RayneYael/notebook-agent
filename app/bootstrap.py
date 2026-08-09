@@ -14,7 +14,7 @@ from app.channels.pending_actions import PendingConfirmationService
 from app.config import Settings, get_settings
 from app.db import get_session_factory
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
-from app.ingest.submission import IngestSubmissionService
+from app.ingest.submission import build_ingest_submission_service
 from app.ingest.tasks import publish_ingest_dispatch
 from app.tls import TrustedCA, configure_trusted_ca
 from app.web.auth import WebAuthService
@@ -55,22 +55,8 @@ def build_knowledge_agent(
     action_factory = None
     if settings.agent_save_enabled or settings.agent_item_management_enabled:
         action_services = AgentActionServices(
-            submission=IngestSubmissionService(
-                factory,
-                publish_ingest_dispatch,
-                max_active_per_tenant=settings.ingest_max_active_per_user,
-                daily_new_item_limit=settings.ingest_daily_new_item_limit,
-                max_items_per_tenant=settings.ingest_max_items_per_user,
-                max_active_global=settings.ingest_max_active_global,
-                daily_new_item_limit_global=(
-                    settings.ingest_daily_new_item_limit_global
-                ),
-                daily_dispatch_limit_per_tenant=(
-                    settings.ingest_daily_dispatch_limit_per_user
-                ),
-                daily_dispatch_limit_global=(
-                    settings.ingest_daily_dispatch_limit_global
-                ),
+            submission=build_ingest_submission_service(
+                factory, publish_ingest_dispatch, settings
             ),
             pending=PendingConfirmationService(factory),
             management=KnowledgeItemManagementService(

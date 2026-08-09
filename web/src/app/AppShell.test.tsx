@@ -49,4 +49,21 @@ describe("application shell", () => {
     await user.click(screen.getByRole("button", { name: "资料库操作" }));
     expect(menu).not.toHaveAttribute("open");
   });
+
+  it("keeps a failed logout visible without pretending the session ended", async () => {
+    render(
+      <MemoryRouter>
+        <AppShell
+          loginChannel="wechat"
+          logoutError="退出失败，请检查网络后重试。"
+          onLogout={() => undefined}
+        >
+          <h1>我的资料库</h1>
+        </AppShell>
+      </MemoryRouter>,
+    );
+
+    await userEvent.click(screen.getByLabelText("打开账户菜单，当前登录方式：微信"));
+    expect(screen.getByRole("alert")).toHaveTextContent("退出失败，请检查网络后重试。");
+  });
 });

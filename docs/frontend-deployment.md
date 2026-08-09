@@ -65,7 +65,7 @@ deterministic, but API-only startup does not access the directory.
 
 The public reverse proxy must:
 
-- forward `/api/v1/*`, including methods, query strings, request bodies,
+- forward `/api/*`, including methods, query strings, request bodies,
   `Origin`, `Sec-Fetch-Site`, cookies, CSRF headers, and `Set-Cookie` responses;
 - serve `index.html` for frontend routes such as `/login`, `/library`, and
   `/videos/<public-id>`;
@@ -79,6 +79,11 @@ The public reverse proxy must:
   `connect-src` remains `'self'` and whose image allowlist is limited to the
   YouTube thumbnail hosts used by the application;
 - keep the channel gateway private and never expose its loopback port.
+
+The backend profile must also keep the per-item ingestion limits documented in
+`docs/environment-configuration.md`. They are enforced before raw-object writes
+and provider calls; changing the frontend upload form does not raise those
+server-side ceilings.
 
 Do not put the frontend at one browser origin and call a second public API
 origin directly. The current security model intentionally requires exact
@@ -379,8 +384,9 @@ monorepo. Configure that project as a Vite application with:
 - build command: `corepack pnpm build`;
 - output directory: `dist`;
 - a SPA fallback to `/index.html` after the API rule;
-- an external rewrite from `/api/v1/:path*` to the concrete backend HTTPS
-  origin, preserving the `/api/v1/` prefix;
+- an external rewrite from `/api/:path*` to the concrete backend HTTPS
+  origin, preserving the complete `/api/` path; unknown API paths must stay
+  backend JSON responses and must never fall through to `index.html`;
 - no caching for the proxied authenticated API.
 
 Configure equivalent security headers on the Vercel project as well. In split

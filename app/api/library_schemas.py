@@ -7,6 +7,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.limits import MAX_WHY_SAVED_CHARS
+
 
 Lifecycle = Literal[
     "archived", "ready", "needs_action", "failed", "processing", "queued"
@@ -73,7 +75,7 @@ class BatchSaveRequest(BrowserModel):
         min_length=1,
         max_length=10,
     )
-    why_saved: str | None = Field(default=None, max_length=2000)
+    why_saved: str | None = Field(default=None, max_length=MAX_WHY_SAVED_CHARS)
 
 
 class BatchItemResponse(BrowserModel):
@@ -98,7 +100,7 @@ class BatchSaveResponse(BrowserModel):
 
 
 class WhySavedRequest(BrowserModel):
-    why_saved: str | None = Field(default=None, max_length=2000)
+    why_saved: str | None = Field(default=None, max_length=MAX_WHY_SAVED_CHARS)
 
 
 class DispatchResponse(BrowserModel):

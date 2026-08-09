@@ -7,7 +7,7 @@ from datetime import timedelta
 from app.api.app import WebApiServices, create_app
 from app.config import Settings, get_settings
 from app.db import get_session_factory
-from app.ingest.submission import IngestSubmissionService
+from app.ingest.submission import build_ingest_submission_service
 from app.object_store import RawObjectStore
 from app.web.auth import WebAuthService
 from app.web.library import ContentLibraryService
@@ -62,23 +62,7 @@ def build_web_app(
             seconds=settings.web_auth_session_retention_seconds
         ),
     )
-    submission = IngestSubmissionService(
-        factory,
-        publisher,
-        max_active_per_tenant=settings.ingest_max_active_per_user,
-        daily_new_item_limit=settings.ingest_daily_new_item_limit,
-        max_items_per_tenant=settings.ingest_max_items_per_user,
-        max_active_global=settings.ingest_max_active_global,
-        daily_new_item_limit_global=(
-            settings.ingest_daily_new_item_limit_global
-        ),
-        daily_dispatch_limit_per_tenant=(
-            settings.ingest_daily_dispatch_limit_per_user
-        ),
-        daily_dispatch_limit_global=(
-            settings.ingest_daily_dispatch_limit_global
-        ),
-    )
+    submission = build_ingest_submission_service(factory, publisher, settings)
     services = WebApiServices(
         web_auth=web_auth,
         library=ContentLibraryService(

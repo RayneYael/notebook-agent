@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import inspect
+import re
 import time
 from typing import Any, Literal, Protocol
 from uuid import uuid4
@@ -19,6 +20,7 @@ from app.ingest.submission import (
     IngestQuotaPolicy,
 )
 from app.models import ContentItem, IngestDispatch
+from app.limits import normalize_why_saved
 
 
 ACTIVE_DISPATCH_STATES = frozenset({"pending", "enqueued", "running"})
@@ -31,6 +33,7 @@ SAFE_ERROR_CODES = frozenset(
         "missing_dispatch",
         "transcript_unavailable",
         "transcript_invalid",
+        "ingest_too_large",
     }
 )
 Lifecycle = Literal[
@@ -183,6 +186,7 @@ class ContentLibraryService:
         scope: UserScopeLike,
         *,
         search: str | None = None,
+        collection: str | None = None,
         lifecycle: str | None = None,
         include_archived: bool = False,
         sort: Literal["saved_desc", "saved_asc", "title_asc"] = "saved_desc",
@@ -203,6 +207,8 @@ class ContentLibraryService:
             raise LibraryConflict("invalid_lifecycle")
         if sort not in {"saved_desc", "saved_asc", "title_asc"}:
             raise LibraryConflict("invalid_sort")
+        if collection is not None and not re.fullmatch(r"[\w-]{1,20}", collection):
+            raise LibraryConflict("invalid_collection")
 
         with self._session_factory() as db:
             true_total = int(
@@ -230,6 +236,13 @@ class ContentLibraryService:
                         ContentItem.author.ilike(pattern),
                         ContentItem.why_saved.ilike(pattern),
                     )
+                )
+            if collection is not None:
+                token_pattern = (
+                    rf"(^|[[:space:]])#{re.escape(collection)}([[:space:]]|$)"
+                )
+                statement = statement.where(
+                    ContentItem.why_saved.op("~*")(token_pattern)
                 )
             if sort == "saved_asc":
                 statement = statement.order_by(asc(ContentItem.saved_at), asc(ContentItem.id))
@@ -271,8 +284,9 @@ class ContentLibraryService:
         item_public_id: str,
         why_saved: str | None,
     ) -> LibraryItemDTO:
-        normalized = None if why_saved is None else str(why_saved).strip() or None
-        if normalized is not None and len(normalized) > 2000:
+        try:
+            normalized = normalize_why_saved(why_saved)
+        except ValueError:
             raise LibraryConflict("why_saved_too_long")
         with self._session_factory() as db:
             item = self._owned_item(db, scope, item_public_id)

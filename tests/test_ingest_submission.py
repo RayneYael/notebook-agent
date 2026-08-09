@@ -30,6 +30,26 @@ def test_normalize_youtube_url_without_remote_fetch():
     assert reference.canonical_url == "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 
 
+@pytest.mark.parametrize(
+    "field_name",
+    [
+        "ingest_max_raw_transcript_bytes",
+        "ingest_max_cues_per_item",
+        "ingest_max_text_chars_per_item",
+        "ingest_max_segments_per_item",
+        "ingest_max_embedding_chars_per_item",
+    ],
+)
+def test_ingest_content_limits_must_be_positive(field_name):
+    with pytest.raises(ValueError, match="INGEST_"):
+        Settings(**{field_name: 0})
+
+
+def test_youtube_fetch_timeout_must_be_positive():
+    with pytest.raises(ValueError, match="YOUTUBE_FETCH_TIMEOUT_SECONDS"):
+        Settings(youtube_fetch_timeout_seconds=0)
+
+
 def test_batch_preflight_preserves_order_and_safe_validation_results():
     prepared = prepare_submission(
         [
@@ -77,6 +97,27 @@ def test_batch_size_is_checked_before_item_normalization(monkeypatch):
         prepare_submission([])
     assert caught.value.error_code == "empty_batch"
     assert calls == []
+
+
+def test_submit_rejects_why_saved_over_500_before_database_or_publish():
+    store = FakeStore([])
+    published = []
+    service = IngestSubmissionService(
+        store.session,
+        lambda dispatch_id: published.append(dispatch_id),
+    )
+
+    with pytest.raises(ValueError, match="why_saved_too_long"):
+        service.submit_urls(
+            TenantContext(57, 9, "wechat", "account", "external"),
+            ["https://youtu.be/dQw4w9WgXcQ"],
+            why_saved="x" * 501,
+            request_key="web:why-too-long",
+        )
+
+    assert store.items == []
+    assert store.dispatches == []
+    assert published == []
 
 
 def test_ten_url_broker_outage_obeys_one_total_publish_budget(monkeypatch):

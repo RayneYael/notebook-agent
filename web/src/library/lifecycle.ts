@@ -21,23 +21,24 @@ export function shouldPollLibrary(
 const workItemProgress: Partial<Record<LibraryLifecycle, number>> = {
   queued: 20,
   processing: 65,
-  needs_action: 100,
-  failed: 100,
 };
 
 export function isLibraryWorkItem(
   item: Pick<LibraryItemSummary, "lifecycle">,
 ): boolean {
-  return workItemProgress[item.lifecycle] !== undefined;
+  return ["queued", "processing", "needs_action", "failed"].includes(item.lifecycle);
 }
 
 export function estimateWorkItemProgress(
   items: ReadonlyArray<Pick<LibraryItemSummary, "lifecycle">>,
 ): number {
-  if (items.length === 0) return 0;
-  const total = items.reduce(
+  const activeItems = items.filter(
+    ({ lifecycle }) => lifecycle === "queued" || lifecycle === "processing",
+  );
+  if (activeItems.length === 0) return 0;
+  const total = activeItems.reduce(
     (sum, item) => sum + (workItemProgress[item.lifecycle] ?? 0),
     0,
   );
-  return Math.round(total / items.length);
+  return Math.round(total / activeItems.length);
 }

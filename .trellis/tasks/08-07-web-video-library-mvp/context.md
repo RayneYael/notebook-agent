@@ -25,6 +25,14 @@
 
 ## Local demo-login closeout (2026-08-09)
 
+> **Superseded later on 2026-08-09:** the final production delivery removed
+> `VITE_LOCAL_DEMO_DIRECT_LOGIN`, the synthetic authenticated session, and the
+> direct-login transition described in this historical section. The login page
+> now exposes only channels enabled by the server capabilities endpoint and
+> always uses the real challenge/session exchange. The `.runtime` fixture may
+> still serve static authenticated visual data locally, but it is not a product
+> authentication path and is excluded from version control.
+
 - The login screen keeps the production channel challenge flow by default.
   Only a build with `VITE_LOCAL_DEMO_DIRECT_LOGIN=true` enables the local demo
   shortcut requested while the real auth backend is unavailable.

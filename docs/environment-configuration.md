@@ -430,8 +430,17 @@ GET /api/v1/does-not-exist  # 返回 JSON 404，而不是 SPA HTML
 | `INGEST_COMPLETION_BATCH_SIZE` | maintenance worker | `20` | bounded completion repair | 否 | worker |
 | `INGEST_COMPLETION_CLAIM_TIMEOUT_SECONDS` | maintenance worker | `300` | stale claim recovery | 否 | worker |
 | `INGEST_COMPLETION_MAX_DURATION_SECONDS` | maintenance worker | `30` | bounded sweep wall-clock budget | 否 | worker |
+| `INGEST_MAX_RAW_TRANSCRIPT_BYTES` | connector、worker | `5000000` | 单条原始字幕大小上限；对象存储前检查 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_CUES_PER_ITEM` | worker | `50000` | 单条字幕 cue 数上限；provider 调用前检查 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_TEXT_CHARS_PER_ITEM` | worker | `1000000` | 单条字幕正文字符上限 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_SEGMENTS_PER_ITEM` | worker | `5000` | 单条最终检索片段数上限 | 否 | worker、同步 ingest CLI |
+| `INGEST_MAX_EMBEDDING_CHARS_PER_ITEM` | worker | `2000000` | 单条所有 embedding 输入字符的累计上限 | 否 | worker、同步 ingest CLI |
+| `YOUTUBE_FETCH_TIMEOUT_SECONDS` | YouTube connector | `30` | metadata 与字幕获取的单调用总时限 | 否 | worker、同步 ingest CLI |
 
 关闭 management flag 不会关闭 deleted-content retrieval filters。
+
+五个 `INGEST_MAX_*` 内容上限必须为正数。超过上限的条目会以安全错误码
+`ingest_too_large` 终止，不会把原始字幕、provider 异常或内部路径返回给浏览器；调大前应同时评估 worker 内存、MinIO 容量和 embedding 成本。
 
 ### 日志与运行环境
 

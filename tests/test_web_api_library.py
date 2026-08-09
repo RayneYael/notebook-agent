@@ -228,6 +228,7 @@ def test_list_filters_sort_page_and_detail_use_injected_scope_without_private_id
         UserScope(7),
         {
             "search": "title",
+            "collection": None,
             "lifecycle": "ready",
             "include_archived": False,
             "sort": "title_asc",
@@ -329,6 +330,44 @@ def test_batch_rejects_an_oversized_url_without_echoing_it():
     assert response.json()["code"] == "validation_error"
     assert "PRIVATE" not in response.text
     assert submission.calls == []
+
+
+def test_why_saved_accepts_500_characters_and_rejects_501_at_the_api_boundary():
+    client, library, submission, _ = client_for()
+
+    with client:
+        accepted_batch = client.post(
+            "/api/v1/library/items:batch",
+            headers={"Idempotency-Key": "why-500", "X-CSRF-Token": "csrf"},
+            json={"urls": ["https://youtu.be/dQw4w9WgXcQ"], "why_saved": "x" * 500},
+        )
+        rejected_batch = client.post(
+            "/api/v1/library/items:batch",
+            headers={"Idempotency-Key": "why-501", "X-CSRF-Token": "csrf"},
+            json={"urls": ["https://youtu.be/dQw4w9WgXcQ"], "why_saved": "x" * 501},
+        )
+        accepted_patch = client.patch(
+            "/api/v1/library/items/item-public",
+            headers={"X-CSRF-Token": "csrf"},
+            json={"why_saved": "y" * 500},
+        )
+        rejected_patch = client.patch(
+            "/api/v1/library/items/item-public",
+            headers={"X-CSRF-Token": "csrf"},
+            json={"why_saved": "y" * 501},
+        )
+
+    assert accepted_batch.status_code == 200
+    assert accepted_patch.status_code == 200
+    assert rejected_batch.status_code == rejected_patch.status_code == 422
+    assert rejected_batch.json() == rejected_patch.json() == {
+        "code": "validation_error",
+        "message": "请求参数无效",
+    }
+    assert len(submission.calls) == 1
+    assert [call for call in library.calls if call[0] == "patch"] == [
+        ("patch", UserScope(7), "item-public", "y" * 500),
+    ]
 
 
 def test_patch_archive_restore_retry_dispatch_and_transcript_contracts():

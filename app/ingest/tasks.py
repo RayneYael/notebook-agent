@@ -25,7 +25,7 @@ from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
-from app.ingest.validate import guard_transcript
+from app.ingest.validate import IngestLimitExceeded, guard_ingest_limits, guard_transcript
 from app.models import (
     AppUser,
     ContentItem,
@@ -33,6 +33,7 @@ from app.models import (
     IngestDispatch,
     Segment,
 )
+from app.limits import normalize_why_saved
 from app.agent.management import RecycleBinPurgeService
 from app.object_store import RawObjectStore
 from app.tls import configure_trusted_ca
@@ -89,6 +90,7 @@ def _completion_diagnostic(
     safe_error_codes = {
         "ingestion_failed",
         "transient_fetch_failed",
+        "ingest_too_large",
         "item_deleted",
         "completion_publish_failed",
         "broker_unavailable",
@@ -174,13 +176,18 @@ def _bounded_publish_options(
 
 
 def _connector(url: str) -> YouTubeConnector:
-    connector = YouTubeConnector()
+    settings = get_settings()
+    connector = YouTubeConnector(
+        max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
+        fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
+    )
     if connector.match(url):
         return connector
     raise ValueError(f"unsupported URL: {url}")
 
 
 def create_item(url: str, *, user_id: int, why_saved: str | None = None, connector: Any | None = None, session_factory=None) -> int:
+    why_saved = normalize_why_saved(why_saved)
     connector = connector or _connector(url)
     platform_id = connector.match(url)
     if not platform_id:
@@ -203,7 +210,7 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
                 existing.purge_error_code = None
                 existing.archived_at = None
                 if why_saved is not None:
-                    existing.why_saved = " ".join(why_saved.split())[:500] or None
+                    existing.why_saved = why_saved
                 db.commit()
             return existing.id
         item = ContentItem(
@@ -259,6 +266,21 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if not isinstance(result, TextResult):
             raise TypeError(f"connector returned unsupported text result: {type(result)!r}")
         guard_transcript(result.raw_body, result.cues, platform=item.platform)
+        settings = get_settings()
+        guard_ingest_limits(
+            result.raw_body,
+            result.cues,
+            max_raw_bytes=settings.ingest_max_raw_transcript_bytes,
+            max_cues=settings.ingest_max_cues_per_item,
+            max_text_chars=settings.ingest_max_text_chars_per_item,
+        )
+        preflight_chunks = chunk(
+            result.cues,
+            lang=result.lang,
+            chapters=item.chapters,
+        )
+        if len(preflight_chunks) > settings.ingest_max_segments_per_item:
+            raise IngestLimitExceeded()
         key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
@@ -287,9 +309,20 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             return "deleted"
         if embedder is None:
             embedder = build_worker_embedder()
-        semantic = lambda texts: embedder.embed(texts)
+        remaining_embedding_chars = settings.ingest_max_embedding_chars_per_item
+
+        def semantic(texts):
+            nonlocal remaining_embedding_chars
+            requested = sum(len(text) for text in texts)
+            if requested > remaining_embedding_chars:
+                raise IngestLimitExceeded()
+            remaining_embedding_chars -= requested
+            return embedder.embed(texts)
+
         chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
-        vectors = embedder.embed([part.text for part in chunks])
+        if len(chunks) > settings.ingest_max_segments_per_item:
+            raise IngestLimitExceeded()
+        vectors = semantic([part.text for part in chunks])
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"embedding count mismatch: expected {len(chunks)}, got {len(vectors)}"
@@ -741,6 +774,11 @@ def process_dispatch(
         # Celery may log task exceptions; preserve retry type but never copy
         # connector/provider details into the task failure surface.
         raise TransientFetchError("transient_fetch_failed") from None
+    except IngestLimitExceeded as exc:
+        _mark_dispatch_failed(
+            dispatch_id, exc, task_id=task_id, session_factory=factory
+        )
+        raise RuntimeError("ingest_too_large") from None
     except Exception as exc:
         _mark_dispatch_failed(
             dispatch_id, exc, task_id=task_id, session_factory=factory
@@ -1297,8 +1335,8 @@ def _mark_dispatch_failed(
 ) -> int | None:
     factory = session_factory or get_session_factory()
     error_code = (
-        "transient_fetch_failed"
-        if isinstance(exc, TransientFetchError)
+        "transient_fetch_failed" if isinstance(exc, TransientFetchError)
+        else "ingest_too_large" if isinstance(exc, IngestLimitExceeded)
         else "ingestion_failed"
     )
     event_id: int | None = None
@@ -1421,8 +1459,8 @@ def _mark_failed(item_id: int, exc: BaseException, *, session_factory=None) -> N
         if item is not None:
             item.state = "failed"
             item.fail_reason = (
-                "transient_fetch_failed"
-                if isinstance(exc, TransientFetchError)
+                "transient_fetch_failed" if isinstance(exc, TransientFetchError)
+                else "ingest_too_large" if isinstance(exc, IngestLimitExceeded)
                 else "ingestion_failed"
             )
             db.commit()

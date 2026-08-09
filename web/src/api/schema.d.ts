@@ -885,6 +885,7 @@ export interface operations {
         parameters: {
             query?: {
                 search?: string | null;
+                collection?: string | null;
                 lifecycle?: ("archived" | "ready" | "needs_action" | "failed" | "processing" | "queued") | null;
                 include_archived?: boolean;
                 sort?: "saved_desc" | "saved_asc" | "title_asc";

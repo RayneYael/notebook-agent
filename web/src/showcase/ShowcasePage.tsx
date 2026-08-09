@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState } from "react";
 
 import { BrandLogo } from "../app/BrandLogo";
 import { RouteLink } from "../app/RouteTransition";
@@ -246,23 +246,11 @@ function ArrowIcon() {
   );
 }
 
-const typingSentencePause = 6;
-
-function TypewriterText({ text, startIndex }: { text: string; startIndex: number }) {
+function TypewriterText({ text }: { text: string }) {
   return (
     <>
       <span className="sr-only">{text}</span>
-      <span className="demo-typewriter" aria-hidden="true">
-        {Array.from(text).map((character, index) => (
-          <span
-            className="demo-typewriter__char"
-            key={`${index}-${character}`}
-            style={{ "--typing-index": startIndex + index } as CSSProperties}
-          >
-            {character}
-          </span>
-        ))}
-      </span>
+      <span className="demo-typewriter" aria-hidden="true">{text}</span>
     </>
   );
 }
@@ -274,15 +262,7 @@ export function ShowcasePage() {
   const [summaryLanguage, setSummaryLanguage] = useState<SummaryLanguage>("zh");
   const activeDemo = demoScenes.find((scene) => scene.id === activeDemoId) ?? demoScenes[0];
   const activeSummary = activeDemo.previewSummary[summaryLanguage];
-  const summaryStyle = {
-    "--demo-subtitle-duration": `${activeDemo.summaryDurationSeconds[summaryLanguage]}s`,
-  } as CSSProperties;
-  const answerSegments = [activeDemo.answerLead, ...activeDemo.answerPoints];
-  const answerOffsets = answerSegments.map((_, segmentIndex) => (
-    answerSegments
-      .slice(0, segmentIndex)
-      .reduce((total, segment) => total + Array.from(segment).length + typingSentencePause, 0)
-  ));
+  const summaryDuration = activeDemo.summaryDurationSeconds[summaryLanguage];
   function selectDemo(id: DemoId) {
     setActiveDemoId(id);
     setHasRun(false);
@@ -511,9 +491,8 @@ export function ShowcasePage() {
                   <span className="sr-only">片段要点：{activeSummary}</span>
                   <div className="demo-subtitle-viewport" aria-hidden="true">
                     <div
-                      className="demo-subtitle-track"
+                      className={`demo-subtitle-track demo-subtitle-track--${summaryDuration}`}
                       key={`${activeDemo.id}-${summaryLanguage}`}
-                      style={summaryStyle}
                     >
                       <span>{activeSummary}</span>
                       <span>{activeSummary}</span>
@@ -559,12 +538,12 @@ export function ShowcasePage() {
                 <article className="demo-answer" aria-live="polite">
                   <div className="demo-answer__label"><BrandLogo className="demo-answer__mark" /><p>基于 3 个字幕片段</p></div>
                   <p className="demo-answer__lead">
-                    <TypewriterText text={activeDemo.answerLead} startIndex={answerOffsets[0]} />
+                    <TypewriterText text={activeDemo.answerLead} />
                   </p>
                   <ol>
-                    {activeDemo.answerPoints.map((point, index) => (
+                    {activeDemo.answerPoints.map((point) => (
                       <li key={point}>
-                        <TypewriterText text={point} startIndex={answerOffsets[index + 1]} />
+                        <TypewriterText text={point} />
                       </li>
                     ))}
                   </ol>
@@ -589,7 +568,7 @@ export function ShowcasePage() {
           <p className="showcase-overline">YOUR KNOWLEDGE / YOUR EVIDENCE</p>
           <h2 id="showcase-cta-title">答案与原文，<br />一步之遥</h2>
           <RouteLink className="showcase-button showcase-button--dark" to="/login">进入私人资料库 <ArrowIcon /></RouteLink>
-          <p className="showcase-cta__note">本页展示已经实现的 YouTube 资料库流程 · 可用登录入口以当前部署配置为准</p>
+          <p className="showcase-cta__note">Web 当前负责登录、资料库管理和字幕阅读；带来源问答发生在已启用的聊天或 MCP 入口 · 可用入口以部署配置为准</p>
         </section>
       </main>
 

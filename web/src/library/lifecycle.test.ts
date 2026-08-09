@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { lifecycleCopy, shouldPollLibrary } from "./lifecycle";
+import { estimateWorkItemProgress, lifecycleCopy, shouldPollLibrary } from "./lifecycle";
 
 describe("library lifecycle presentation", () => {
   it("uses safe, useful Chinese copy for every server state", () => {
@@ -17,5 +17,10 @@ describe("library lifecycle presentation", () => {
     expect(shouldPollLibrary([{ lifecycle: "processing" }])).toBe(true);
     expect(shouldPollLibrary([{ lifecycle: "ready" }, { lifecycle: "failed" }])).toBe(false);
     expect(shouldPollLibrary([])).toBe(false);
+  });
+
+  it("does not present failed or action-required items as completed progress", () => {
+    expect(estimateWorkItemProgress([{ lifecycle: "failed" }, { lifecycle: "needs_action" }])).toBe(0);
+    expect(estimateWorkItemProgress([{ lifecycle: "queued" }, { lifecycle: "processing" }])).toBe(43);
   });
 });

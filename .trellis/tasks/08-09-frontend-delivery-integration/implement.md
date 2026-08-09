@@ -57,3 +57,22 @@
 - [x] Refresh `upstream/main`, preserve a fast-forward fork push, update PR 2
   with completed frontend work plus deployment-ready and external-gate status,
   and do not merge it.
+
+## Gate 6 - Fresh upstream PR admission
+
+- [x] Re-review the complete `upstream/main...working tree` in independent
+  code/security and architecture lanes; resolve every reported P1/P2.
+- [x] Remove the production demo-login bypass, preserve private state on failed
+  logout, align Showcase claims with actual Web capabilities, and keep the CSP
+  free of inline-style exceptions.
+- [x] Unify the 500-character saved-note contract across Web, Agent, MCP,
+  ingestion, restore, and identity reconciliation without silent truncation.
+- [x] Converge Web/Agent/MCP submission quotas and add bounded YouTube
+  acquisition, cue/text/segment/embedding limits, and stable safe errors.
+- [x] Keep deployment readiness fail-closed on the single required Alembic
+  head and document the explicit maintenance-window migration order.
+- [x] Pass the frozen OpenAPI check, 74 frontend tests, typecheck, lint,
+  production build, 383 non-external-database Python tests with 8 expected
+  skips, compileall, Alembic single-head inspection, and diff check.
+- [ ] Create the new fork branch commit, push it, open a new upstream PR, then
+  record the exact commit and PR URL without closing or merging PR 2.

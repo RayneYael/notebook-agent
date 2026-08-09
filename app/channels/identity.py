@@ -24,6 +24,7 @@ from app.channels.errors import (
     WrongChannelLinkToken,
 )
 from app.channels.types import ChannelEnvelope, TenantContext
+from app.limits import normalize_why_saved
 from app.models import (
     AppUser,
     ChannelIdentity,
@@ -500,8 +501,15 @@ def _merge_why_saved(
     source_value = values.get(source_user_id, "")
     target_value = values.get(target_user_id, "")
     if source_value and target_value and source_value != target_value:
-        return f"[source]\n{source_value}\n\n[target]\n{target_value}"
-    return source_value or target_value or None
+        merged = f"[source]\n{source_value}\n\n[target]\n{target_value}"
+    else:
+        merged = source_value or target_value or None
+    try:
+        return normalize_why_saved(merged)
+    except ValueError:
+        raise IdentityConflict(
+            "saved notes are too long to merge without data loss"
+        ) from None
 
 
 def _token_hash(raw_token: str) -> str:

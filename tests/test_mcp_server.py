@@ -56,6 +56,37 @@ from app.models import (
 )
 
 
+def test_mcp_lazy_submission_uses_every_configured_ingest_quota(monkeypatch):
+    settings = Settings(
+        ingest_max_active_per_user=2,
+        ingest_daily_new_item_limit=3,
+        ingest_max_items_per_user=4,
+        ingest_max_active_global=5,
+        ingest_daily_new_item_limit_global=6,
+        ingest_daily_dispatch_limit_per_user=7,
+        ingest_daily_dispatch_limit_global=8,
+    )
+    monkeypatch.setattr("app.bootstrap.build_channel_service", lambda _settings: object())
+    facade = McpToolFacade(
+        settings=settings,
+        session_factory=lambda: None,
+        management=object(),
+        pending=object(),
+        publisher=lambda _dispatch_id: "task",
+    )
+
+    facade._ensure_services()
+
+    policy = facade.submission.quota_policy
+    assert policy.max_active_per_tenant == 2
+    assert policy.daily_new_item_limit == 3
+    assert policy.max_items_per_tenant == 4
+    assert policy.max_active_global == 5
+    assert policy.daily_new_item_limit_global == 6
+    assert policy.daily_dispatch_limit_per_tenant == 7
+    assert policy.daily_dispatch_limit_global == 8
+
+
 def _sqlite_grants():
     engine = create_engine(
         "sqlite://",

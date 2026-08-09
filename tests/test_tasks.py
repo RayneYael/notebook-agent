@@ -6,8 +6,10 @@ from datetime import UTC, datetime
 from kombu import Connection
 
 from app.connectors.base import (
+    Cue,
     ItemMeta,
     NeedsASR,
+    TextResult,
     TransientFetchError,
 )
 from app.config import Settings
@@ -159,6 +161,62 @@ def test_worker_fetches_and_persists_metadata_before_text():
     assert item.duration_sec == 42
     assert item.tags == ["worker"]
     assert item.state == "needs_asr"
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        TextResult(b"x" * 11, [Cue(0, 1, "ok")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "a"), Cue(1, 2, "b")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "toolong")], "official_cc", "en"),
+    ],
+)
+def test_worker_rejects_oversized_transcript_before_storage_or_embedding(monkeypatch, result):
+    class Item:
+        id = 41
+        user_id = 57
+        platform = "youtube"
+        platform_id = "dQw4w9WgXcQ"
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        chapters = None
+        state = "pending"
+
+    item = Item()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, _model, _item_id): return item
+        def commit(self): return None
+
+    class Connector:
+        def fetch_meta(self, _platform_id): return None
+        def fetch_text(self, _platform_id): return result
+
+    class Store:
+        def put(self, *_args): pytest.fail("oversized content must not reach object storage")
+
+    class Embedder:
+        def embed(self, _texts): pytest.fail("oversized content must not reach the provider")
+
+    limits = replace(
+        Settings(),
+        ingest_max_raw_transcript_bytes=10,
+        ingest_max_cues_per_item=1,
+        ingest_max_text_chars_per_item=5,
+        ingest_max_segments_per_item=2,
+        ingest_max_embedding_chars_per_item=10,
+    )
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: limits)
+
+    with pytest.raises(ValueError, match="ingest_too_large"):
+        process_item(
+            item.id,
+            connector=Connector(),
+            embedder=Embedder(),
+            object_store=Store(),
+            session_factory=lambda: DB(),
+        )
 
 
 def test_cli_ingestion_fetches_metadata_exactly_once():

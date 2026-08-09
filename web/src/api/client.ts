@@ -115,6 +115,7 @@ export function getCapabilities(): Promise<Capabilities> {
 
 export interface LibraryQuery {
   search?: string;
+  collection?: string;
   lifecycle?: string;
   include_archived?: boolean;
   sort?: "saved_desc" | "saved_asc" | "title_asc";

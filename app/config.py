@@ -162,6 +162,24 @@ class Settings:
             "INGEST_DAILY_DISPATCH_LIMIT_GLOBAL", 1000
         )
     )
+    ingest_max_raw_transcript_bytes: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_RAW_TRANSCRIPT_BYTES", 5_000_000)
+    )
+    ingest_max_cues_per_item: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_CUES_PER_ITEM", 50_000)
+    )
+    ingest_max_text_chars_per_item: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_TEXT_CHARS_PER_ITEM", 1_000_000)
+    )
+    ingest_max_segments_per_item: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_SEGMENTS_PER_ITEM", 5_000)
+    )
+    ingest_max_embedding_chars_per_item: int = field(
+        default_factory=lambda: _env_int("INGEST_MAX_EMBEDDING_CHARS_PER_ITEM", 2_000_000)
+    )
+    youtube_fetch_timeout_seconds: float = field(
+        default_factory=lambda: _env_float("YOUTUBE_FETCH_TIMEOUT_SECONDS", 30.0)
+    )
 
     # --- MinIO (S3-compatible object storage) ---
     minio_endpoint_url: str = field(default_factory=lambda: _env("MINIO_ENDPOINT_URL", "http://localhost:9000"))
@@ -398,6 +416,16 @@ class Settings:
             raise ValueError(
                 "INGEST_COMPLETION_MAX_DURATION_SECONDS must be positive"
             )
+        if min(
+            self.ingest_max_raw_transcript_bytes,
+            self.ingest_max_cues_per_item,
+            self.ingest_max_text_chars_per_item,
+            self.ingest_max_segments_per_item,
+            self.ingest_max_embedding_chars_per_item,
+        ) <= 0:
+            raise ValueError("INGEST_CONTENT_LIMITS must be positive")
+        if self.youtube_fetch_timeout_seconds <= 0:
+            raise ValueError("YOUTUBE_FETCH_TIMEOUT_SECONDS must be positive")
         if (
             self.agent_composer_max_tokens * COMPOSER_VALIDATION_REQUEST_LIMIT
             > self.agent_output_token_limit

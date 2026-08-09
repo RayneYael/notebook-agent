@@ -26,11 +26,8 @@ export async function logoutAndClear(
   navigate: NavigateFn,
   rotateClient: () => void = () => undefined,
 ): Promise<void> {
-  try {
-    await serverLogout();
-  } finally {
-    endPrivateSession(client, navigate, rotateClient);
-  }
+  await serverLogout();
+  endPrivateSession(client, navigate, rotateClient);
 }
 
 export function endPrivateSession(
@@ -83,6 +80,7 @@ function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
     <AppShell
       loginChannel={session.data.login_channel}
       logoutPending={logoutMutation.isPending}
+      logoutError={logoutMutation.isError ? "服务器尚未确认退出，请检查网络后重试。" : undefined}
       onLogout={() => logoutMutation.mutate()}
     >
       <Outlet />
@@ -94,7 +92,6 @@ function LoginRoute({ activateSession }: { activateSession: (session: SessionInf
   const navigate = useRouteNavigate();
   return (
     <LoginPage
-      directDemoLogin={import.meta.env.VITE_LOCAL_DEMO_DIRECT_LOGIN === "true"}
       onAuthenticated={(session) => {
         activateSession(session);
         navigate("/library", { replace: true });

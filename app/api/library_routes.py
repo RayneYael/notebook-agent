@@ -176,6 +176,7 @@ def build_library_router(
     @router.get("/library/items", response_model=LibraryPageResponse)
     def list_items(
         search: str | None = Query(default=None, max_length=200),
+        collection: str | None = Query(default=None, min_length=1, max_length=20),
         lifecycle: Literal[
             "archived", "ready", "needs_action", "failed", "processing", "queued"
         ]
@@ -190,6 +191,7 @@ def build_library_router(
             result = library.list_items(
                 scope,
                 search=search,
+                collection=collection,
                 lifecycle=lifecycle,
                 include_archived=include_archived,
                 sort=sort,

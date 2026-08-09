@@ -48,8 +48,11 @@ alembic current
 ```
 
 The committed deployment currently expects revision `a7b8c9d0e1f2`. Update
-`EXPECTED_DATABASE_REVISION` in `vercel.json` in the same commit as every future
-migration. Never run Alembic from a Vercel build or function import.
+Keep `EXPECTED_DATABASE_REVISION` in `vercel.json` aligned with the single
+schema revision required by the deployed application. Never make the health
+check accept an older revision merely to avoid a red deployment: readiness must
+prove application compatibility, not hide schema drift. Never run Alembic from
+a Vercel build or function import.
 
 ## Shared team development access
 
@@ -126,6 +129,17 @@ Missing credentials, a direct/non-TLS runtime URL, database downtime, or schema
 drift returns a redacted HTTP 503 response. Provider exception text and DSNs
 must never appear in the body or logs.
 
+### `f6` → `a7` 维护窗口迁移顺序
+
+当前 Web 应用依赖 `d3` 分支创建的登录表和资料库列，因此不能在 `f6` schema 上被判为 ready。本次发布选择短维护窗口，不使用多 revision allowlist 掩盖不兼容：
+
+1. 在流量摘除或已公告的维护窗口内，确认当前旧应用仍可回滚，并保留其 release artifact。
+2. 由唯一 migration owner 使用 direct Neon URL 执行 `alembic upgrade a7b8c9d0e1f2`；失败时停止，不自动 downgrade，也不部署新应用。
+3. 确认数据库 `alembic current` 精确为 `a7b8c9d0e1f2`，再部署本 PR 的应用代码。
+4. 验证三个 health 地址只在 revision 精确为 `a7b8c9d0e1f2` 时返回 200，然后执行真实登录和资料库 smoke。
+
+若团队要求完全无红窗，必须先另建一个只处理兼容发布编排的窄 PR，并用真实应用兼容测试证明每个阶段；不得在本功能 PR 中放宽 readiness。
+
 ## Rollback and teardown
 
 - Application rollback: redeploy the previous known-good Git commit in Vercel.
@@ -146,3 +160,6 @@ Fill this section with non-secret identifiers after the live deployment:
 - Verified deployment commit: `3de5d7abe480e411254db64f2cd0f3b40ed3b8ae`
 - Verified Alembic revision: `f6a7b8c9d0e1`
 - Current branch schema head (not deployed by this PR): `a7b8c9d0e1f2`
+- Release admission: this branch accepts only `a7b8c9d0e1f2`; the live project
+  remains on `f6a7b8c9d0e1` until the migration owner executes the maintenance
+  window above.

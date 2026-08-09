@@ -970,9 +970,7 @@ def test_registered_tenants_merge_content_threads_tokens_and_duplicates(db_facto
         duplicate = merged_items[0]
         assert duplicate.id == target_item.id
         assert duplicate.saved_at == datetime(2026, 1, 2, tzinfo=UTC)
-        assert duplicate.why_saved == (
-            "[source]\nsource reason\n\n[target]\ntarget reason"
-        )
+        assert duplicate.why_saved == "[source] source reason [target] target reason"
         assert (duplicate.watch_state, duplicate.watch_pos_sec) == ("watched", 48)
         assert db.scalar(
             select(func.count(Segment.id)).where(Segment.item_id == duplicate.id)

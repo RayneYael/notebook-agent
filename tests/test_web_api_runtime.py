@@ -27,6 +27,7 @@ def settings(**overrides):
         "agent_save_enabled": True,
         "web_serve_static": True,
         "web_static_dir": "web/dist",
+        "trash_retention_days": 30,
         "ingest_max_active_per_user": 10,
         "ingest_daily_new_item_limit": 50,
         "ingest_max_items_per_user": 1000,

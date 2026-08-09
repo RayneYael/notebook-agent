@@ -270,3 +270,59 @@
   No redundant product change was added: the existing tests already require
   the shared brand image in Library/login and both brand images in Showcase;
   the reproduced defect came entirely from serving the stale worktree build.
+
+## 2026-08-09 new upstream PR review
+
+- The user requested a fresh review followed by a new pull request to upstream
+  `main`. The existing PR 2 remains open and unmerged until maintainers decide
+  its disposition; this pass will not close or merge it implicitly.
+- Integration owner remains `/root` in this worktree. A fresh fetch reports
+  `upstream/main@6539f3b717fc928d787d748213a7c5f52b5e5b96`; the current head contains
+  that exact upstream tip and is 45 commits ahead, so no rebase is required.
+- Two independent read-only lanes own code/security review and architecture
+  review of `upstream/main...HEAD`. They may inspect completed output but may
+  not edit files, change Git state, or run shared live processes.
+- `/root` is the sole owner of the PR-admission test lane. Frontend OpenAPI,
+  Vitest, typecheck, ESLint, and production build run serially in `web/`;
+  backend Web/deployment/migration tests run from this worktree with its local
+  `.venv`. Shared output is limited to `web/dist`, TypeScript build info, and
+  pytest caches. No ports, databases, or the existing 5175 preview process are
+  owned or changed by this validation.
+- Success requires both independent reviews, all non-environment-gated checks,
+  a clean diff, a new fork branch, and a new open non-auto-merged upstream PR.
+  A repeated product failure blocks PR creation; unavailable PostgreSQL or
+  external deployment credentials must be reported as explicit gates.
+
+## 2026-08-09 fresh PR admission result
+
+- The independent code/security lane ended `APPROVE`; the architecture lane
+  ended `CLEAR`. All reported P1/P2 findings were fixed before Git delivery.
+- Production no longer contains the local direct-login build flag or a
+  synthetic authenticated session. Failed logout keeps the current private
+  cache and session visible until the server confirms revocation.
+- Saved notes now share one 500-character write contract across Web, Agent,
+  MCP, ingestion, restore, and cross-channel identity merge. Existing legacy
+  notes remain readable; a merge that cannot preserve both notes within the
+  bound fails atomically instead of truncating data.
+- Web, Agent, and MCP construct the ingestion submission service through one
+  quota factory. Per-item bounds cover raw bytes, cue count, text length,
+  segment count, and cumulative embedding input.
+- YouTube metadata calls have a hard timeout. yt-dlp resolves the selected
+  `json3` URL but no longer writes a provider-controlled subtitle file; an
+  isolated HTTPS child checks Content-Length, reads only `max+1` bytes, writes
+  no temporary file, and is terminated by the parent wall-clock timeout.
+  A live public-video check returned 8,325 bytes and 61 cues through this path.
+- Vercel health again requires the exact current Alembic revision
+  `a7b8c9d0e1f2`; the deployment guide uses an explicit maintenance window
+  rather than marking the incompatible `f6` schema ready.
+- Fresh admission evidence: OpenAPI check, 74/74 Vitest tests, TypeScript,
+  ESLint, Vite production build, 383 passed plus 8 environment skips in the
+  non-external-database Python lane, `compileall`, one Alembic head, and clean
+  whitespace validation.
+- External gates remain: an isolated PostgreSQL upgrade/concurrency run, live
+  Telegram and WeChat login approval, Redis/MinIO/Celery readiness, real
+  domestic-host DNS/TLS/Nginx/systemd verification, and an authorized schema
+  migration/deployment window. No production system was changed here.
+- A new branch `codex/frontend-video-library-delivery` was created from the
+  verified history. The old upstream PR 2 remains open and unmodified by this
+  handoff; it will not be closed or merged implicitly.
