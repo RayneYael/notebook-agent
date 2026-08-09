@@ -18,7 +18,9 @@
   "commit": "ef9dec6c0fce939b74e39338dc2b9954c9e39f5b",
   "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
-  "children": [],
+  "children": [
+    "08-09-frontend-linux-deployment"
+  ],
   "parent": "08-07-web-video-library-mvp",
   "relatedFiles": [
     "web",

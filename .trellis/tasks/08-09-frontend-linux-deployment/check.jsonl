@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check deployment artifacts against the browser security, API fallback, and frontend test contract."}
+{"file":".trellis/tasks/08-09-frontend-linux-deployment/research/upstream-deployment-evidence.md","reason":"Ensure review claims do not confuse the health-only Vercel environment with a verified Linux deployment."}

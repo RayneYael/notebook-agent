@@ -1,0 +1,2 @@
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Preserve same-origin auth, SPA/API routing, and required frontend validation during deployment work."}
+{"file":".trellis/tasks/08-09-frontend-linux-deployment/research/upstream-deployment-evidence.md","reason":"Use the verified distinction between the Vercel health environment and the full Linux runtime."}
