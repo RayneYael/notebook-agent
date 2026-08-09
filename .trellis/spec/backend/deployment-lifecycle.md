@@ -43,14 +43,23 @@ prevents concurrent supervisors and duplicate Beat instances. PID-only checks
 are insufficient: lifecycle commands must validate the recorded process
 identity before signaling it.
 
-Startup order is dependencies, migration, worker readiness, Beat, then the
-remaining application components. All pre-start checks and subprocesses must
-have bounded timeouts. A child exit stops the owned runtime immediately; a
-dependency probe must fail three consecutive periodic snapshots before the
-supervisor stops the run, so a busy single worker cannot trigger a false
-shutdown. Log each failed snapshot using redacted check names. Shutdown must
-include process groups and Celery descendants without signaling unrelated
-processes.
+Startup order is dependencies, migration, then every application child in the
+selected profile. Do not place a deep dependency probe between child launches:
+`full` must launch worker, Beat, and MCP as one operation. The selected
+application listener is the only post-launch readiness gate. All pre-start
+checks and subprocesses must have bounded timeouts, and the outer launcher and
+stop budgets must exceed the corresponding listener and cleanup budgets. A
+child exit stops the owned runtime immediately. Dependency probe failures
+are reported by on-demand `status` checks but are not lifecycle signals:
+transient or slow external checks must never block the supervisor loop or tear
+down otherwise-live owned processes. Shutdown must include process groups and
+Celery descendants without signaling unrelated processes.
+
+On-demand status checks must verify that their effective non-secret service
+targets match a fingerprint captured by the running supervisor. If an
+operator's one-shot environment override is no longer present or points to a
+different database, broker, object store, Compose project, or listener, status
+must report configuration mismatch instead of probing the wrong runtime.
 
 External PostgreSQL, Redis, and object storage are readiness-checked but never
 stopped or mutated. Compose services may be rolled back only when the current

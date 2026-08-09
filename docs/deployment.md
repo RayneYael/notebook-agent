@@ -138,8 +138,13 @@ python3.11 -m venv .venv
 这些组件仍为独立进程。`stop` 只停止启动器拥有且身份匹配的应用进程；持久卷和外部数据库、
 Redis、MinIO 不会被停止或删除。日志位于 `.runtime/deployment/logs/`，通过
 `./scripts/notebook-agent logs <component>` 查看。
-启动期健康探测会容忍单 worker 正忙导致的一次瞬时 readiness miss；运行期只有连续三次
-健康失败才关闭整组 runtime。每次失败及具体检查项都会写入 `supervisor.log`。
+迁移完成后，`full` 会直接拉起 worker、Beat 和 MCP，不会让串行的深度依赖探测阻塞后续
+组件。应用端口开始监听后 `start` 即成功返回；数据库、Redis、MinIO 和 worker 的深度探测
+只在执行 `status` 时按需运行，不占用 supervisor，也不会关闭仍在运行的进程。只有托管
+子进程真实退出或收到明确的 `stop`/终止信号才关闭整组 runtime。
+启动器会保存不含凭据的依赖目标指纹；如果 `status` 的临时环境覆盖指向另一套数据库、
+Redis、MinIO 或监听地址，它会显示 `configuration.runtime: unavailable` 并拒绝误探测。
+因此使用一次性环境变量启动时，后续 `status` 也应提供相同的目标配置。
 
 容器或 systemd 可使用 `start --foreground`，由外层 service manager 管理 supervisor。
 生产 secret manager 注入值优先于 `.env` 和生成文件。若 `DATABASE_URL` 是 Neon pooled

@@ -36,9 +36,9 @@ READINESS_CHECKS: tuple[str, ...] = (
 # ``ping`` and ``active_queues`` each wait up to this value.  A multi-worker
 # cluster can legitimately need the full broadcast window, so the outer hard
 # deadline must leave room for both inspections plus client setup.
-_WORKER_INSPECT_TIMEOUT_SECONDS = 1.0
-_WORKER_TOTAL_TIMEOUT_SECONDS = 5.0
-
+_WORKER_INSPECT_TIMEOUT_SECONDS = 5.0
+_WORKER_TOTAL_TIMEOUT_SECONDS = 20.0
+_WORKER_MAX_TIMEOUT_SECONDS = 25.0
 _REQUIRED_WORKER_QUEUES = frozenset({"ingest", "maintenance"})
 
 
@@ -198,7 +198,9 @@ def probe_mcp_worker(
 
     callback = inspector or _inspect_worker
     try:
-        budget = max(0.01, min(float(timeout_seconds), 5.0))
+        budget = max(
+            0.01, min(float(timeout_seconds), _WORKER_MAX_TIMEOUT_SECONDS)
+        )
     except (TypeError, ValueError):
         return False
     result: dict[str, bool] = {}

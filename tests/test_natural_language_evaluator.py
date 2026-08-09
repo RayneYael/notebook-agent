@@ -361,6 +361,34 @@ async def test_evaluator_teardown_timeout_still_attempts_grant_revoke(
 
 
 @pytest.mark.asyncio
+async def test_evaluator_teardown_stops_runtime_in_the_entering_task(tmp_path):
+    import asyncio
+
+    caller = asyncio.current_task()
+    revoked: list[str] = []
+
+    class Runtime:
+        async def stop(self):
+            assert asyncio.current_task() is caller
+
+    class Grants:
+        def revoke(self, grant_id):
+            revoked.append(grant_id)
+
+    evaluator = LiveEvaluator(
+        load_catalog(), Settings(), EvalConfig(True, 1, tmp_path, 1, None, 30)
+    )
+    evaluator.runtime = Runtime()
+    evaluator.grants = Grants()
+    evaluator.grant_id = "grant-1"
+
+    await evaluator.__aexit__(None, None, None)
+
+    assert revoked == ["grant-1"]
+    assert evaluator.runtime is None and evaluator.grant_id is None
+
+
+@pytest.mark.asyncio
 async def test_attempt_does_not_swallow_async_cancellation(tmp_path):
     from evals.natural_language.fixtures import FixtureState
 

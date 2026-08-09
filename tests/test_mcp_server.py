@@ -773,6 +773,13 @@ def test_mutation_readiness_is_bounded_and_full_profile_withholds_mutations():
 
 
 def test_worker_readiness_present_absent_error_and_timeout_are_bounded():
+    import app.mcp_readiness as readiness
+
+    assert readiness._WORKER_INSPECT_TIMEOUT_SECONDS >= 5
+    assert (
+        readiness._WORKER_TOTAL_TIMEOUT_SECONDS
+        > readiness._WORKER_INSPECT_TIMEOUT_SECONDS * 2
+    )
     settings = Settings()
     assert probe_mcp_worker(settings, inspector=lambda _: True, timeout_seconds=0.1)
     assert not probe_mcp_worker(settings, inspector=lambda _: False, timeout_seconds=0.1)
@@ -792,6 +799,7 @@ def test_worker_readiness_present_absent_error_and_timeout_are_bounded():
 
 
 def test_celery_worker_inspection_requires_pong_and_mutation_queues(monkeypatch):
+    import app.mcp_readiness as readiness
     import app.ingest.tasks as tasks
 
     class Inspector:
@@ -813,7 +821,7 @@ def test_celery_worker_inspection_requires_pong_and_mutation_queues(monkeypatch)
             self.inspector = inspector
 
         def inspect(self, *, timeout):
-            assert timeout <= 1.0
+            assert timeout == readiness._WORKER_INSPECT_TIMEOUT_SECONDS
             return self.inspector
 
     class App:
