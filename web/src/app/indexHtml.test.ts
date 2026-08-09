@@ -49,6 +49,16 @@ describe("Web document shell", () => {
     expect(css).not.toMatch(/\.demo-reset\s*\{[^}]*opacity:\s*0;/);
   });
 
+  it("uses a moderate login exit transition with a reduced-motion fallback", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+    expect(css).toMatch(/\.login-card\s*\{[^}]*transition:[^;}]*420ms/);
+    expect(css).toMatch(/\.login-page--leaving \.login-card\s*\{[^}]*opacity:\s*0;[^}]*transform:/);
+    expect(css).toMatch(
+      /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.login-card\s*\{[^}]*transition-duration:\s*80ms\s*!important;/,
+    );
+  });
+
   it("keeps frequent subtitle controls at a mobile-safe touch size", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 

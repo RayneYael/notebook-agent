@@ -94,6 +94,7 @@ function LoginRoute({ activateSession }: { activateSession: (session: SessionInf
   const navigate = useNavigate();
   return (
     <LoginPage
+      directDemoLogin={import.meta.env.VITE_LOCAL_DEMO_DIRECT_LOGIN === "true"}
       onAuthenticated={(session) => {
         activateSession(session);
         navigate("/library", { replace: true });

@@ -1,5 +1,5 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useNavigate } from "react-router";
 
@@ -37,7 +37,11 @@ interface LoginPageProps {
   getStatus?: (publicId: string, browserSecret: string) => Promise<ChallengeStatus>;
   exchangeSession?: (publicId: string, browserSecret: string) => Promise<SessionInfo>;
   onAuthenticated?: (session: SessionInfo) => void;
+  directDemoLogin?: boolean;
 }
+
+const DEMO_LOGIN_TRANSITION_MS = 420;
+const REDUCED_MOTION_TRANSITION_MS = 80;
 
 export function LoginPage({
   loadCapabilities = getCapabilities,
@@ -45,12 +49,16 @@ export function LoginPage({
   getStatus = getChallengeStatus,
   exchangeSession = exchangeChallenge,
   onAuthenticated,
+  directDemoLogin = false,
 }: LoginPageProps) {
   const navigate = useNavigate();
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
+  const [demoLoginChannel, setDemoLoginChannel] = useState<LoginChannel | null>(null);
+  const demoLoginTimer = useRef<number | null>(null);
   const capabilities = useQuery({
     queryKey: ["capabilities"],
     queryFn: loadCapabilities,
+    enabled: !directDemoLogin,
     retry: false,
     staleTime: 5 * 60_000,
   });
@@ -77,12 +85,39 @@ export function LoginPage({
     if (status.data?.status === "approved" && exchange.isIdle) exchange.mutate();
   }, [status.data?.status, exchange]);
 
+  useEffect(() => () => {
+    if (demoLoginTimer.current !== null) window.clearTimeout(demoLoginTimer.current);
+  }, []);
+
   const loginFailed = mutation.isError || status.isError || exchange.isError;
-  const telegramAvailability = channelAvailability(capabilities, "telegram");
-  const wechatAvailability = channelAvailability(capabilities, "wechat");
+  const telegramAvailability = directDemoLogin ? "available" : channelAvailability(capabilities, "telegram");
+  const wechatAvailability = directDemoLogin ? "available" : channelAvailability(capabilities, "wechat");
 
   function startChannelLogin(channel: LoginChannel) {
-    if (channelAvailability(capabilities, channel) !== "available" || mutation.isPending) return;
+    if (
+      (!directDemoLogin && channelAvailability(capabilities, channel) !== "available")
+      || mutation.isPending
+      || demoLoginChannel !== null
+    ) return;
+    if (directDemoLogin) {
+      setDemoLoginChannel(channel);
+      const reduceMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+      demoLoginTimer.current = window.setTimeout(
+        () => {
+          if (onAuthenticated) {
+            onAuthenticated({
+              authenticated: true,
+              login_channel: channel,
+              expires_at: new Date(Date.now() + 8 * 60 * 60_000).toISOString(),
+            });
+          } else {
+            navigate("/library", { replace: true });
+          }
+        },
+        reduceMotion ? REDUCED_MOTION_TRANSITION_MS : DEMO_LOGIN_TRANSITION_MS,
+      );
+      return;
+    }
     mutation.mutate(channel);
   }
 
@@ -93,7 +128,10 @@ export function LoginPage({
   }
 
   return (
-    <main className="login-page">
+    <main
+      className={`login-page${demoLoginChannel ? " login-page--leaving" : ""}`}
+      aria-busy={demoLoginChannel ? true : undefined}
+    >
       <div className="paper-glow" aria-hidden="true" />
       <section className="login-card" aria-labelledby="login-title">
         <a className="wordmark" href="/" aria-label="Notebook Agent 首页">
@@ -133,9 +171,11 @@ export function LoginPage({
                 icon={<WechatBrandIcon />}
                 iconClassName="login-method__icon--wechat"
                 title="微信"
-                status={channelStatusLabel(wechatAvailability, mutation.isPending && mutation.variables === "wechat")}
+                status={demoLoginChannel === "wechat"
+                  ? "正在进入资料库"
+                  : channelStatusLabel(wechatAvailability, mutation.isPending && mutation.variables === "wechat")}
                 statusTone={channelStatusTone(wechatAvailability)}
-                disabled={wechatAvailability !== "available" || mutation.isPending}
+                disabled={wechatAvailability !== "available" || mutation.isPending || demoLoginChannel !== null}
                 onClick={() => startChannelLogin("wechat")}
               />
               <LoginMethodOption
@@ -143,13 +183,15 @@ export function LoginPage({
                 icon={<TelegramBrandIcon />}
                 iconClassName="login-method__icon--telegram"
                 title="Telegram"
-                status={channelStatusLabel(telegramAvailability, mutation.isPending && mutation.variables === "telegram")}
+                status={demoLoginChannel === "telegram"
+                  ? "正在进入资料库"
+                  : channelStatusLabel(telegramAvailability, mutation.isPending && mutation.variables === "telegram")}
                 statusTone={channelStatusTone(telegramAvailability)}
-                disabled={telegramAvailability !== "available" || mutation.isPending}
+                disabled={telegramAvailability !== "available" || mutation.isPending || demoLoginChannel !== null}
                 onClick={() => startChannelLogin("telegram")}
               />
             </div>
-            {capabilities.isError ? (
+            {!directDemoLogin && capabilities.isError ? (
               <div className="login-capability-error">
                 <p className="inline-error" role="alert">登录方式暂时无法加载，请检查网络后重试。</p>
                 <button
@@ -162,7 +204,7 @@ export function LoginPage({
                 </button>
               </div>
             ) : null}
-            {capabilities.isPending ? (
+            {!directDemoLogin && capabilities.isPending ? (
               <p className="login-capability-note" aria-live="polite">正在加载登录方式…</p>
             ) : null}
           </div>

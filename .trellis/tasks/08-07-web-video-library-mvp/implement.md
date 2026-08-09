@@ -111,6 +111,22 @@
 - [x] Run the final frontend suite: 12 test files / 42 tests, typecheck, lint, build, and OpenAPI stale check all pass.
 - [x] Preserve the overall task in `review`; PostgreSQL migration and live Telegram/WeChat acceptance gaps above remain unchanged and are not implied complete by this UI closeout.
 
+## Local demo-login closeout (2026-08-09)
+
+- [x] RED: prove a demo-channel click bypasses the unavailable challenge API,
+  shows an exit state, and opens the library.
+- [x] RED: prove the selected demo channel is handed to the protected app as an
+  in-memory session without browser-storage persistence.
+- [x] GREEN: gate the shortcut behind the compile-time-only
+  `VITE_LOCAL_DEMO_DIRECT_LOGIN=true` flag; preserve production authentication
+  when the flag is absent.
+- [x] RED/GREEN: keep both demo methods usable without requesting backend
+  capabilities; retain server-controlled channel availability in production.
+- [x] GREEN: add a moderate 420ms card exit transition and an 80ms
+  reduced-motion path.
+- [x] Rebuild the owned 5175 preview with the demo flag, run browser smoke for
+  both channel rows, and complete final frontend validation.
+
 ## Validation Commands
 
 ```powershell

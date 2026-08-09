@@ -4,7 +4,8 @@
   retry, or stop the owned full-suite, build, migration, server, or browser
   processes.
 - Integration repository:
-  `C:\Users\raede\.codex\worktrees\web-mvp-final`.
+  `C:\Users\raede\.codex\worktrees\frontend-delivery-integration` on
+  `codex/frontend-delivery-integration`.
 - Full Python verification uses the project virtual environment with an
   explicit port-1 PostgreSQL URL (`connect_timeout=1`) and a dummy OpenAI key.
   Database-gated tests therefore skip explicitly instead of hanging or
@@ -16,10 +17,38 @@
   SQL. Docker, PostgreSQL executables, and a dedicated database are absent on
   this host, so a real upgrade/downgrade/upgrade remains an explicit CI or test
   database gate.
-- Browser smoke used temporary loopback fixtures owned by this task. All owned
-  browser and server processes were stopped after evidence capture.
+- Earlier browser smoke used temporary loopback fixtures that were stopped
+  after evidence capture. The newer user-review preview is documented in the
+  local demo-login section below and intentionally remains on port 5175.
 - Stop conditions: verification complete; an unrecoverable missing runtime; or
   the same failure three times under the same hypothesis.
+
+## Local demo-login closeout (2026-08-09)
+
+- The login screen keeps the production channel challenge flow by default.
+  Only a build with `VITE_LOCAL_DEMO_DIRECT_LOGIN=true` enables the local demo
+  shortcut requested while the real auth backend is unavailable.
+- Demo mode does not request the backend capabilities endpoint; both channel
+  rows are immediately usable. Production mode still derives availability
+  exclusively from server capabilities.
+- In demo mode, selecting WeChat or Telegram creates an in-memory React Query
+  session for the selected channel, waits for a 420ms card exit transition
+  (80ms under reduced motion), and opens `/library`. It writes no auth data to
+  cookies, `localStorage`, or `sessionStorage`.
+- `/root` owns the local authenticated fixture and static preview on port 5175.
+  The fixture is
+  `C:\Users\raede\Desktop\dev\hackathon1\.runtime\authenticated_demo_server.py`;
+  stdout/stderr logs are under this worktree's `.runtime/` directory. Only this
+  owner may rebuild `web/dist`, restart the listener, or perform browser smoke.
+- TDD evidence: the direct route and transition tests failed first against the
+  previous implementation; after the minimal implementation, LoginPage,
+  document-shell, and private-cache focused suites pass (23 tests).
+- Final frontend evidence: OpenAPI stale check, ESLint, TypeScript, the default
+  production build, and the demo-flag build all pass; Vitest reports 13 files
+  and 71 tests passed. Browser smoke on the owned 5175 fixture verified both
+  Telegram and WeChat transitions, the `/library` destination and heading, no
+  horizontal overflow, and no console warning/error. The verified Library tab
+  remains open for user review.
 
 ## Current integration evidence
 
@@ -62,8 +91,9 @@
   run, deliberate duplication between the two retry admission surfaces, and
   Windows file-log privacy depending on the deployment directory's NTFS ACL.
 - One stale PostgreSQL test process tree left by a completed agent was detected
-  before the final suite and stopped by exact PID. No owned pytest, browser, or
-  server process remains after validation.
+  before the final suite and stopped by exact PID. No owned pytest or browser
+  automation remains after validation; the reviewed 5175 preview intentionally
+  remains available for the user.
 
 ## Delivery status
 

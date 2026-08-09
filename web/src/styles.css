@@ -82,7 +82,8 @@ h2 { line-height: 1.1; }
 .paper-glow::before, .paper-glow::after { content: ""; position: absolute; border: 1px solid rgba(49, 94, 83, 0.18); border-radius: 48% 52% 61% 39%; }
 .paper-glow::before { inset: 12%; transform: rotate(17deg); }
 .paper-glow::after { inset: 27%; transform: rotate(-9deg); }
-.login-card { position: relative; z-index: 2; width: min(100%, 42rem); margin-inline: auto; padding: clamp(1.4rem, 5vw, 3.25rem); border: 1px solid rgba(76, 67, 54, 0.16); border-radius: 1.75rem 1.75rem 1.75rem 0.5rem; background: rgba(251, 248, 241, 0.96); box-shadow: var(--shadow); }
+.login-card { position: relative; z-index: 2; width: min(100%, 42rem); margin-inline: auto; padding: clamp(1.4rem, 5vw, 3.25rem); border: 1px solid rgba(76, 67, 54, 0.16); border-radius: 1.75rem 1.75rem 1.75rem 0.5rem; background: rgba(251, 248, 241, 0.96); box-shadow: var(--shadow); transition: opacity 420ms ease, transform 420ms cubic-bezier(0.22, 0.72, 0.24, 1), filter 420ms ease; }
+.login-page--leaving .login-card { opacity: 0; transform: translateY(-0.75rem) scale(0.985); filter: blur(2px); pointer-events: none; }
 .login-card::before {
   content: "";
   position: absolute;
@@ -408,6 +409,8 @@ h2 { line-height: 1.1; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; animation-iteration-count: 1 !important; transition-duration: 0.01ms !important; }
+  .login-card { transition-duration: 80ms !important; }
+  .login-page--leaving .login-card { transform: none; filter: none; }
 }
 
 /* Public showcase — a precise editorial instrument, intentionally separate from the private app shell. */
