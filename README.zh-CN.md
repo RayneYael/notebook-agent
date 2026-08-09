@@ -98,6 +98,8 @@ URL → 元数据/字幕 → 内容校验 → 原文归档 → 语义切分 → 
 
 - Python 3.11+
 - Docker 与 Docker Compose
+- 一键生命周期启动器支持 Linux/macOS（依赖 `fcntl`、`ps`、signal 与进程组）；Windows
+  继续使用文档中的直接启动命令
 - 可用的 Agent model API 与智谱 Embedding API
 - 如需真实聊天渠道：LangBot 4.10.6 以及 Telegram / 微信账号配置
 
@@ -111,11 +113,25 @@ python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev]'
 
-cp .env.example .env
-# 先在 docs/environment-configuration.md 选择运行场景，再填写该场景需要的值
+# 交互模式只询问 Embedding 与 Agent provider key；本地数据库和对象存储密码
+# 会随机生成到被 git 忽略且权限为 0600 的 .env.runtime。
+./scripts/notebook-agent init --profile read
+./scripts/notebook-agent start
+```
 
-docker compose up -d
-alembic upgrade head
+`read` 只启动 Streamable HTTP MCP；`full` 额外启动 Redis、MinIO、一个同时监听
+`ingest,maintenance` 的 worker 和唯一的 Beat；`langbot` 使用完整后台运行时并启动私有
+LangBot gateway。非交互部署应在执行 `init` 前通过进程环境提供 `ZHIPU_API_KEY`；模型
+provider 需要时再提供 `AGENT_API_KEY` 或该 provider 的原生凭据变量。已有进程环境和用户
+维护的 `.env` 优先于生成配置。
+
+常用生命周期命令只管理本启动器拥有的应用进程，不删除 Compose volume，也不停止外部服务：
+
+```bash
+./scripts/notebook-agent status
+./scripts/notebook-agent logs mcp
+./scripts/notebook-agent stop
+./scripts/notebook-agent restart
 ```
 
 ### 3. 启动核心 MCP 服务（无需 LangBot）
@@ -142,10 +158,15 @@ MCP_TOKEN='<raw-token>' \
 
 ### 4. 启动后台任务与 Gateway
 
+一键启动的 `full` / `langbot` profile 会在同一个 supervisor 下启动 worker 与唯一的
+Beat，但仍保持两个独立进程，避免隐藏 Beat 故障或重复调度。下面的直接命令继续供高级
+进程管理器使用。
+
 首次部署时先保持 `.env` 中的 `AGENT_SAVE_ENABLED=false`，启动 ingestion worker：
 
 ```bash
 .venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest,maintenance
+.venv/bin/celery -A app.ingest.tasks.celery_app beat
 ```
 
 Worker 与 beat 也是完成通知恢复路径的一部分。ingestion 终态与 completion event 在同一

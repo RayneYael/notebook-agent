@@ -22,6 +22,51 @@
 | 已安装 LangBot plugin 目录下的私有 `.env` | bridge 的 `CHANNEL_GATEWAY_SECRET`、URL、bot UUID 映射 | 不放 Agent provider key 或数据库 DSN |
 | reverse proxy / secret manager | 公网 TLS、访问日志策略、生产 secret | 不把 URL capability 记录到普通 access log |
 
+## 一键配置与启动（推荐）
+
+安装 Python 依赖后，部署者不需要复制完整 `.env.example`。选择一个运行模式即可：
+
+```bash
+./scripts/notebook-agent init --profile read     # 只读 HTTP MCP
+./scripts/notebook-agent init --profile full     # MCP + worker + Beat
+./scripts/notebook-agent init --profile langbot  # 后台任务 + LangBot gateway
+./scripts/notebook-agent start
+```
+
+交互式 `init` 只询问 embedding 和 Agent provider key；本地 PostgreSQL、MinIO 和
+LangBot gateway secret 使用安全随机值。结果写入 gitignored 的 `.env.runtime`，权限为
+`0600`，且只包含 secret 和 profile 选择，不复制后面的默认值目录。改变 profile 时使用
+`init --force --profile ...`；已有生成的数据库 secret 会保留，避免使现有 volume 失配。
+
+非交互模式在调用 `init` 前至少设置 `ZHIPU_API_KEY`；模型凭据可以使用
+`AGENT_API_KEY`，也可以继续使用 PydanticAI provider 原生环境变量。启动器按以下优先级
+解析配置：
+
+```text
+调用进程环境 > 用户维护的根 .env > 生成的 .env.runtime > app.config 默认值
+```
+
+因此生产环境可以一直由 secret manager 注入变量；启动器不会把外部环境反写到文件。
+`DATABASE_URL`、远程 `REDIS_URL` 或远程 `MINIO_ENDPOINT_URL` 会使对应服务被视为外部
+依赖，不会由生命周期命令启动或停止。Neon runtime URL 若使用 pooler，必须另行提供
+operator-only 的 `MIGRATION_DATABASE_URL`（direct host）；该值只在迁移子进程中临时覆盖
+`DATABASE_URL`，不会输出到状态或日志。
+
+```bash
+./scripts/notebook-agent status
+./scripts/notebook-agent logs [supervisor|mcp|worker|beat|gateway]
+./scripts/notebook-agent stop
+./scripts/notebook-agent restart
+```
+
+`start` 默认后台运行；`start --foreground` 适合容器或外部 service manager。`stop` 只向
+状态文件中记录且命令身份匹配的 supervisor 发信号，不按进程名或端口批量终止。worker 与
+Beat 对部署者是一个生命周期，但仍为独立 OS 进程，并且一个 supervisor 只创建一个 Beat。
+启动器默认拒绝非 loopback 的 `MCP_HOST`；只有已经配置 TLS reverse proxy 并明确接受绑定
+边界时，才同时设置 `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK=true`。
+
+`.env.example` 仍是完整高级变量参考，下面的手动 profile 片段也继续受支持。
+
 ## 共同准备
 
 ```bash
@@ -279,6 +324,7 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 | 变量 | 消费者 | 默认值/示例 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
 | `DATABASE_URL` | app、CLI、worker、Alembic | 未设置；优先于 `POSTGRES_*` | 托管/外部 PostgreSQL | 是，通常含密码 | app、worker、CLI 新进程 |
+| `MIGRATION_DATABASE_URL` | 一键启动器的 Alembic 子进程 | 未设置；Neon pooled runtime 时必须为 direct URL | 仅一键迁移 | 是，通常含密码 | 下次启动/迁移 |
 | `POSTGRES_USER` | Compose、URL fallback | `postgres` | 本地 Compose | 否 | PostgreSQL 与所有 DB client |
 | `POSTGRES_PASSWORD` | Compose、URL fallback | `changeme` 仅占位 | 本地 Compose 必填 | 是 | PostgreSQL 与所有 DB client |
 | `POSTGRES_DB` | Compose、URL fallback | `kb` | 本地 Compose | 否 | PostgreSQL 与所有 DB client |
@@ -396,6 +442,7 @@ the next Beat tick performs the actual send. Do not re-run ingestion or consume 
 | 变量 | 消费者 | 默认值 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
 | `MCP_HOST` | HTTP server | `127.0.0.1` | Streamable HTTP | 否 | MCP server |
+| `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK` | 一键启动器 | `false` | 已有 TLS proxy 且明确允许 MCP 非 loopback 绑定 | 否 | 下次一键启动 |
 | `MCP_PORT` | HTTP server | `8000` | Streamable HTTP | 否 | MCP server |
 | `MCP_PATH` | HTTP server/proxy | `/mcp` | Streamable HTTP | 否 | MCP server、proxy |
 | `MCP_URL_TOKEN_MODE` | HTTP auth middleware | `false` | URL-only client 才开启 | 否 | MCP server |

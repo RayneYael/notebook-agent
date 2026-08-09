@@ -110,6 +110,33 @@ embedding；模型 provider 通过标准环境变量取得同一 bundle。两个
 python3.11 -m venv .venv
 .venv/bin/python -m pip install --upgrade pip
 .venv/bin/python -m pip install -e '.[dev]'
+```
+
+通用单机部署优先使用统一入口，而不是复制完整配置并分别打开多个终端：
+
+```bash
+./scripts/notebook-agent init --profile read     # 或 full / langbot
+./scripts/notebook-agent start
+./scripts/notebook-agent status
+```
+
+启动器生成最小 `.env.runtime`、按 profile 启动必要的本地 Compose service、执行迁移，并在
+同一 supervisor 下管理 MCP/Gateway、一个双队列 Celery worker 和唯一的 Celery Beat。
+这些组件仍为独立进程。`stop` 只停止启动器拥有且身份匹配的应用进程；持久卷和外部数据库、
+Redis、MinIO 不会被停止或删除。日志位于 `.runtime/deployment/logs/`，通过
+`./scripts/notebook-agent logs <component>` 查看。
+
+容器或 systemd 可使用 `start --foreground`，由外层 service manager 管理 supervisor。
+生产 secret manager 注入值优先于 `.env` 和生成文件。若 `DATABASE_URL` 是 Neon pooled
+runtime URL，还必须向启动命令提供 direct `MIGRATION_DATABASE_URL`；启动器拒绝使用 pooled
+URL 执行 Alembic。主机安装、TLS proxy、systemd hardening 和 firewall 仍由平台部署流程负责。
+该 lifecycle launcher 面向 Linux/macOS；Windows 环境继续使用下面的直接 Python/Celery
+命令。组件日志按 `NOTEBOOK_AGENT_LOG_MAX_BYTES` 与
+`NOTEBOOK_AGENT_LOG_BACKUP_COUNT` 轮转。
+
+需要完全手工管理进程时，可以继续复制完整参考：
+
+```bash
 cp .env.example .env
 ```
 

@@ -1,0 +1,32 @@
+{
+  "id": "simplify-deployment",
+  "name": "simplify-deployment",
+  "title": "简化部署与一键启动",
+  "description": "Add a profile-aware one-command deployment entry point that generates minimal configuration and manages the required MCP/gateway, Celery worker, and Beat lifecycle safely.",
+  "status": "in_progress",
+  "dev_type": null,
+  "scope": "backend,deployment",
+  "package": null,
+  "priority": "P2",
+  "creator": "lane",
+  "assignee": "lane",
+  "createdAt": "2026-08-09",
+  "completedAt": null,
+  "branch": "codex/simplify-deployment",
+  "base_branch": "dev",
+  "worktree_path": "/private/tmp/notebook-agent-simplify-deployment",
+  "commit": null,
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "app/deployment.py",
+    "scripts/notebook-agent",
+    "tests/test_deployment_cli.py",
+    "docs/deployment.md",
+    "docs/environment-configuration.md"
+  ],
+  "notes": "Implemented and regression-tested in an isolated worktree created from dev commit 6d8d641cfa00d1ff587c4ca002f8457a22933ffb.",
+  "meta": {}
+}
