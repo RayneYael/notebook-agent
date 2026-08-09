@@ -92,6 +92,31 @@ def _env_port(env: Mapping[str, str], name: str, default: int) -> int:
     return port
 
 
+def _listener_targets(
+    profile: str, env: Mapping[str, str]
+) -> tuple[tuple[str, str, int], ...]:
+    if profile not in PROFILES:
+        raise DeploymentError(f"unknown profile: {profile}")
+    targets: list[tuple[str, str, int]] = []
+    if profile in {"read", "full"}:
+        targets.append(
+            (
+                "mcp",
+                env.get("MCP_HOST", "127.0.0.1"),
+                _env_port(env, "MCP_PORT", 8000),
+            )
+        )
+    if profile in {"full", "langbot"}:
+        targets.append(
+            (
+                "gateway",
+                env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1"),
+                _env_port(env, "CHANNEL_GATEWAY_PORT", 8765),
+            )
+        )
+    return tuple(targets)
+
+
 def build_plan(profile: str, env: Mapping[str, str]) -> RuntimePlan:
     if profile not in PROFILES:
         raise DeploymentError(f"unknown profile: {profile}")
@@ -124,7 +149,7 @@ def build_plan(profile: str, env: Mapping[str, str]) -> RuntimePlan:
     if profile == "read":
         components = ("mcp",)
     elif profile == "full":
-        components = ("worker", "beat", "mcp")
+        components = ("worker", "beat", "mcp", "gateway")
     else:
         components = ("worker", "beat", "gateway")
     return RuntimePlan(profile, tuple(services), components)
@@ -167,7 +192,6 @@ def required_variables(profile: str, env: Mapping[str, str]) -> tuple[str, ...]:
         required.append("POSTGRES_PASSWORD")
     if profile in {"full", "langbot"}:
         required.extend(("MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"))
-    if profile == "langbot":
         required.append("CHANNEL_GATEWAY_SECRET")
     return tuple(name for name in required if not env.get(name))
 
@@ -217,7 +241,6 @@ def initialize(profile: str, *, force: bool = False) -> None:
         preserved = {"ZHIPU_API_KEY", "AGENT_API_KEY", "POSTGRES_PASSWORD"}
         if profile in {"full", "langbot"}:
             preserved.update({"MINIO_ROOT_USER", "MINIO_ROOT_PASSWORD"})
-        if profile == "langbot":
             preserved.add("CHANNEL_GATEWAY_SECRET")
         values.update(
             {key: old_managed[key] for key in preserved if key in old_managed}
@@ -236,7 +259,9 @@ def initialize(profile: str, *, force: bool = False) -> None:
                 values["MINIO_ROOT_USER"] = "notebook-agent"
             if not inherited.get("MINIO_ROOT_PASSWORD"):
                 values["MINIO_ROOT_PASSWORD"] = secrets.token_urlsafe(32)
-    if profile == "langbot" and not inherited.get("CHANNEL_GATEWAY_SECRET"):
+    if profile in {"full", "langbot"} and not inherited.get(
+        "CHANNEL_GATEWAY_SECRET"
+    ):
         values["CHANNEL_GATEWAY_SECRET"] = secrets.token_urlsafe(32)
 
     prompts = [("ZHIPU_API_KEY", "Embedding provider API key: ")]
@@ -390,16 +415,10 @@ def _health_target_fingerprint(
             ),
             "bucket": env.get("MINIO_BUCKET", "kb-raw"),
         }
-    if profile in {"read", "full"}:
-        targets["listener"] = {
-            "host": env.get("MCP_HOST", "127.0.0.1").lower(),
-            "port": env.get("MCP_PORT", "8000"),
-        }
-    else:
-        targets["listener"] = {
-            "host": env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1").lower(),
-            "port": env.get("CHANNEL_GATEWAY_PORT", "8765"),
-        }
+    targets["listeners"] = [
+        {"name": name, "host": host.lower(), "port": port}
+        for name, host, port in _listener_targets(profile, env)
+    ]
     encoded = json.dumps(targets, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(encoded).hexdigest()
 
@@ -473,7 +492,12 @@ def _prepare(profile: str, env: Mapping[str, str]) -> None:
     if missing:
         raise DeploymentError("missing required environment variables: " + ", ".join(missing))
     plan = build_plan(profile, env)
-    if profile == "langbot":
+    listener_targets = _listener_targets(profile, env)
+    if len({port for _name, _host, port in listener_targets}) != len(
+        listener_targets
+    ):
+        raise DeploymentError("profile listeners must use distinct ports")
+    if "gateway" in plan.components:
         if env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1") not in {
             "localhost",
             "127.0.0.1",
@@ -484,7 +508,6 @@ def _prepare(profile: str, env: Mapping[str, str]) -> None:
             raise DeploymentError(
                 "CHANNEL_GATEWAY_SECRET must be at least 32 characters"
             )
-        _env_port(env, "CHANNEL_GATEWAY_PORT", 8765)
     if "mcp" in plan.components:
         mcp_host = env.get("MCP_HOST", "127.0.0.1").lower()
         acknowledged = env.get("NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK", "").lower()
@@ -1064,23 +1087,14 @@ def _wait_for_listener(
     children: Mapping[str, subprocess.Popen],
     should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
-    if profile in {"read", "full"}:
-        host = env.get("MCP_HOST", "127.0.0.1")
-        port_value = env.get("MCP_PORT", "8000")
-    else:
-        host = env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1")
-        port_value = env.get("CHANNEL_GATEWAY_PORT", "8765")
-    try:
-        port = int(port_value)
-    except (TypeError, ValueError) as exc:
-        raise DeploymentError("application listener port must be an integer") from exc
+    targets = _listener_targets(profile, env)
     deadline = time.monotonic() + LISTENER_WAIT_TIMEOUT_SECONDS
     while time.monotonic() < deadline:
         if should_stop():
             raise DeploymentError("runtime startup was interrupted")
         if not _children_alive(children):
             raise DeploymentError("a required application process exited during startup")
-        if _port_ready(host, port):
+        if all(_port_ready(host, port) for _name, host, port in targets):
             return
         time.sleep(0.1)
     raise DeploymentError("application listener did not become ready")
@@ -1123,7 +1137,10 @@ def supervise(profile: str, run_id: str) -> int:
             for name, child in children.items()
         }
         checks.update({f"compose.{name}": True for name in managed_services})
-        checks["listener"] = True
+        listener_targets = _listener_targets(profile, env)
+        for name, _host, _port in listener_targets:
+            key = "listener" if len(listener_targets) == 1 else f"listener.{name}"
+            checks[key] = True
         _write_state(
             run_id, profile, children, checks, managed_services, env
         )
@@ -1253,13 +1270,10 @@ def status() -> int:
                 for name, ready in _compose_health(managed_services, env).items()
             }
         )
-        if profile in {"read", "full"}:
-            host = env.get("MCP_HOST", "127.0.0.1")
-            port = _env_port(env, "MCP_PORT", 8000)
-        else:
-            host = env.get("CHANNEL_GATEWAY_HOST", "127.0.0.1")
-            port = _env_port(env, "CHANNEL_GATEWAY_PORT", 8765)
-        checks["listener"] = _port_ready(host, port)
+        listener_targets = _listener_targets(profile, env)
+        for name, host, port in listener_targets:
+            key = "listener" if len(listener_targets) == 1 else f"listener.{name}"
+            checks[key] = _port_ready(host, port)
     for name, healthy in sorted(checks.items()):
         print(f"  {name}: {'ready' if healthy else 'unavailable'}")
     return 0 if checks and all(checks.values()) else 1

@@ -15,12 +15,12 @@ def test_read_profile_needs_only_postgres_and_mcp():
     assert plan.components == ("mcp",)
 
 
-def test_full_profile_uses_one_worker_and_one_beat():
+def test_full_profile_includes_mcp_gateway_one_worker_and_one_beat():
     plan = deployment.build_plan("full", {})
     assert plan.compose_services == ("postgres", "redis", "minio")
-    assert plan.components == ("worker", "beat", "mcp")
+    assert plan.components == ("worker", "beat", "mcp", "gateway")
     commands = deployment._component_commands("full")
-    assert tuple(commands) == ("worker", "beat", "mcp")
+    assert tuple(commands) == ("worker", "beat", "mcp", "gateway")
     assert "--queues=ingest,maintenance" in commands["worker"]
     assert "--concurrency=1" in commands["worker"]
     assert "--schedule=.runtime/deployment/celerybeat-schedule" in commands["beat"]
@@ -147,6 +147,7 @@ def test_force_reprofile_preserves_generated_database_secret(
         "MINIO_ROOT_PASSWORD",
         "MINIO_ENDPOINT_URL",
         "MINIO_API_PORT",
+        "CHANNEL_GATEWAY_SECRET",
     ):
         monkeypatch.delenv(name, raising=False)
     deployment.initialize("full", force=True)
@@ -156,6 +157,13 @@ def test_force_reprofile_preserves_generated_database_secret(
     assert values["POSTGRES_PASSWORD"] == "stable-password"
     assert values["NOTEBOOK_AGENT_PROFILE"] == "full"
     assert values["MINIO_ROOT_PASSWORD"]
+    assert len(values["CHANNEL_GATEWAY_SECRET"]) >= 32
+    gateway_secret = values["CHANNEL_GATEWAY_SECRET"]
+    deployment.initialize("full", force=True)
+    reloaded = deployment.load_environment(
+        {}, managed_path=managed, operator_path=tmp_path / ".env"
+    )
+    assert reloaded["CHANNEL_GATEWAY_SECRET"] == gateway_secret
 
 
 def test_required_variables_are_profile_specific():
@@ -166,6 +174,7 @@ def test_required_variables_are_profile_specific():
     missing = deployment.required_variables("langbot", {})
     assert "MINIO_ROOT_PASSWORD" in missing
     assert "CHANNEL_GATEWAY_SECRET" in missing
+    assert "CHANNEL_GATEWAY_SECRET" in deployment.required_variables("full", {})
 
 
 def test_prepare_refuses_pooled_neon_migration_without_direct_url(monkeypatch):
@@ -254,6 +263,7 @@ def test_prepare_rolls_back_only_new_local_services(monkeypatch):
         "POSTGRES_PASSWORD": "database",
         "MINIO_ROOT_USER": "storage",
         "MINIO_ROOT_PASSWORD": "storage-secret",
+        "CHANNEL_GATEWAY_SECRET": "g" * 32,
     }
     calls = []
     monkeypatch.setattr(deployment, "_running_compose_services", lambda _env: {"postgres"})
@@ -303,6 +313,7 @@ def test_prepare_does_not_create_external_object_bucket(monkeypatch):
         "MINIO_ENDPOINT_URL": "https://objects.example.invalid",
         "MINIO_ROOT_USER": "storage",
         "MINIO_ROOT_PASSWORD": "storage-secret",
+        "CHANNEL_GATEWAY_SECRET": "g" * 32,
         "ZHIPU_API_KEY": "embedding",
     }
     monkeypatch.setattr(
@@ -312,6 +323,73 @@ def test_prepare_does_not_create_external_object_bucket(monkeypatch):
     )
     deployment._prepare("full", env)
     assert not any("RawObjectStore" in " ".join(command) for command in calls)
+
+
+@pytest.mark.parametrize("profile", ["full", "langbot"])
+def test_gateway_profiles_reject_non_loopback_before_side_effects(
+    monkeypatch, profile
+):
+    env = {
+        "DATABASE_URL": "postgresql://role:secret@db.example.invalid/kb",
+        "REDIS_URL": "rediss://redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://objects.example.invalid",
+        "MINIO_ROOT_USER": "storage",
+        "MINIO_ROOT_PASSWORD": "storage-secret",
+        "CHANNEL_GATEWAY_SECRET": "g" * 32,
+        "CHANNEL_GATEWAY_HOST": "0.0.0.0",
+        "ZHIPU_API_KEY": "embedding",
+    }
+    monkeypatch.setattr(
+        deployment,
+        "_run_checked",
+        lambda *_args, **_kwargs: pytest.fail("must validate before side effects"),
+    )
+    with pytest.raises(deployment.DeploymentError, match="loopback"):
+        deployment._prepare(profile, env)
+
+
+@pytest.mark.parametrize("profile", ["full", "langbot"])
+def test_gateway_profiles_reject_short_secret_before_side_effects(
+    monkeypatch, profile
+):
+    env = {
+        "DATABASE_URL": "postgresql://role:secret@db.example.invalid/kb",
+        "REDIS_URL": "rediss://redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://objects.example.invalid",
+        "MINIO_ROOT_USER": "storage",
+        "MINIO_ROOT_PASSWORD": "storage-secret",
+        "CHANNEL_GATEWAY_SECRET": "short",
+        "ZHIPU_API_KEY": "embedding",
+    }
+    monkeypatch.setattr(
+        deployment,
+        "_run_checked",
+        lambda *_args, **_kwargs: pytest.fail("must validate before side effects"),
+    )
+    with pytest.raises(deployment.DeploymentError, match="at least 32"):
+        deployment._prepare(profile, env)
+
+
+def test_full_rejects_listener_port_collision_before_side_effects(monkeypatch):
+    env = {
+        "DATABASE_URL": "postgresql://role:secret@db.example.invalid/kb",
+        "REDIS_URL": "rediss://redis.example.invalid/0",
+        "MINIO_ENDPOINT_URL": "https://objects.example.invalid",
+        "MINIO_ROOT_USER": "storage",
+        "MINIO_ROOT_PASSWORD": "storage-secret",
+        "CHANNEL_GATEWAY_SECRET": "g" * 32,
+        "MCP_PORT": "8765",
+        "CHANNEL_GATEWAY_PORT": "8765",
+        "ZHIPU_API_KEY": "embedding",
+    }
+    monkeypatch.setattr(
+        deployment,
+        "_run_checked",
+        lambda *_args, **_kwargs: pytest.fail("must validate before side effects"),
+    )
+
+    with pytest.raises(deployment.DeploymentError, match="distinct ports"):
+        deployment._prepare("full", env)
 
 
 def test_active_state_requires_matching_supervisor(monkeypatch, tmp_path):
@@ -380,6 +458,49 @@ def test_status_never_prints_environment_values(monkeypatch, capsys):
     assert "process.worker: ready" in output
     assert "dependency.database: ready" in output
     assert "dependency.broker: unavailable" in output
+    assert "listener.mcp: ready" in output
+    assert "listener.gateway: ready" in output
+
+
+@pytest.mark.parametrize(
+    ("profile", "expected_port"), (("read", 8000), ("langbot", 8765))
+)
+def test_single_listener_status_keeps_compatible_label(
+    monkeypatch, capsys, profile, expected_port
+):
+    env = {}
+    monkeypatch.setattr(
+        deployment,
+        "_active_state",
+        lambda: {
+            "profile": profile,
+            "children": {},
+            "managed_services": [],
+            "health_target_fingerprint": deployment._health_target_fingerprint(
+                profile, env
+            ),
+        },
+    )
+    monkeypatch.setattr(deployment, "load_environment", lambda: env)
+    monkeypatch.setattr(deployment, "_database_ready", lambda _env: True)
+    monkeypatch.setattr(
+        deployment,
+        "_full_runtime_checks",
+        lambda _env: {name: True for name in deployment.FULL_DEPENDENCY_NAMES},
+    )
+    monkeypatch.setattr(deployment, "_compose_health", lambda *_args: {})
+    checked_ports = []
+    monkeypatch.setattr(
+        deployment,
+        "_port_ready",
+        lambda _host, port: checked_ports.append(port) or True,
+    )
+
+    assert deployment.status() == 0
+    output = capsys.readouterr().out
+    assert "listener: ready" in output
+    assert "listener.mcp" not in output and "listener.gateway" not in output
+    assert checked_ports == [expected_port]
 
 
 def test_status_refuses_to_probe_a_different_runtime_target(monkeypatch, capsys):
@@ -443,12 +564,20 @@ def test_health_target_fingerprint_excludes_passwords_but_detects_targets():
         **rotated,
         "DATABASE_URL": "postgresql://role:second@other.example.invalid/kb",
     }
+    different_mcp = {**rotated, "MCP_PORT": "9000"}
+    different_gateway = {**rotated, "CHANNEL_GATEWAY_PORT": "9001"}
 
     assert deployment._health_target_fingerprint("full", first) == (
         deployment._health_target_fingerprint("full", rotated)
     )
     assert deployment._health_target_fingerprint("full", rotated) != (
         deployment._health_target_fingerprint("full", different_target)
+    )
+    assert deployment._health_target_fingerprint("full", rotated) != (
+        deployment._health_target_fingerprint("full", different_mcp)
+    )
+    assert deployment._health_target_fingerprint("full", rotated) != (
+        deployment._health_target_fingerprint("full", different_gateway)
     )
 
 
@@ -625,6 +754,19 @@ def test_startup_waits_are_cancellable():
         )
 
 
+def test_full_startup_waits_for_mcp_and_gateway_listeners(monkeypatch):
+    calls = []
+
+    def port_ready(_host, port):
+        calls.append(port)
+        return port == 8000 or calls.count(8765) >= 2
+
+    monkeypatch.setattr(deployment, "_port_ready", port_ready)
+    monkeypatch.setattr(deployment.time, "sleep", lambda _seconds: None)
+    deployment._wait_for_listener("full", {}, {})
+    assert calls == [8000, 8765, 8000, 8765]
+
+
 def test_full_runtime_check_budget_covers_remote_probes(monkeypatch):
     captured = {}
 
@@ -691,6 +833,7 @@ def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_pa
             "worker": ["waits"],
             "beat": ["waits"],
             "mcp": ["fails"],
+            "gateway": ["waits"],
         },
     )
     monkeypatch.setattr(deployment, "_spawn_component", create_child)
@@ -710,10 +853,12 @@ def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_pa
     assert deployment.supervise("full", "run-id") == 7
     assert children[0].terminated is True
     assert children[1].terminated is True
-    assert events[:4] == [
+    assert children[3].terminated is True
+    assert events[:5] == [
         "spawn:worker",
         "spawn:beat",
         "spawn:mcp",
+        "spawn:gateway",
         "listener-ready",
     ]
 

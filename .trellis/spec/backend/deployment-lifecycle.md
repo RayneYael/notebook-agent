@@ -8,9 +8,9 @@ Celery, and Docker Compose commands remain supported for advanced operators.
 
 - `read` starts Streamable HTTP MCP and requires PostgreSQL. It must not require
   or start Redis, MinIO, a Celery worker, or Celery Beat.
-- `full` starts MCP, one Celery worker consuming both `ingest` and
-  `maintenance`, and exactly one Beat scheduler. It requires PostgreSQL, Redis,
-  and object storage.
+- `full` starts MCP, the loopback-only LangBot gateway, one Celery worker
+  consuming both `ingest` and `maintenance`, and exactly one Beat scheduler. It
+  requires PostgreSQL, Redis, object storage, and a channel gateway secret.
 - `langbot` starts the full background runtime and the loopback-only LangBot
   gateway. It does not start the public MCP endpoint by default.
 
@@ -45,8 +45,10 @@ identity before signaling it.
 
 Startup order is dependencies, migration, then every application child in the
 selected profile. Do not place a deep dependency probe between child launches:
-`full` must launch worker, Beat, and MCP as one operation. The selected
-application listener is the only post-launch readiness gate. All pre-start
+`full` must launch worker, Beat, MCP, and gateway as one operation. Every
+selected application listener is a post-launch readiness gate, and a profile
+with multiple listeners must assign them distinct ports so one process cannot
+satisfy another component's socket probe. All pre-start
 checks and subprocesses must have bounded timeouts, and the outer launcher and
 stop budgets must exceed the corresponding listener and cleanup budgets. A
 child exit stops the owned runtime immediately. Dependency probe failures

@@ -29,15 +29,16 @@
 
 ```bash
 ./scripts/notebook-agent init --profile read     # 只读 HTTP MCP
-./scripts/notebook-agent init --profile full     # MCP + worker + Beat
+./scripts/notebook-agent init --profile full     # MCP + LangBot gateway + worker + Beat
 ./scripts/notebook-agent init --profile langbot  # 后台任务 + LangBot gateway
 ./scripts/notebook-agent start
 ```
 
 交互式 `init` 只询问 embedding 和 Agent provider key；本地 PostgreSQL、MinIO 和
-LangBot gateway secret 使用安全随机值。结果写入 gitignored 的 `.env.runtime`，权限为
-`0600`，且只包含 secret 和 profile 选择，不复制后面的默认值目录。改变 profile 时使用
-`init --force --profile ...`；已有生成的数据库 secret 会保留，避免使现有 volume 失配。
+`full` / `langbot` 所需的 LangBot gateway secret 使用安全随机值。结果写入 gitignored 的
+`.env.runtime`，权限为 `0600`，且只包含 secret 和 profile 选择，不复制后面的默认值目录。
+改变 profile 时使用 `init --force --profile ...`；已有生成的数据库 secret 会保留，避免使
+现有 volume 失配。
 
 非交互模式在调用 `init` 前至少设置 `ZHIPU_API_KEY`；模型凭据可以使用
 `AGENT_API_KEY`，也可以继续使用 PydanticAI provider 原生环境变量。启动器按以下优先级
@@ -64,7 +65,9 @@ operator-only 的 `MIGRATION_DATABASE_URL`（direct host）；该值只在迁移
 状态文件中记录且命令身份匹配的 supervisor 发信号，不按进程名或端口批量终止。worker 与
 Beat 对部署者是一个生命周期，但仍为独立 OS 进程，并且一个 supervisor 只创建一个 Beat。
 启动器默认拒绝非 loopback 的 `MCP_HOST`；只有已经配置 TLS reverse proxy 并明确接受绑定
-边界时，才同时设置 `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK=true`。
+边界时，才同时设置 `NOTEBOOK_AGENT_ALLOW_NON_LOOPBACK=true`。`full` 和 `langbot` 的
+gateway 始终只允许绑定 loopback；`full` 的 `MCP_PORT` 与
+`CHANNEL_GATEWAY_PORT` 必须不同，避免一个进程的 socket 误充另一个 listener。
 
 `.env.example` 仍是完整高级变量参考，下面的手动 profile 片段也继续受支持。
 
@@ -278,7 +281,9 @@ https://agent.example/mcp/c/<raw-token>
 
 ## D. 可选 LangBot 渠道
 
-LangBot 不是 MCP 的依赖。只有接入 Telegram/微信时才需要 gateway 和 bridge 配置。
+LangBot 不是 MCP 的依赖。统一启动器的 `full` 为了提供完整应用运行时会启动 Notebook
+Agent gateway；只有真正接入 Telegram/微信时，才还需要外部 LangBot core、bridge plugin
+与 adapter 配置。
 
 ### Notebook Agent 根 `.env`
 
@@ -558,9 +563,9 @@ HTTP 模式不设置固定 `MCP_TOKEN`；每个请求携带自己的 bearer gran
 
 | 变量 | 消费者 | 默认值/示例 | 何时需要 | Secret | 重启 |
 | --- | --- | --- | --- | --- | --- |
-| `CHANNEL_GATEWAY_SECRET` | gateway + installed plugin | 空；至少 32 随机字符 | LangBot only | 是 | gateway、plugin runtime |
-| `CHANNEL_GATEWAY_HOST` | gateway | `127.0.0.1` | LangBot only | 否 | gateway |
-| `CHANNEL_GATEWAY_PORT` | gateway | `8765` | LangBot only | 否 | gateway、plugin URL 若改变 |
+| `CHANNEL_GATEWAY_SECRET` | gateway + installed plugin | 空；至少 32 随机字符 | `full` / `langbot` profile | 是 | gateway、plugin runtime |
+| `CHANNEL_GATEWAY_HOST` | gateway | `127.0.0.1` | `full` / `langbot` profile | 否 | gateway |
+| `CHANNEL_GATEWAY_PORT` | gateway | `8765` | `full` / `langbot` profile | 否 | gateway、plugin URL 若改变 |
 | `CHANNEL_GATEWAY_URL` | installed plugin only | `http://127.0.0.1:8765/v1/messages` | LangBot only | 否 | plugin runtime |
 | `KB_BOT_CHANNELS` | installed plugin only | 无 | LangBot only | 含内部 bot UUID，按私有配置处理 | plugin runtime |
 

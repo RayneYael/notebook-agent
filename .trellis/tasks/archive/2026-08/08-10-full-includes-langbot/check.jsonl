@@ -1,0 +1,1 @@
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Verify full includes both application listeners without weakening ownership or secret handling."}
