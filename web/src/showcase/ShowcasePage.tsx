@@ -4,7 +4,7 @@ import { Link } from "react-router";
 import { BrandLogo } from "../app/BrandLogo";
 
 type DemoId = "product" | "ai" | "practice";
-type SubtitleLanguage = "zh" | "en";
+type SummaryLanguage = "zh" | "en";
 
 interface EvidenceLink {
   label: string;
@@ -22,8 +22,8 @@ interface DemoScene {
   sourceCreator: string;
   sourceUrl: string;
   thumbnailUrl: string;
-  subtitlePreview: Record<SubtitleLanguage, string>;
-  subtitleDurationSeconds: Record<SubtitleLanguage, number>;
+  previewSummary: Record<SummaryLanguage, string>;
+  summaryDurationSeconds: Record<SummaryLanguage, number>;
   answerLead: string;
   answerPoints: string[];
   evidence: EvidenceLink[];
@@ -40,11 +40,11 @@ const demoScenes: DemoScene[] = [
     sourceCreator: "Eric Migicovsky · Y Combinator",
     sourceUrl: "https://www.youtube.com/watch?v=MT4Ig2uqjTc",
     thumbnailUrl: "https://i.ytimg.com/vi/MT4Ig2uqjTc/hqdefault.jpg",
-    subtitlePreview: {
-      zh: "每个人在早期客户访谈中都可以问的第一个问题是：你想解决的这件事，最困难的部分是什么？以 Dropbox 为例。很多人可能已经不记得没有 Dropbox 的世界了，但让我们回到 2005 年，想象创始人 Drew 在 MIT 读书时刚开始构思 Dropbox。你坐在 MIT 的计算机实验室里，旁边是你的朋友。你正在尝试理解人们如何分享文件，以及他们是不是潜在用户、有哪些问题可以用新技术解决。于是你转身问他：使用学校电脑完成小组项目时，最困难的部分是什么？你们正坐在计算机实验室里，这正是提出这种问题的自然场景。接下来用开放式对话了解对方目前如何与朋友协作完成小组项目。你希望听到具体痛点，例如登录共享电脑后，必须从某个地方取回文件，或依赖网络存储……",
-      en: "Questions that everyone can ask during their early customer interviews: the first question is, what is the hardest part about doing the thing that you're trying to solve? Let's take Dropbox for an example. Put yourself back in the position of Drew, the founder of Dropbox, in 2005 when he was initially working on the idea while studying at MIT. Imagine you're in the computer lab and sitting next to your friend. You want to learn how other people are sharing files, whether they are potential users, and what problems you can help solve with this new technology. So you ask: what is the hardest part about working on a group project with school computers? It's the perfect context for an open-ended conversation about how that person currently works on group projects and the specific pain points they have.",
+    previewSummary: {
+      zh: "先从最近一次真实经历问起：最困难的环节是什么、目前怎样解决，以及是否已经为替代方案付出时间或金钱。",
+      en: "Start with a recent real experience: ask what was hardest, how it was handled, and whether the person already sought an alternative.",
     },
-    subtitleDurationSeconds: { zh: 112, en: 148 },
+    summaryDurationSeconds: { zh: 36, en: 42 },
     answerLead: "不要先推销方案，也不要让用户预测未来。把对话拉回到已经发生过的具体经历。",
     answerPoints: [
       "先问最近一次遇到问题的时间、地点和上下文，而不是“你会不会用这个功能”。",
@@ -79,11 +79,11 @@ const demoScenes: DemoScene[] = [
     sourceCreator: "Grant Sanderson · 3Blue1Brown",
     sourceUrl: "https://www.youtube.com/watch?v=aircAruvnKk",
     thumbnailUrl: "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg",
-    subtitlePreview: {
-      zh: "现在，当我说“神经元”时，你只需要把它想成一个保存数字的东西，具体来说，是 0 到 1 之间的数字，并没有更复杂。网络从一组与输入图像 28×28 个像素一一对应的神经元开始，总共 784 个。每个神经元保存一个代表对应像素灰度值的数字：黑色像素是 0，白色像素是 1。神经元里的这个数字叫作激活值。你可以想象，激活值越高，神经元就亮得越明显。这 784 个神经元组成网络的第一层。再跳到最后一层，这里有 10 个神经元，分别代表 10 个数字。每个神经元的激活值仍然介于 0 和 1 之间，表示系统认为输入图像属于某个数字的程度。中间还有几层隐藏层；暂时可以把它们视为一个巨大的问号：识别数字的过程究竟是如何完成的？",
-      en: "Right now when I say neuron, all I want you to think about is a thing that holds a number, specifically a number between 0 and 1. The network starts with neurons corresponding to each of the 28×28 pixels of the input image, which is 784 neurons in total. Each one holds a number representing the grayscale value of the corresponding pixel, ranging from 0 for black pixels up to 1 for white pixels. This number is called its activation. These 784 neurons make up the first layer. The last layer has 10 neurons, each representing one of the digits. Their activations represent how much the system thinks that a given image corresponds with a given digit. There are also a couple of hidden layers in between, which for now can remain a giant question mark.",
+    previewSummary: {
+      zh: "把手写数字图片看成 784 个亮度输入；网络逐层组合这些数字，最后给出 10 个数字类别的判断。",
+      en: "Treat a 28×28 image as 784 brightness inputs; layered transformations combine them into scores for ten digit classes.",
     },
-    subtitleDurationSeconds: { zh: 108, en: 136 },
+    summaryDurationSeconds: { zh: 34, en: 40 },
     answerLead: "可以先把它理解成一个会调参数的数字转换器：输入很多数字，经过多层变换，输出一组判断结果。",
     answerPoints: [
       "示例把一张 28×28 的手写数字图片转换成 784 个亮度值，每个值进入一个输入神经元。",
@@ -118,11 +118,11 @@ const demoScenes: DemoScene[] = [
     sourceCreator: "Annie Bosler & Don Greene · TED-Ed",
     sourceUrl: "https://www.youtube.com/watch?v=f2O6mQkFiiw",
     thumbnailUrl: "https://i.ytimg.com/vi/f2O6mQkFiiw/hqdefault.jpg",
-    subtitlePreview: {
-      zh: "掌握一项技能需要多久？我们还没有一个神奇的固定数字，但已经知道，精通并不只取决于练习了多少小时，还取决于练习的质量和有效性。有效练习应当持续、极度专注，并针对接近当前能力边缘的内容或弱项。如果有效练习是关键，怎样才能最大化利用练习时间？可以尝试这些方法：专注眼前任务，关闭电脑或电视，把手机调到飞行模式，尽量减少干扰。一项针对 260 名学生的研究发现，他们平均只能连续专注六分钟；笔记本电脑、智能手机，尤其是 Facebook，是主要干扰来源。开始时放慢速度，甚至使用慢动作。协调能力会被每一次重复塑造，无论动作正确还是错误。先保持高质量重复，再逐渐提速，更可能把动作做对。接下来，频繁重复并安排休息，也是顶尖练习者常见的习惯。研究显示，许多顶尖运动员、音乐家和舞者每周会花 50 到 60 小时从事与专业相关的活动。",
-      en: "While we don't yet have a magic number for mastering a skill, we know that mastery isn't simply about the amount of hours of practice. It's also the quality and effectiveness of that practice. Effective practice is consistent, intensely focused, and targets weaknesses at the edge of one's current abilities. So how can we get the most out of practice time? Focus on the task at hand and minimize distractions by turning off the computer or TV and putting your phone on airplane mode. In one study, 260 students stayed on task for only six minutes at a time; laptops, smartphones, and Facebook were the main distractions. Start slowly or in slow motion. Coordination is built with repetitions, correct or incorrect. Gradually increasing the speed of quality repetitions gives you a better chance of doing them correctly. Frequent repetitions with allotted breaks are also common habits of elite performers.",
+    previewSummary: {
+      zh: "有效练习重在专注、挑战能力边缘、慢速建立正确动作，并通过高质量重复与休息持续修正。",
+      en: "Effective practice uses focused work near the edge of ability, slow correct repetitions, feedback, and planned breaks.",
     },
-    subtitleDurationSeconds: { zh: 118, en: 142 },
+    summaryDurationSeconds: { zh: 32, en: 38 },
     answerLead: "有效练习不只看时长，更看注意力、难度边界和反馈质量。",
     answerPoints: [
       "练习时减少干扰，把注意力集中在当前任务和最薄弱的环节上。",
@@ -247,7 +247,6 @@ function ArrowIcon() {
 }
 
 const typingSentencePause = 6;
-const typingCharacterDurationMs = 12;
 
 function TypewriterText({ text, startIndex }: { text: string; startIndex: number }) {
   return (
@@ -272,11 +271,11 @@ export function ShowcasePage() {
   const [activeDemoId, setActiveDemoId] = useState<DemoId>("product");
   const [heroCoverId, setHeroCoverId] = useState<DemoId | null>(null);
   const [hasRun, setHasRun] = useState(false);
-  const [subtitleLanguage, setSubtitleLanguage] = useState<SubtitleLanguage>("zh");
+  const [summaryLanguage, setSummaryLanguage] = useState<SummaryLanguage>("zh");
   const activeDemo = demoScenes.find((scene) => scene.id === activeDemoId) ?? demoScenes[0];
-  const activeSubtitle = activeDemo.subtitlePreview[subtitleLanguage];
-  const subtitleStyle = {
-    "--demo-subtitle-duration": `${activeDemo.subtitleDurationSeconds[subtitleLanguage]}s`,
+  const activeSummary = activeDemo.previewSummary[summaryLanguage];
+  const summaryStyle = {
+    "--demo-subtitle-duration": `${activeDemo.summaryDurationSeconds[summaryLanguage]}s`,
   } as CSSProperties;
   const answerSegments = [activeDemo.answerLead, ...activeDemo.answerPoints];
   const answerOffsets = answerSegments.map((_, segmentIndex) => (
@@ -284,14 +283,6 @@ export function ShowcasePage() {
       .slice(0, segmentIndex)
       .reduce((total, segment) => total + Array.from(segment).length + typingSentencePause, 0)
   ));
-  const answerTypingCharacterCount = answerSegments.reduce(
-    (total, segment) => total + Array.from(segment).length + typingSentencePause,
-    0,
-  );
-  const answerStyle = {
-    "--answer-typing-end": `${answerTypingCharacterCount * typingCharacterDurationMs + 180}ms`,
-  } as CSSProperties;
-
   function selectDemo(id: DemoId) {
     setActiveDemoId(id);
     setHasRun(false);
@@ -501,30 +492,31 @@ export function ShowcasePage() {
                   height="360"
                   decoding="async"
                 />
-                <div className="demo-subtitle-language" role="group" aria-label="字幕语言">
+                <div className="demo-subtitle-language" role="group" aria-label="片段要点语言">
                   <button
                     type="button"
-                    aria-label="显示中文字幕"
-                    aria-pressed={subtitleLanguage === "zh"}
-                    onClick={() => setSubtitleLanguage("zh")}
+                    aria-label="显示中文要点"
+                    aria-pressed={summaryLanguage === "zh"}
+                    onClick={() => setSummaryLanguage("zh")}
                   >中</button>
                   <button
                     type="button"
-                    aria-label="显示英文字幕"
-                    aria-pressed={subtitleLanguage === "en"}
-                    onClick={() => setSubtitleLanguage("en")}
+                    aria-label="显示英文要点"
+                    aria-pressed={summaryLanguage === "en"}
+                    onClick={() => setSummaryLanguage("en")}
                   >EN</button>
                 </div>
                 <div className="demo-subtitle-bar" data-testid="demo-subtitle-ticker">
-                  <span className="demo-subtitle-bar__mark" aria-hidden="true">CC</span>
+                  <span className="demo-subtitle-bar__mark" aria-hidden="true">要点</span>
+                  <span className="sr-only">片段要点：{activeSummary}</span>
                   <div className="demo-subtitle-viewport" aria-hidden="true">
                     <div
                       className="demo-subtitle-track"
-                      key={`${activeDemo.id}-${subtitleLanguage}`}
-                      style={subtitleStyle}
+                      key={`${activeDemo.id}-${summaryLanguage}`}
+                      style={summaryStyle}
                     >
-                      <span>{activeSubtitle}</span>
-                      <span>{activeSubtitle}</span>
+                      <span>{activeSummary}</span>
+                      <span>{activeSummary}</span>
                     </div>
                   </div>
                 </div>
@@ -552,7 +544,7 @@ export function ShowcasePage() {
                 <span>你的问题</span>
                 <p>{activeDemo.question}</p>
               </div>
-              <div className="demo-pipeline" aria-label="回答生成步骤">
+              <div className="demo-pipeline" aria-label="预设回答演示步骤">
                 <span className={hasRun ? "is-complete" : undefined}>01 理解问题</span>
                 <span className={hasRun ? "is-complete" : undefined}>02 查找相关片段</span>
                 <span className={hasRun ? "is-complete" : undefined}>03 核对原文</span>
@@ -564,7 +556,7 @@ export function ShowcasePage() {
                   </button>
                 </div>
               ) : (
-                <article className="demo-answer" aria-live="polite" style={answerStyle}>
+                <article className="demo-answer" aria-live="polite">
                   <div className="demo-answer__label"><BrandLogo className="demo-answer__mark" /><p>基于 3 个字幕片段</p></div>
                   <p className="demo-answer__lead">
                     <TypewriterText text={activeDemo.answerLead} startIndex={answerOffsets[0]} />

@@ -19,14 +19,12 @@ import type {
 import { BrandLogo } from "../app/BrandLogo";
 
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
-const LAST_LOGIN_CHANNEL_STORAGE_KEY = "notebook-agent:last-login-channel";
 
 interface LoginMethodOptionProps {
   ariaLabel: string;
   icon: ReactNode;
   iconClassName?: string;
   title: string;
-  remembered?: boolean;
   status: string;
   statusTone?: "ready" | "muted" | "error";
   disabled?: boolean;
@@ -50,7 +48,6 @@ export function LoginPage({
 }: LoginPageProps) {
   const navigate = useNavigate();
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
-  const [lastLoginChannel, setLastLoginChannel] = useState<LoginChannel | null>(readLastLoginChannel);
   const capabilities = useQuery({
     queryKey: ["capabilities"],
     queryFn: loadCapabilities,
@@ -71,8 +68,6 @@ export function LoginPage({
   const exchange = useMutation({
     mutationFn: () => exchangeSession(challenge!.public_id, challenge!.browser_secret),
     onSuccess: (session) => {
-      rememberLoginChannel(session.login_channel);
-      setLastLoginChannel(session.login_channel);
       if (onAuthenticated) onAuthenticated(session);
       else navigate("/library", { replace: true });
     },
@@ -138,7 +133,6 @@ export function LoginPage({
                 icon={<WechatBrandIcon />}
                 iconClassName="login-method__icon--wechat"
                 title="微信"
-                remembered={lastLoginChannel === "wechat"}
                 status={channelStatusLabel(wechatAvailability, mutation.isPending && mutation.variables === "wechat")}
                 statusTone={channelStatusTone(wechatAvailability)}
                 disabled={wechatAvailability !== "available" || mutation.isPending}
@@ -149,7 +143,6 @@ export function LoginPage({
                 icon={<TelegramBrandIcon />}
                 iconClassName="login-method__icon--telegram"
                 title="Telegram"
-                remembered={lastLoginChannel === "telegram"}
                 status={channelStatusLabel(telegramAvailability, mutation.isPending && mutation.variables === "telegram")}
                 statusTone={channelStatusTone(telegramAvailability)}
                 disabled={telegramAvailability !== "available" || mutation.isPending}
@@ -197,7 +190,6 @@ function LoginMethodOption({
   icon,
   iconClassName,
   title,
-  remembered = false,
   status,
   statusTone = "muted",
   disabled = false,
@@ -215,10 +207,7 @@ function LoginMethodOption({
         {icon}
       </span>
       <span className="login-method__copy">
-        <span className="login-method__title-row">
-          <strong>{title}</strong>
-          {remembered ? <span className="login-method__remembered">上次使用</span> : null}
-        </span>
+        <strong>{title}</strong>
       </span>
       <span className={`login-method__status login-method__status--${statusTone}`}>{status}</span>
     </button>
@@ -240,24 +229,6 @@ function TelegramBrandIcon() {
       <path d="M21.7 3.4 18.5 20c-.2 1.2-.9 1.5-1.9.9l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6 13.7l-4.8-1.5c-1.1-.3-1.1-1.1.2-1.6L20.2 3.3c.9-.3 1.7.2 1.5 1.1Z" />
     </svg>
   );
-}
-
-function readLastLoginChannel(): LoginChannel | null {
-  try {
-    const channel = window.localStorage.getItem(LAST_LOGIN_CHANNEL_STORAGE_KEY);
-    return channel === "wechat" || channel === "telegram" ? channel : null;
-  } catch {
-    return null;
-  }
-}
-
-function rememberLoginChannel(channel: LoginChannel): boolean {
-  try {
-    window.localStorage.setItem(LAST_LOGIN_CHANNEL_STORAGE_KEY, channel);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 function channelAvailability(

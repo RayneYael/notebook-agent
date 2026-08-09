@@ -56,8 +56,10 @@ describe("ShowcasePage", () => {
       "src",
       "https://i.ytimg.com/vi/MT4Ig2uqjTc/hqdefault.jpg",
     );
-    expect(screen.getByRole("button", { name: "显示中文字幕" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("demo-subtitle-ticker")).toHaveTextContent(/早期客户访谈/);
+    expect(screen.getByRole("button", { name: "显示中文要点" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("demo-subtitle-ticker")).toHaveTextContent(/最近一次真实经历/);
+    expect(container.querySelector(".demo-subtitle-bar > .sr-only")).toHaveTextContent(/片段要点.*最近一次真实经历/);
+    expect(screen.getByLabelText("预设回答演示步骤")).toBeInTheDocument();
     expect(
       screen.queryByText("这组公开视频与时间点已经提前核对。点击下方按钮，查看系统如何从原文整理出答案。"),
     ).not.toBeInTheDocument();
@@ -95,9 +97,9 @@ describe("ShowcasePage", () => {
       "src",
       "https://i.ytimg.com/vi/aircAruvnKk/hqdefault.jpg",
     );
-    await user.click(screen.getByRole("button", { name: "显示英文字幕" }));
-    expect(screen.getByRole("button", { name: "显示英文字幕" })).toHaveAttribute("aria-pressed", "true");
-    expect(screen.getByTestId("demo-subtitle-ticker")).toHaveTextContent(/when I say neuron/);
+    await user.click(screen.getByRole("button", { name: "显示英文要点" }));
+    expect(screen.getByRole("button", { name: "显示英文要点" })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByTestId("demo-subtitle-ticker")).toHaveTextContent(/28×28 image as 784 brightness inputs/);
     await user.click(screen.getByRole("button", { name: /查看这次回答/ }));
 
     expect(screen.getByText(/784 个输入到 10 个输出/)).toBeInTheDocument();

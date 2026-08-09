@@ -45,6 +45,16 @@ describe("Web document shell", () => {
     expect(css).toMatch(
       /@media\s*\(prefers-reduced-motion:\s*reduce\)[\s\S]*\.demo-typewriter__char\s*\{[^}]*animation:\s*none\s*!important;/,
     );
+    expect(css).not.toMatch(/\.demo-evidence\s*\{[^}]*opacity:\s*0;/);
+    expect(css).not.toMatch(/\.demo-reset\s*\{[^}]*opacity:\s*0;/);
+  });
+
+  it("keeps frequent subtitle controls at a mobile-safe touch size", () => {
+    const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
+
+    expect(css).toMatch(/\.demo-subtitle-language button\s*\{[^}]*width:\s*2\.75rem;[^}]*height:\s*2\.75rem;/);
+    expect(css).toMatch(/\.transcript-list a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/);
+    expect(css).not.toMatch(/\.demo-subtitle-language button\s*\{[^}]*min-height:\s*1\.(?:35|5)rem;/);
   });
 
   it("keeps the interactive hero covers layered and styles their mobile captions", () => {

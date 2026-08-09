@@ -120,27 +120,8 @@ describe("login page", () => {
     expect(await screen.findByText("登录已确认，正在打开资料库…")).toBeInTheDocument();
     expect(exchangeSession).toHaveBeenCalledWith("challenge-public", "browser-only-secret");
     expect(onAuthenticated).toHaveBeenCalledOnce();
-    expect(window.localStorage.getItem("notebook-agent:last-login-channel")).toBe("telegram");
-    expect(window.localStorage).toHaveLength(1);
+    expect(window.localStorage).toHaveLength(0);
     expect(window.sessionStorage).toHaveLength(0);
-  });
-
-  it("marks the last successfully used chat channel on the next visit", async () => {
-    window.localStorage.setItem("notebook-agent:last-login-channel", "telegram");
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <LoginPage loadCapabilities={vi.fn().mockResolvedValue(capabilities)} />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    const telegram = await screen.findByRole("button", { name: "使用 Telegram 登录" });
-    expect(within(telegram).getByText("上次使用")).toBeInTheDocument();
-    expect(within(screen.getByRole("button", { name: "使用微信登录" })).queryByText("上次使用"))
-      .not.toBeInTheDocument();
   });
 
   it("lets the user restart in place after challenge polling fails", async () => {
