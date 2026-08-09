@@ -222,6 +222,28 @@ class Settings:
     trash_purge_object_timeout_seconds: float = field(
         default_factory=lambda: _env_float("TRASH_PURGE_OBJECT_TIMEOUT_SECONDS", 10.0)
     )
+    # Ingestion completion outbox repair is deliberately separate from the
+    # recycle-bin purge sweep.  Both run on the maintenance queue, but the
+    # completion settings have their own bounded claim and wall-clock budget.
+    ingest_completion_interval_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_COMPLETION_INTERVAL_SECONDS",
+            _env_int("INGEST_COMPLETION_PUBLISH_INTERVAL_SECONDS", 60),
+        )
+    )
+    ingest_completion_batch_size: int = field(
+        default_factory=lambda: _env_int("INGEST_COMPLETION_BATCH_SIZE", 20)
+    )
+    ingest_completion_claim_timeout_seconds: int = field(
+        default_factory=lambda: _env_int(
+            "INGEST_COMPLETION_CLAIM_TIMEOUT_SECONDS", 300
+        )
+    )
+    ingest_completion_max_duration_seconds: float = field(
+        default_factory=lambda: _env_float(
+            "INGEST_COMPLETION_MAX_DURATION_SECONDS", 30.0
+        )
+    )
     context_max_turns: int = field(
         default_factory=lambda: _env_int("CONTEXT_MAX_TURNS", 8)
     )
@@ -361,6 +383,21 @@ class Settings:
             raise ValueError("TRASH_PURGE_MAX_DURATION_SECONDS must be positive")
         if self.trash_purge_object_timeout_seconds <= 0:
             raise ValueError("TRASH_PURGE_OBJECT_TIMEOUT_SECONDS must be positive")
+        if self.ingest_completion_interval_seconds <= 0:
+            raise ValueError("INGEST_COMPLETION_INTERVAL_SECONDS must be positive")
+        if (
+            self.ingest_completion_batch_size <= 0
+            or self.ingest_completion_batch_size > 100
+        ):
+            raise ValueError("INGEST_COMPLETION_BATCH_SIZE must be between 1 and 100")
+        if self.ingest_completion_claim_timeout_seconds <= 0:
+            raise ValueError(
+                "INGEST_COMPLETION_CLAIM_TIMEOUT_SECONDS must be positive"
+            )
+        if self.ingest_completion_max_duration_seconds <= 0:
+            raise ValueError(
+                "INGEST_COMPLETION_MAX_DURATION_SECONDS must be positive"
+            )
         if (
             self.agent_composer_max_tokens * COMPOSER_VALIDATION_REQUEST_LIMIT
             > self.agent_output_token_limit
@@ -441,6 +478,12 @@ class Settings:
                 raise ValueError("WEB_ORIGIN must be HTTPS or a loopback HTTP origin")
             if origin.endswith("/"):
                 raise ValueError("WEB_ORIGIN must not include a trailing slash")
+
+    @property
+    def ingest_completion_publish_interval_seconds(self) -> int:
+        """Compatibility spelling used by deployment operators."""
+
+        return self.ingest_completion_interval_seconds
 
 
 def _build_database_url() -> str:

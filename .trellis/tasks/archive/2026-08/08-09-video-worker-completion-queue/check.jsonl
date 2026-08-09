@@ -1,0 +1,6 @@
+{"file": ".trellis/spec/backend/index.md", "reason": "Verify the change follows the active backend contracts and required validation scope."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Verify migration-head synchronization, forward-compatible rollout, and isolated roundtrip safety."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Audit broker payloads, logs, errors, and counters for privacy-safe diagnostics."}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Check delete/purge races, bounded sweep behavior, and compatibility with maintenance processing."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review DB, worker, broker, deployment, and consumer behavior as one at-least-once flow."}
+{"file": ".trellis/tasks/08-09-video-worker-completion-queue/research/current-completion-path.md", "reason": "Validate the implementation closes the audited completion-event gap without changing source ingestion truth."}

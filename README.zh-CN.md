@@ -148,6 +148,13 @@ MCP_TOKEN='<raw-token>' \
 .venv/bin/celery -A app.ingest.tasks.celery_app worker --queues=ingest,maintenance
 ```
 
+Worker 与 beat 也是完成事件不丢失保证的一部分。producer 会声明 durable 的
+`ingest-completion` 队列，但在真正的幂等通知/编排 consumer 部署前不要让现有
+worker 监听该队列，否则没有业务 handler 的 worker 会确认并丢弃事件。beat 会
+定期补发 pending/stale outbox；上线时检查 sweep counters 与 queue backlog。本地
+Redis 通过持久卷、AOF 与 `appendfsync=always` 保证已确认消息落盘；远程 broker
+必须提供等价持久化保证。
+
 确认 worker ready 后，将 `AGENT_SAVE_ENABLED` 改为 `true`，再启动 Gateway：
 
 ```bash

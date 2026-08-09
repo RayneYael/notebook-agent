@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 import threading
 from collections.abc import Iterable
 from dataclasses import asdict, dataclass, field
@@ -56,6 +57,7 @@ from app.agent.types import (
 )
 from app.config import COMPOSER_VALIDATION_REQUEST_LIMIT, Settings
 from app.diagnostics import RequestDiagnostics, classify_usage_limit
+from app.ingest.submission import normalize_item_reference, parse_message_references
 
 
 INSTRUCTIONS = """
@@ -93,6 +95,69 @@ COMPRESSED_EVIDENCE_EXCERPT_CHARS = 180
 FALLBACK_INTRO = "自动总结未完成，以下是知识库中最相关的证据："
 
 
+_EXPLICIT_SAVE_PATTERNS = (
+    re.compile(
+        r"(?:^|帮我|替我|给我|请.{0,12}|我(?:想|要|希望).{0,4})"
+        r"(?:保存|收藏|存入|加入(?:我的)?知识库)"
+    ),
+    re.compile(
+        r"(?:^|\bplease\s+|\bcan\s+you\s+|\bi\s+(?:want|need)\s+to\s+)"
+        r"(?:save|bookmark|add\s+(?:this\s+)?to\s+(?:my\s+)?(?:library|knowledge\s+base))\b",
+        re.IGNORECASE,
+    ),
+)
+_NEGATED_SAVE_PATTERN = re.compile(
+    r"(?:不要|别|不用|无需|不想|不需要).{0,6}(?:保存|收藏|存入|加入)"
+    r"|\b(?:do\s+not|don't|dont|no\s+need\s+to)\s+(?:save|bookmark|add)\b",
+    re.IGNORECASE,
+)
+
+
+def _explicit_save_requested(semantic_text: str) -> bool:
+    """Conservatively identify a current-message save command.
+
+    Exact-reference content questions hide every write/pending tool.  A
+    positive current-message command is required before ``save_videos`` is
+    exposed, so stale history cannot turn a question into a terminal action.
+    """
+
+    text = semantic_text.strip()
+    if not text or _NEGATED_SAVE_PATTERN.search(text):
+        return False
+    return any(pattern.search(text) for pattern in _EXPLICIT_SAVE_PATTERNS)
+
+
+def _citation_matches_scope(
+    citation: Citation,
+    scope: tuple[tuple[str, str], ...],
+) -> bool:
+    """Validate a citation URL against the current-message subject set.
+
+    Every citation must be normalizable through the submission contract and
+    match exactly; an article or malformed citation therefore fails closed.
+    A stale model result cannot be smuggled into the trusted Citation cache.
+    """
+
+    try:
+        reference = normalize_item_reference(citation.url)
+    except (ValueError, TypeError):
+        return False
+    return (reference.platform, reference.platform_id) in set(scope)
+
+
+def _item_details_matches_scope(
+    result: dict, scope: tuple[tuple[str, str], ...]
+) -> bool:
+    try:
+        reference = normalize_item_reference(str(result.get("url", "")))
+    except (ValueError, TypeError):
+        return False
+    return (
+        result.get("platform") == reference.platform
+        and (reference.platform, reference.platform_id) in set(scope)
+    )
+
+
 class RetrievalKind(str, Enum):
     SEARCH = "search"
     EXPANSION = "expansion"
@@ -115,6 +180,10 @@ class AgentDeps:
     citations: dict[int, Citation] = field(default_factory=dict)
     last_retrieval_run_step: int | None = None
     diagnostics: RequestDiagnostics | None = None
+    # Non-empty only when the current message contains supported URLs plus
+    # semantic text.  It is server-owned and never model-authored.
+    reference_scope: tuple[tuple[str, str], ...] = ()
+    reference_save_requested: bool = False
     _tool_lock: threading.Lock = field(default_factory=threading.Lock)
 
     def reserve_retrieval(
@@ -142,6 +211,11 @@ class AgentDeps:
     def record(self, values: list[Citation] | Citation) -> None:
         rows = values if isinstance(values, list) else [values]
         for citation in rows:
+            if self.reference_scope and not _citation_matches_scope(
+                citation,
+                self.reference_scope,
+            ):
+                continue
             self.citations[citation.segment_id] = citation
 
     def tool_event(self, name: str, outcome: str, call_index: int, result_count: int | None = None,
@@ -203,6 +277,34 @@ def build_agent(
             return tool_def
         return None
 
+    def prepare_management(ctx: RunContext[AgentDeps], tool_def):
+        """Hide inventory/item-management tools for explicit URL questions."""
+
+        if ctx.deps.reference_scope:
+            return None
+        return tool_def
+
+    def prepare_bare_url_action(ctx: RunContext[AgentDeps], tool_def):
+        """Bare URLs are handled before the model; scoped prompts cannot use it."""
+
+        if ctx.deps.reference_scope:
+            return None
+        return tool_def
+
+    def prepare_save(ctx: RunContext[AgentDeps], tool_def):
+        """Require an explicit current-message save command for scoped URLs."""
+
+        if ctx.deps.reference_scope and not ctx.deps.reference_save_requested:
+            return None
+        return tool_def
+
+    def prepare_pending_save(ctx: RunContext[AgentDeps], tool_def):
+        """An explicit URL question cannot consume or alter an older pending save."""
+
+        if ctx.deps.reference_scope:
+            return None
+        return tool_def
+
     def execute_tool(deps: AgentDeps, name: str, operation):
         """Record only the tool boundary, never its arguments or output."""
         with deps._tool_lock:
@@ -214,6 +316,14 @@ def build_agent(
         except Exception as exc:
             deps.tool_event(name, "failed", call_index, exception=exc)
             raise
+
+    def optional_knowledge(operation):
+        """Convert an expected scoped miss into an empty successful lookup."""
+
+        try:
+            return operation()
+        except KnowledgeNotFound:
+            return None
 
     def skipped_payload(
         ctx: RunContext[AgentDeps], name: str, kind: RetrievalKind
@@ -266,6 +376,8 @@ def build_agent(
     def pending_save_instruction(ctx: RunContext[AgentDeps]) -> str:
         """Inject only the current run's server-verified confirmation state."""
 
+        if ctx.deps.reference_scope:
+            return ""
         snapshot = ctx.deps.actions.pending_save_snapshot()
         if not snapshot.active:
             return ""
@@ -283,6 +395,8 @@ def build_agent(
     def pending_delete_instruction(ctx: RunContext[AgentDeps]) -> str:
         """Expose only count/kind for a trusted pending delete action."""
 
+        if ctx.deps.reference_scope:
+            return ""
         snapshot = ctx.deps.actions.pending_delete_snapshot()
         if snapshot is None or not snapshot.active:
             return ""
@@ -307,6 +421,15 @@ def build_agent(
             ctx.deps, "search_segments", lambda: ctx.deps.services.search_segments(query, limit=limit)
         )
         ctx.deps.record(citations)
+        citations = [
+            citation
+            for citation in citations
+            if not ctx.deps.reference_scope
+            or _citation_matches_scope(
+                citation,
+                ctx.deps.reference_scope,
+            )
+        ]
         ctx.deps.tool_event("search_segments", "succeeded", call_index, len(citations))
         ctx.deps.diagnostics and ctx.deps.diagnostics.retrieval_detail(tool_name="search_segments", call_index=call_index, query=query, limit=limit)
         for citation in citations:
@@ -325,9 +448,23 @@ def build_agent(
 
         if skipped := skipped_payload(ctx, "get_neighbors", RetrievalKind.EXPANSION):
             return skipped
-        (citations, call_index) = execute_tool(
-            ctx.deps, "get_neighbors", lambda: ctx.deps.services.get_neighbors(segment_id, radius=radius)
+        citations, call_index = execute_tool(
+            ctx.deps,
+            "get_neighbors",
+            lambda: optional_knowledge(
+                lambda: ctx.deps.services.get_neighbors(segment_id, radius=radius)
+            ),
         )
+        citations = citations or []
+        citations = [
+            citation
+            for citation in citations
+            if not ctx.deps.reference_scope
+            or _citation_matches_scope(
+                citation,
+                ctx.deps.reference_scope,
+            )
+        ]
         ctx.deps.record(citations)
         ctx.deps.tool_event("get_neighbors", "succeeded", call_index, len(citations))
         for citation in citations:
@@ -344,10 +481,19 @@ def build_agent(
 
         if skipped := skipped_payload(ctx, "get_item", RetrievalKind.EXPANSION):
             return skipped
-        (result, call_index) = execute_tool(ctx.deps, "get_item", lambda: asdict(ctx.deps.services.get_item(item_id)))
-        ctx.deps.tool_event("get_item", "succeeded", call_index, 1)
+        details, call_index = execute_tool(
+            ctx.deps,
+            "get_item",
+            lambda: optional_knowledge(lambda: ctx.deps.services.get_item(item_id)),
+        )
+        result = asdict(details) if details is not None else {}
+        if ctx.deps.reference_scope and result and not _item_details_matches_scope(
+            result, ctx.deps.reference_scope
+        ):
+            result = {}
+        ctx.deps.tool_event("get_item", "succeeded", call_index, 1 if result else 0)
         ctx.deps.diagnostics and ctx.deps.diagnostics.retrieval_detail(tool_name="get_item", call_index=call_index, item_id=item_id, title=result.get("title"), author=result.get("author"), description=result.get("description"), url=result.get("url"))
-        return {"status": "ok", "evidence": [result], "reason": None}
+        return {"status": "ok", "evidence": [result] if result else [], "reason": None}
 
     @agent.tool(prepare=prepare_expansion)
     def open_at(ctx: RunContext[AgentDeps], segment_id: int) -> RetrievalToolPayload:
@@ -355,13 +501,36 @@ def build_agent(
 
         if skipped := skipped_payload(ctx, "open_at", RetrievalKind.EXPANSION):
             return skipped
-        (citation, call_index) = execute_tool(ctx.deps, "open_at", lambda: ctx.deps.services.open_at(segment_id))
-        ctx.deps.record(citation)
-        ctx.deps.tool_event("open_at", "succeeded", call_index, 1)
-        ctx.deps.diagnostics and ctx.deps.diagnostics.retrieval_detail(tool_name="open_at", call_index=call_index, segment_id=segment_id, item_id=citation.item_id, title=citation.title, url=citation.url, excerpt=citation.excerpt, start=citation.start_sec)
-        return {"status": "ok", "evidence": [citation.model_dump()], "reason": None}
+        citation, call_index = execute_tool(
+            ctx.deps,
+            "open_at",
+            lambda: optional_knowledge(
+                lambda: ctx.deps.services.open_at(segment_id)
+            ),
+        )
+        if (
+            citation is not None
+            and ctx.deps.reference_scope
+            and not _citation_matches_scope(
+                citation,
+                ctx.deps.reference_scope,
+            )
+        ):
+            citation = None
+        if citation is not None:
+            ctx.deps.record(citation)
+        ctx.deps.tool_event(
+            "open_at", "succeeded", call_index, 1 if citation is not None else 0
+        )
+        if citation is not None:
+            ctx.deps.diagnostics and ctx.deps.diagnostics.retrieval_detail(tool_name="open_at", call_index=call_index, segment_id=segment_id, item_id=citation.item_id, title=citation.title, url=citation.url, excerpt=citation.excerpt, start=citation.start_sec)
+        return {
+            "status": "ok",
+            "evidence": [citation.model_dump()] if citation is not None else [],
+            "reason": None,
+        }
 
-    @agent.tool
+    @agent.tool(prepare=prepare_bare_url_action)
     def request_save_confirmation(
         ctx: RunContext[AgentDeps], urls: list[str]
     ) -> dict:
@@ -377,7 +546,7 @@ def build_agent(
         ctx.deps.tool_event("request_save_confirmation", "succeeded", call_index, len(outcome.results))
         return outcome.tool_payload()
 
-    @agent.tool
+    @agent.tool(prepare=prepare_save)
     def save_videos(
         ctx: RunContext[AgentDeps],
         urls: list[str],
@@ -395,7 +564,7 @@ def build_agent(
         ctx.deps.tool_event("save_videos", "succeeded", call_index, len(outcome.results))
         return outcome.tool_payload()
 
-    @agent.tool
+    @agent.tool(prepare=prepare_pending_save)
     def confirm_video_save(ctx: RunContext[AgentDeps]) -> dict:
         """Consume the current conversation's persisted pending batch."""
 
@@ -403,7 +572,7 @@ def build_agent(
         ctx.deps.tool_event("confirm_video_save", "succeeded", call_index, len(outcome.results))
         return outcome.tool_payload()
 
-    @agent.tool
+    @agent.tool(prepare=prepare_pending_save)
     def clarify_save_confirmation(ctx: RunContext[AgentDeps]) -> dict:
         """Ask for a clear decision without consuming the pending batch."""
 
@@ -411,7 +580,7 @@ def build_agent(
         ctx.deps.tool_event("clarify_save_confirmation", "succeeded", call_index, len(outcome.results))
         return outcome.tool_payload()
 
-    @agent.tool
+    @agent.tool(prepare=prepare_pending_save)
     def cancel_video_save(ctx: RunContext[AgentDeps]) -> dict:
         """Cancel the current conversation's persisted pending batch."""
 
@@ -420,7 +589,7 @@ def build_agent(
         return outcome.tool_payload()
 
     if management_enabled:
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def list_saved_items(
             ctx: RunContext[AgentDeps],
             kind: Literal["video", "article"] | None = None,
@@ -445,7 +614,7 @@ def build_agent(
             ctx.deps.tool_event("list_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def get_saved_item(
             ctx: RunContext[AgentDeps], item_id: Annotated[int, Field(gt=0)]
         ) -> dict:
@@ -454,7 +623,7 @@ def build_agent(
             ctx.deps.tool_event("get_saved_item", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def update_saved_item(
             ctx: RunContext[AgentDeps],
             item_id: Annotated[int, Field(gt=0)],
@@ -465,7 +634,7 @@ def build_agent(
             ctx.deps.tool_event("update_saved_item", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def delete_saved_items(
             ctx: RunContext[AgentDeps],
             item_ids: Annotated[
@@ -478,7 +647,7 @@ def build_agent(
             ctx.deps.tool_event("delete_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def confirm_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
             outcome, call_index = execute_tool(
                 ctx.deps,
@@ -488,19 +657,19 @@ def build_agent(
             ctx.deps.tool_event("confirm_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def clarify_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
             outcome, call_index = execute_tool(ctx.deps, "clarify_item_deletion", ctx.deps.actions.clarify_delete)
             ctx.deps.tool_event("clarify_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def cancel_item_deletion(ctx: RunContext[AgentDeps]) -> dict:
             outcome, call_index = execute_tool(ctx.deps, "cancel_item_deletion", ctx.deps.actions.cancel_delete)
             ctx.deps.tool_event("cancel_item_deletion", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def restore_saved_items(
             ctx: RunContext[AgentDeps],
             item_ids: Annotated[
@@ -512,7 +681,7 @@ def build_agent(
             ctx.deps.tool_event("restore_saved_items", "succeeded" if outcome.status == "ok" else "failed", call_index, len(outcome.results))
             return outcome.tool_payload()
 
-        @agent.tool
+        @agent.tool(prepare=prepare_management)
         def retry_item_ingestion(
             ctx: RunContext[AgentDeps], item_id: Annotated[int, Field(gt=0)]
         ) -> dict:
@@ -622,9 +791,13 @@ class KnowledgeAgent:
             allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
             environment=self._settings.notebook_agent_env,
         )
-        services = self._service_factory(request)
-        if isinstance(services, KnowledgeServices):
-            services.set_diagnostics(diagnostics)
+        parsed_references = parse_message_references(request.question)
+        reference_scope = (
+            parsed_references.references
+            if parsed_references.has_supported_urls
+            and parsed_references.has_semantic_text
+            else ()
+        )
         action_services = (
             self._action_factory(request)
             if (self._settings.agent_save_enabled or self._settings.agent_item_management_enabled)
@@ -637,8 +810,47 @@ class KnowledgeAgent:
             enabled=self._settings.agent_save_enabled,
             management_enabled=self._settings.agent_item_management_enabled,
         )
-        deps = AgentDeps(services, actions, diagnostics=diagnostics)
         diagnostics.event("agent_started", agent_phase="retrieval")
+
+        # Supported batches take the product's deterministic confirmation
+        # route.  URL-only malformed/unsupported batches use the same action
+        # boundary so its existing safe validation codes are preserved.
+        if parsed_references.is_url_only_batch:
+            try:
+                outcome = actions.request_confirmation(
+                    list(parsed_references.ordered_urls)
+                )
+            except ActionInputMismatch:
+                outcome = actions.finalize_input_mismatch()
+            diagnostics.event("action_validated", error_code=outcome.error_code)
+            return AgentExecution(
+                AgentAnswer(
+                    status=outcome.status,
+                    text=outcome.text,
+                    action_results=list(outcome.results),
+                    thread_id=request.thread_public_id,
+                    error_code=outcome.error_code,
+                ),
+                [],
+            )
+        services = self._service_factory(request)
+        if isinstance(services, KnowledgeServices):
+            services.set_diagnostics(diagnostics)
+        # Alternate service implementations used by deployments/tests can
+        # opt into the same request-scoped exact-reference contract without a
+        # new factory signature.  Production KnowledgeServices always does.
+        set_reference_scope = getattr(services, "set_reference_scope", None)
+        if callable(set_reference_scope):
+            set_reference_scope(reference_scope or None)
+        deps = AgentDeps(
+            services,
+            actions,
+            diagnostics=diagnostics,
+            reference_scope=reference_scope,
+            reference_save_requested=_explicit_save_requested(
+                parsed_references.semantic_remainder
+            ),
+        )
         usage = RunUsage()
         model_attempts = 0
 

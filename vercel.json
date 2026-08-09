@@ -3,7 +3,7 @@
   "outputDirectory": "public",
   "env": {
     "DEPLOYMENT_ENV": "competition",
-    "EXPECTED_DATABASE_REVISION": "f6a7b8c9d0e1"
+    "EXPECTED_DATABASE_REVISION": "a7b8c9d0e1f2"
   },
   "functions": {
     "api/health.py": {

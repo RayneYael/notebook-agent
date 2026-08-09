@@ -1,0 +1,4 @@
+{"file":".trellis/spec/backend/index.md","reason":"Run the backend package quality gate across the complete task diff."}
+{"file":".trellis/spec/backend/agent-retrieval-convergence.md","reason":"Verify exact references cannot admit cross-item evidence and ordinary retrieval/composer behavior does not regress."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Verify management pagination history, pending actions, deleted-content filters, and tenant isolation remain intact."}
+{"file":".trellis/tasks/08-09-exact-video-reference-routing/research/root-cause.md","reason":"Check the implementation against the actual logged failure chain rather than only happy-path unit tests."}

@@ -17,7 +17,7 @@ def test_web_auth_migration_branches_from_agent_save_and_is_additive():
     assert migration.down_revision == "c7e8a91b2d34"
 
 
-def test_web_and_mcp_branches_converge_on_one_merge_head():
+def test_web_and_ingest_completion_branches_converge_on_one_merge_head():
     script = ScriptDirectory.from_config(Config("alembic.ini"))
 
     assert script.get_revision("d3f4a5b6c7d8").down_revision == (
@@ -27,10 +27,11 @@ def test_web_and_mcp_branches_converge_on_one_merge_head():
         "c7e8a91b2d34"
     )
     assert script.get_revision("e5f6a7b8c9d0").down_revision == "d4e5f6a7b8c9"
-    assert script.get_heads() == ["f6a7b8c9d0e1"]
-    assert script.get_revision("f6a7b8c9d0e1").down_revision == (
+    assert script.get_revision("f6a7b8c9d0e1").down_revision == "e5f6a7b8c9d0"
+    assert script.get_heads() == ["a7b8c9d0e1f2"]
+    assert script.get_revision("a7b8c9d0e1f2").down_revision == (
         "d3f4a5b6c7d8",
-        "e5f6a7b8c9d0",
+        "f6a7b8c9d0e1",
     )
 
 

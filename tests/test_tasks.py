@@ -398,7 +398,13 @@ def test_dispatch_claim_retry_release_and_completion_are_conditional():
     assert dispatch.state == "enqueued"
     assert _claim_dispatch(71, "task-1", session_factory=factory) == 41
 
-    _complete_dispatch(71, "task-1", session_factory=factory)
+    item.state = "ready"
+    _complete_dispatch(
+        71,
+        "task-1",
+        process_state="ready",
+        session_factory=factory,
+    )
     assert dispatch.state == "completed"
     assert _claim_dispatch(71, "task-1", session_factory=factory) is None
 

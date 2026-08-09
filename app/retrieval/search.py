@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Iterable
 from dataclasses import dataclass
 
-from sqlalchemy import desc, func, or_, select
+from sqlalchemy import desc, false, func, or_, select
 
 from app.models import ContentItem, Segment
 
@@ -29,15 +30,62 @@ def _hits(rows) -> list[Hit]:
     return [Hit(item.id, item.title, item.platform_id, segment.id, segment.text, float(segment.start_sec), float(score)) for segment, item, score in rows]
 
 
-def vector_search(db, query_vector: list[float], *, user_id: int, k: int = 20) -> list[Hit]:
+def vector_search(
+    db,
+    query_vector: list[float],
+    *,
+    user_id: int,
+    k: int = 20,
+    platform: str | None = None,
+    platform_ids: Iterable[str] | None = None,
+    platform_id: str | None = None,
+) -> list[Hit]:
     distance = Segment.embedding.cosine_distance(query_vector)
-    stmt = select(Segment, ContentItem, (1 - distance).label("score")).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.deleted_at.is_(None), ContentItem.archived_at.is_(None), ContentItem.state == "ready", Segment.embedding.isnot(None)).order_by(distance).limit(k)
+    predicates = [
+        ContentItem.user_id == user_id,
+        ContentItem.deleted_at.is_(None),
+        ContentItem.archived_at.is_(None),
+        ContentItem.state == "ready",
+        Segment.embedding.isnot(None),
+    ]
+    if platform is not None:
+        predicates.append(ContentItem.platform == platform)
+    if platform_ids is not None or platform_id is not None:
+        values = tuple(platform_ids) if platform_ids is not None else (platform_id,)
+        predicates.append(ContentItem.platform_id.in_(values) if values else false())
+    stmt = (
+        select(Segment, ContentItem, (1 - distance).label("score"))
+        .join(ContentItem)
+        .where(*predicates)
+        .order_by(distance)
+        .limit(k)
+    )
     return _hits(db.execute(stmt).all())
 
 
-def bm25_search(db, query: str, *, user_id: int, k: int = 20) -> list[Hit]:
+def bm25_search(
+    db,
+    query: str,
+    *,
+    user_id: int,
+    k: int = 20,
+    platform: str | None = None,
+    platform_ids: Iterable[str] | None = None,
+    platform_id: str | None = None,
+) -> list[Hit]:
     is_zh = bool(re.search(r"[\u3400-\u9fff]", query))
-    base = select(Segment, ContentItem).join(ContentItem).where(ContentItem.user_id == user_id, ContentItem.deleted_at.is_(None), ContentItem.archived_at.is_(None), ContentItem.state == "ready")
+    predicates = [
+        ContentItem.user_id == user_id,
+        ContentItem.deleted_at.is_(None),
+        ContentItem.archived_at.is_(None),
+        ContentItem.state == "ready",
+    ]
+    if platform is not None:
+        predicates.append(ContentItem.platform == platform)
+    if platform_ids is not None or platform_id is not None:
+        values = tuple(platform_ids) if platform_ids is not None else (platform_id,)
+        predicates.append(ContentItem.platform_id.in_(values) if values else false())
+    base = select(Segment, ContentItem).join(ContentItem).where(*predicates)
     if is_zh:
         score = func.similarity(Segment.text, query)
         stmt = base.add_columns(score.label("score")).where(ContentItem.lang.like("zh%"), or_(Segment.text.op("%")(query), Segment.text.ilike(f"%{query}%"))).order_by(desc(score)).limit(k)

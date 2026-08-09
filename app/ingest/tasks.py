@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 import hashlib
+import inspect as py_inspect
 import json
+import logging
+import math
 import os
 import time
 from collections.abc import Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
 from celery import Celery, Task
-from kombu import Producer
-from sqlalchemy import delete, func, select
+from kombu import Producer, Queue
+from sqlalchemy import and_, delete, func, inspect, or_, select, text
 
 from app.config import Settings, get_settings
 from app.connectors.base import NeedsASR, NeedsExtension, TextResult, TransientFetchError
@@ -22,17 +26,91 @@ from app.db import get_session_factory
 from app.ingest.chunker import chunk
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
 from app.ingest.validate import guard_transcript
-from app.models import AppUser, ContentItem, IngestDispatch, Segment
+from app.models import (
+    AppUser,
+    ContentItem,
+    IngestCompletionEvent,
+    IngestDispatch,
+    Segment,
+)
 from app.agent.management import RecycleBinPurgeService
 from app.object_store import RawObjectStore
 from app.tls import configure_trusted_ca
 
 
-celery_app = Celery("kb", broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"), backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"))
+COMPLETION_QUEUE = "ingest-completion"
+COMPLETION_TASK_NAME = "app.ingest.completion.consume"
+_COMPLETION_QUEUES = (
+    Queue("ingest", durable=True, auto_delete=False),
+    Queue("maintenance", durable=True, auto_delete=False),
+    Queue(COMPLETION_QUEUE, durable=True, auto_delete=False),
+)
+
+celery_app = Celery(
+    "kb",
+    broker=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+    backend=os.getenv("REDIS_URL", "redis://localhost:6379/0"),
+)
+celery_app.conf.task_queues = _COMPLETION_QUEUES
 celery_app.conf.task_routes = {
     "app.ingest.tasks.fetch_text_task": {"queue": "ingest"},
     "app.ingest.tasks.purge_expired_items_task": {"queue": "maintenance"},
+    "app.ingest.tasks.publish_pending_ingest_completion_events_task": {
+        "queue": "maintenance"
+    },
+    COMPLETION_TASK_NAME: {"queue": COMPLETION_QUEUE},
 }
+
+_COMPLETION_LOGGER = logging.getLogger("notebook_agent.runtime")
+
+
+def _completion_diagnostic(
+    event: str,
+    *,
+    event_id: int | None = None,
+    outcome: str | None = None,
+    item_state: str | None = None,
+    error_code: str | None = None,
+    claimed: int | None = None,
+    enqueued: int | None = None,
+    failed: int | None = None,
+    deferred: int | None = None,
+    duration_ms: int | None = None,
+) -> None:
+    """Emit an allow-listed completion diagnostic without exception text."""
+
+    payload: dict[str, Any] = {"event": event}
+    if isinstance(event_id, int) and not isinstance(event_id, bool):
+        payload["event_id"] = max(0, event_id)
+    if outcome in {"completed", "failed"}:
+        payload["outcome"] = outcome
+    if item_state in {"ready", "needs_extension", "needs_asr", "failed"}:
+        payload["item_state"] = item_state
+    safe_error_codes = {
+        "ingestion_failed",
+        "transient_fetch_failed",
+        "item_deleted",
+        "completion_publish_failed",
+        "broker_unavailable",
+    }
+    if error_code in safe_error_codes:
+        payload["error_code"] = error_code
+    for key, value in {
+        "claimed": claimed,
+        "enqueued": enqueued,
+        "failed": failed,
+        "deferred": deferred,
+        "duration_ms": duration_ms,
+    }.items():
+        if isinstance(value, int) and not isinstance(value, bool):
+            payload[key] = max(0, value)
+    try:
+        _COMPLETION_LOGGER.info(
+            "diagnostic", extra={"diagnostic_payload": payload}
+        )
+    except Exception:
+        # Observability must never alter ingestion or maintenance semantics.
+        return
 
 
 def _bounded_publish_options(
@@ -317,6 +395,248 @@ def publish_ingest_dispatch(
         return str(result.id)
 
 
+@dataclass(frozen=True)
+class CompletionSweepResult:
+    """Safe counters returned by one bounded completion repair pass."""
+
+    claimed: int = 0
+    enqueued: int = 0
+    failed: int = 0
+    deferred: int = 0
+    duration_ms: int = 0
+
+    def as_dict(self) -> dict[str, int]:
+        return {
+            "claimed": self.claimed,
+            "enqueued": self.enqueued,
+            "failed": self.failed,
+            "deferred": self.deferred,
+            "duration_ms": self.duration_ms,
+        }
+
+
+class IngestCompletionPublisher:
+    """Bounded, claim-based repair publisher for the completion outbox."""
+
+    def __init__(
+        self,
+        session_factory,
+        *,
+        publisher: Callable[..., str | None] | None = None,
+        batch_size: int = 20,
+        claim_timeout_seconds: int = 300,
+        max_duration_seconds: float = 30.0,
+        clock: Callable[[], float] = time.monotonic,
+    ) -> None:
+        if batch_size <= 0 or batch_size > 100:
+            raise ValueError("completion batch_size must be between 1 and 100")
+        if claim_timeout_seconds <= 0:
+            raise ValueError("completion claim timeout must be positive")
+        if max_duration_seconds <= 0:
+            raise ValueError("completion max duration must be positive")
+        self._session_factory = session_factory
+        self._publisher = publisher
+        self._batch_size = int(batch_size)
+        self._claim_timeout_seconds = int(claim_timeout_seconds)
+        self._max_duration_seconds = float(max_duration_seconds)
+        self._clock = clock
+
+    def _claim_batch(self, *, budget_seconds: float) -> list[tuple[int, str]]:
+        """Claim rows in one short transaction, never across broker I/O."""
+
+        with self._session_factory() as db:
+            _set_completion_statement_timeout(db, budget_seconds)
+            now = _db_now(db)
+            stale_before = now - timedelta(seconds=self._claim_timeout_seconds)
+            statement = (
+                select(IngestCompletionEvent)
+                .where(
+                    or_(
+                        IngestCompletionEvent.publish_state == "pending",
+                        and_(
+                            IngestCompletionEvent.publish_state == "claimed",
+                            or_(
+                                IngestCompletionEvent.claimed_at.is_(None),
+                                IngestCompletionEvent.claimed_at <= stale_before,
+                            ),
+                        ),
+                    )
+                )
+                .order_by(IngestCompletionEvent.id)
+                .limit(self._batch_size)
+                .with_for_update(skip_locked=True)
+            )
+            events = list(db.scalars(statement))
+            claims: list[tuple[int, str]] = []
+            for event in events:
+                token = uuid4().hex
+                event.publish_state = "claimed"
+                event.claim_token = token
+                event.claimed_at = now
+                event.updated_at = now
+                claims.append((event.id, token))
+            if claims:
+                db.commit()
+            return claims
+
+    def sweep_once(self) -> CompletionSweepResult:
+        started = self._clock()
+        try:
+            claims = self._claim_batch(budget_seconds=self._max_duration_seconds)
+        except Exception:
+            # A database failure leaves all rows pending/claimed for a later
+            # pass. Keep diagnostics numeric and do not leak driver details.
+            duration = max(0, int((self._clock() - started) * 1000))
+            _completion_diagnostic(
+                "completion_event_sweep",
+                failed=1,
+                duration_ms=duration,
+            )
+            return CompletionSweepResult(failed=1, duration_ms=duration)
+
+        claimed_count = len(claims)
+        enqueued = 0
+        failed = 0
+        deferred = 0
+        for index, (event_id, claim_token) in enumerate(claims):
+            if self._clock() - started >= self._max_duration_seconds:
+                deferred += len(claims) - index
+                break
+            try:
+                publisher = self._publisher or publish_ingest_completion_event
+                # The default publisher performs its own claim.  A sweep has
+                # already claimed the row, so publish the envelope directly
+                # and then conditionally ack with this sweep token.
+                if self._publisher is None:
+                    remaining = self._max_duration_seconds - (
+                        self._clock() - started
+                    )
+                    if remaining <= 0:
+                        deferred += len(claims) - index
+                        break
+                    task_id = self._publish_claimed(
+                        event_id, budget_seconds=remaining
+                    )
+                else:
+                    parameters = py_inspect.signature(publisher).parameters
+                    if "session_factory" in parameters:
+                        task_id = publisher(
+                            event_id,
+                            session_factory=self._session_factory,
+                        )
+                    else:
+                        task_id = publisher(event_id)
+                ack_budget = self._max_duration_seconds - (
+                    self._clock() - started
+                )
+                if ack_budget <= 0:
+                    # The broker may already have accepted this event. Leave
+                    # the claim for timeout recovery rather than starting SQL
+                    # beyond the whole-sweep deadline; a duplicate is valid.
+                    deferred += 1
+                    continue
+                if _mark_completion_enqueued(
+                    event_id,
+                    claim_token,
+                    task_id,
+                    session_factory=self._session_factory,
+                    budget_seconds=ack_budget,
+                ):
+                    enqueued += 1
+                else:
+                    # Test/injected publishers may update the row themselves;
+                    # the claim-token guard deliberately classifies that race
+                    # as deferred rather than acknowledging another publisher.
+                    deferred += 1
+            except Exception:
+                failed += 1
+                try:
+                    release_budget = self._max_duration_seconds - (
+                        self._clock() - started
+                    )
+                    if release_budget <= 0:
+                        continue
+                    _release_completion_claim(
+                        event_id,
+                        claim_token,
+                        session_factory=self._session_factory,
+                        budget_seconds=release_budget,
+                    )
+                except Exception:
+                    # Leave an un-released claim for the timeout recovery
+                    # branch if the release transaction itself is unavailable.
+                    pass
+
+        duration = max(0, int((self._clock() - started) * 1000))
+        _completion_diagnostic(
+            "completion_event_sweep",
+            claimed=claimed_count,
+            enqueued=enqueued,
+            failed=failed,
+            deferred=deferred,
+            duration_ms=duration,
+        )
+        return CompletionSweepResult(
+            claimed=claimed_count,
+            enqueued=enqueued,
+            failed=failed,
+            deferred=deferred,
+            duration_ms=duration,
+        )
+
+    # Alias used by maintenance callers and older operational scripts.
+    publish_pending = sweep_once
+
+    def _publish_claimed(
+        self, event_id: int, *, budget_seconds: float | None = None
+    ) -> str | None:
+        """Publish a row already claimed by this sweep."""
+
+        settings = get_settings()
+        options = _bounded_publish_options(
+            settings, budget_seconds=budget_seconds
+        )
+        connect_timeout = options.pop("_connect_timeout")
+        socket_timeout = options.pop("_socket_timeout")
+        options.pop("_total_timeout")
+        celery_app.conf.broker_connection_timeout = connect_timeout
+        transport_options = dict(celery_app.conf.broker_transport_options or {})
+        transport_options.update(
+            socket_timeout=socket_timeout,
+            socket_connect_timeout=connect_timeout,
+        )
+        celery_app.conf.broker_transport_options = transport_options
+        with celery_app.connection_for_write(
+            connect_timeout=connect_timeout,
+            transport_options=transport_options,
+        ) as connection:
+            producer = Producer(connection)
+            result = celery_app.send_task(
+                COMPLETION_TASK_NAME,
+                args=[event_id],
+                queue=COMPLETION_QUEUE,
+                producer=producer,
+                declare=[_COMPLETION_QUEUES[-1]],
+                delivery_mode=2,
+                **options,
+            )
+        return str(getattr(result, "id", "") or "") or None
+
+
+@celery_app.task(name="app.ingest.tasks.publish_pending_ingest_completion_events_task")
+def publish_pending_ingest_completion_events_task() -> dict[str, int]:
+    """Repair pending/stale completion rows on the maintenance queue."""
+
+    settings = get_settings()
+    service = IngestCompletionPublisher(
+        get_session_factory(),
+        batch_size=settings.ingest_completion_batch_size,
+        claim_timeout_seconds=settings.ingest_completion_claim_timeout_seconds,
+        max_duration_seconds=settings.ingest_completion_max_duration_seconds,
+    )
+    return service.sweep_once().as_dict()
+
+
 @celery_app.task(name="app.ingest.tasks.purge_expired_items_task")
 def purge_expired_items_task() -> dict[str, int]:
     """Run one bounded recycle-bin sweep and emit only safe counters."""
@@ -344,7 +664,34 @@ try:
 except (TypeError, ValueError):
     _purge_interval = 3600
 
+def _completion_interval_from_env() -> int:
+    """Fail closed when beat's completion schedule is misconfigured."""
+
+    raw_value = os.getenv(
+        "INGEST_COMPLETION_INTERVAL_SECONDS",
+        os.getenv("INGEST_COMPLETION_PUBLISH_INTERVAL_SECONDS", "60"),
+    )
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "INGEST_COMPLETION_INTERVAL_SECONDS must be a positive integer"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            "INGEST_COMPLETION_INTERVAL_SECONDS must be a positive integer"
+        )
+    return value
+
+
+_completion_interval = _completion_interval_from_env()
+
 celery_app.conf.beat_schedule = {
+    "publish-pending-ingest-completion-events": {
+        "task": "app.ingest.tasks.publish_pending_ingest_completion_events_task",
+        "schedule": float(_completion_interval),
+        "options": {"queue": "maintenance"},
+    },
     "purge-expired-items": {
         "task": "app.ingest.tasks.purge_expired_items_task",
         "schedule": float(_purge_interval),
@@ -412,6 +759,8 @@ def _claim_dispatch(
     session_factory=None,
 ) -> int | None:
     factory = session_factory or get_session_factory()
+    deleted_event_id: int | None = None
+    deleted_event_created = False
     with factory() as db:
         dispatch = db.scalar(
             select(IngestDispatch)
@@ -441,14 +790,38 @@ def _claim_dispatch(
             item.state = "failed"
             item.fail_reason = "item_deleted"
             dispatch.updated_at = datetime.now(UTC)
+            deleted_event_id, deleted_event_created = _ensure_completion_event(
+                db,
+                dispatch,
+                item,
+                outcome="failed",
+                item_state="failed",
+                error_code="item_deleted",
+            )
             db.commit()
-            return None
-        dispatch.state = "running"
-        if task_id is not None:
-            dispatch.task_id = task_id
-        dispatch.updated_at = datetime.now(UTC)
-        db.commit()
-        return item.id
+        else:
+            dispatch.state = "running"
+            if task_id is not None:
+                dispatch.task_id = task_id
+            dispatch.updated_at = datetime.now(UTC)
+            db.commit()
+            return item.id
+    if deleted_event_id is not None:
+        if deleted_event_created:
+            _completion_diagnostic(
+                "completion_event_created",
+                event_id=deleted_event_id,
+                outcome="failed",
+                item_state="failed",
+                error_code="item_deleted",
+            )
+        _publish_completion_event_best_effort(
+            deleted_event_id,
+            session_factory=factory,
+            outcome="failed",
+            item_state="failed",
+        )
+    return None
 
 
 def _release_dispatch_for_retry(
@@ -484,8 +857,12 @@ def _complete_dispatch(
     *,
     process_state: str | None = None,
     session_factory=None,
-) -> None:
+) -> int | None:
     factory = session_factory or get_session_factory()
+    event_id: int | None = None
+    event_created = False
+    event_outcome: str | None = None
+    event_item_state: str | None = None
     with factory() as db:
         dispatch = db.scalar(
             select(IngestDispatch)
@@ -500,7 +877,7 @@ def _complete_dispatch(
                 and dispatch.task_id not in {None, task_id}
             )
         ):
-            return
+            return None
         item = db.get(ContentItem, dispatch.item_id)
         if (
             item is None
@@ -514,12 +891,401 @@ def _complete_dispatch(
                 item.state = "failed"
                 item.fail_reason = "item_deleted"
             dispatch.updated_at = datetime.now(UTC)
+            if item is not None:
+                event_item_state = "failed"
+                event_outcome = "failed"
+                event_id, event_created = _ensure_completion_event(
+                    db,
+                    dispatch,
+                    item,
+                    outcome="failed",
+                    item_state=event_item_state,
+                    error_code="item_deleted",
+                )
             db.commit()
-            return
-        dispatch.state = "completed"
-        dispatch.error_code = None
-        dispatch.updated_at = datetime.now(UTC)
+        else:
+            event_item_state = _terminal_item_state(item, process_state)
+            event_outcome = "completed"
+            dispatch.state = "completed"
+            dispatch.error_code = None
+            dispatch.updated_at = datetime.now(UTC)
+            event_id, event_created = _ensure_completion_event(
+                db,
+                dispatch,
+                item,
+                outcome=event_outcome,
+                item_state=event_item_state,
+                error_code=None,
+            )
+            db.commit()
+    if event_id is not None:
+        if event_created:
+            _completion_diagnostic(
+                "completion_event_created",
+                event_id=event_id,
+                outcome=event_outcome,
+                item_state=event_item_state,
+                error_code="item_deleted" if event_outcome == "failed" else None,
+            )
+        _publish_completion_event_best_effort(
+            event_id,
+            session_factory=factory,
+            outcome=event_outcome,
+            item_state=event_item_state,
+        )
+    return event_id
+
+
+def _terminal_item_state(item: Any, process_state: str | None) -> str:
+    """Project the worker result to the small completion-event vocabulary."""
+
+    state = getattr(item, "state", None)
+    if state not in {"ready", "needs_extension", "needs_asr"}:
+        raise ValueError("completion_item_state_not_terminal")
+    if process_state is not None and process_state != state:
+        raise ValueError("completion_process_state_mismatch")
+    return state
+
+
+def _ensure_completion_event(
+    db: Any,
+    dispatch: Any,
+    item: Any,
+    *,
+    outcome: str,
+    item_state: str,
+    error_code: str | None,
+) -> tuple[int | None, bool]:
+    """Insert-or-read the one outbox row for a dispatch inside its lock.
+
+    Tiny offline fakes used by the synchronous worker tests predate the
+    outbox model and intentionally expose no ``add``/``flush`` methods.  They
+    still exercise dispatch transition guards, so absence of those methods is
+    treated as a no-op compatibility boundary; real SQLAlchemy sessions always
+    provide both and therefore enforce the unique source idempotency key.
+    """
+
+    add = getattr(db, "add", None)
+    flush = getattr(db, "flush", None)
+    if not callable(add) or not callable(flush):
+        return None, False
+    dialect = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
+    if dialect == "sqlite":
+        bind = getattr(db, "bind", None)
+        try:
+            if bind is not None and not inspect(bind).has_table(
+                IngestCompletionEvent.__tablename__
+            ):
+                return None, False
+        except Exception:
+            return None, False
+    try:
+        existing = db.scalar(
+            select(IngestCompletionEvent)
+            .where(IngestCompletionEvent.dispatch_id == dispatch.id)
+            .with_for_update()
+        )
+    except Exception:
+        # A few legacy SQLite management fixtures intentionally create only
+        # the pre-outbox tables.  Keep those offline state-transition tests
+        # meaningful; a real PostgreSQL session must surface schema drift.
+        if dialect != "sqlite":
+            raise
+        rollback = getattr(db, "rollback", None)
+        if callable(rollback):
+            rollback()
+        return None, False
+    if existing is not None:
+        return getattr(existing, "id", None), False
+    event = IngestCompletionEvent(
+        public_id=uuid4().hex,
+        dispatch_id=dispatch.id,
+        item_id=item.id,
+        outcome=outcome,
+        item_state=item_state,
+        error_code=error_code,
+        publish_state="pending",
+    )
+    add(event)
+    flush()
+    return getattr(event, "id", None), True
+
+
+def _find_completion_event(db: Any, dispatch_id: int) -> Any | None:
+    """Load one event for a locked dispatch when the session supports it."""
+
+    if not callable(getattr(db, "scalar", None)):
+        return None
+    if not callable(getattr(db, "add", None)):
+        return None
+    dialect = getattr(getattr(getattr(db, "bind", None), "dialect", None), "name", None)
+    if dialect == "sqlite":
+        bind = getattr(db, "bind", None)
+        try:
+            if bind is not None and not inspect(bind).has_table(
+                IngestCompletionEvent.__tablename__
+            ):
+                return None
+        except Exception:
+            return None
+    return db.scalar(
+        select(IngestCompletionEvent)
+        .where(IngestCompletionEvent.dispatch_id == dispatch_id)
+        .with_for_update()
+    )
+
+
+def _db_now(db: Any) -> datetime:
+    """Read PostgreSQL time while keeping lightweight unit fakes usable."""
+
+    try:
+        value = db.scalar(select(func.now()))
+    except Exception:
+        value = None
+    if isinstance(value, datetime):
+        return value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+    return datetime.now(UTC)
+
+
+def _set_completion_statement_timeout(db: Any, budget_seconds: float) -> None:
+    """Bound PostgreSQL outbox statements by the remaining sweep budget."""
+
+    if budget_seconds <= 0:
+        raise TimeoutError("completion_sweep_deadline")
+    bind = getattr(db, "bind", None)
+    dialect = getattr(getattr(bind, "dialect", None), "name", None)
+    if dialect == "postgresql":
+        db.execute(
+            text("SELECT set_config('statement_timeout', :timeout_text, true)"),
+            {"timeout_text": f"{max(1, int(budget_seconds * 1000))}ms"},
+        )
+
+
+def _completion_claim_timeout_seconds() -> int:
+    try:
+        return max(1, int(get_settings().ingest_completion_claim_timeout_seconds))
+    except (RuntimeError, ValueError, AttributeError):
+        return 300
+
+
+def _claim_completion_event(
+    event_id: int,
+    *,
+    session_factory=None,
+    claim_timeout_seconds: int | None = None,
+) -> tuple[str, Any] | None:
+    """Claim one pending/stale event in a short database transaction."""
+
+    factory = session_factory or get_session_factory()
+    timeout = max(
+        1,
+        int(
+            claim_timeout_seconds
+            if claim_timeout_seconds is not None
+            else _completion_claim_timeout_seconds()
+        ),
+    )
+    with factory() as db:
+        event = db.scalar(
+            select(IngestCompletionEvent)
+            .where(IngestCompletionEvent.id == event_id)
+            .with_for_update()
+        )
+        if event is None:
+            return None
+        now = _db_now(db)
+        stale_before = now - timedelta(seconds=timeout)
+        claimed_at = event.claimed_at
+        if isinstance(claimed_at, datetime) and claimed_at.tzinfo is None:
+            claimed_at = claimed_at.replace(tzinfo=UTC)
+        stale = event.publish_state == "claimed" and (
+            claimed_at is None or claimed_at <= stale_before
+        )
+        if event.publish_state == "enqueued":
+            return None
+        if event.publish_state not in {"pending", "claimed"}:
+            return None
+        if event.publish_state == "claimed" and not stale:
+            return None
+        token = uuid4().hex
+        event.publish_state = "claimed"
+        event.claim_token = token
+        event.claimed_at = now
+        event.updated_at = now
         db.commit()
+        return token, event
+
+
+def _release_completion_claim(
+    event_id: int,
+    claim_token: str,
+    *,
+    session_factory=None,
+    budget_seconds: float | None = None,
+) -> bool:
+    factory = session_factory or get_session_factory()
+    with factory() as db:
+        if budget_seconds is not None:
+            _set_completion_statement_timeout(db, budget_seconds)
+        event = db.scalar(
+            select(IngestCompletionEvent)
+            .where(
+                IngestCompletionEvent.id == event_id,
+                IngestCompletionEvent.publish_state == "claimed",
+                IngestCompletionEvent.claim_token == claim_token,
+            )
+            .with_for_update()
+        )
+        if event is None:
+            return False
+        now = _db_now(db)
+        event.publish_state = "pending"
+        event.claim_token = None
+        event.claimed_at = None
+        event.updated_at = now
+        db.commit()
+        return True
+
+
+def _mark_completion_enqueued(
+    event_id: int,
+    claim_token: str,
+    task_id: str | None,
+    *,
+    session_factory=None,
+    budget_seconds: float | None = None,
+) -> bool:
+    """Ack only the outbox row that this publisher claimed."""
+
+    factory = session_factory or get_session_factory()
+    with factory() as db:
+        if budget_seconds is not None:
+            _set_completion_statement_timeout(db, budget_seconds)
+        event = db.scalar(
+            select(IngestCompletionEvent)
+            .where(
+                IngestCompletionEvent.id == event_id,
+                IngestCompletionEvent.publish_state == "claimed",
+                IngestCompletionEvent.claim_token == claim_token,
+            )
+            .with_for_update()
+        )
+        if event is None:
+            return False
+        now = _db_now(db)
+        event.publish_state = "enqueued"
+        event.claim_token = None
+        event.claimed_at = None
+        event.publish_task_id = task_id
+        event.enqueued_at = now
+        event.updated_at = now
+        db.commit()
+        return True
+
+
+def publish_ingest_completion_event(
+    event_id: int,
+    *,
+    session_factory=None,
+    settings: Settings | None = None,
+) -> str | None:
+    """Publish one completion event using a bounded, durable task envelope.
+
+    Only the internal event row ID is serialized.  The source dispatch/item
+    transaction has already committed before this function is called.
+    """
+
+    settings = settings or get_settings()
+    claim = _claim_completion_event(
+        event_id,
+        session_factory=session_factory,
+        claim_timeout_seconds=settings.ingest_completion_claim_timeout_seconds,
+    )
+    if claim is None:
+        return None
+    claim_token, _event = claim
+    options = _bounded_publish_options(settings)
+    connect_timeout = options.pop("_connect_timeout")
+    socket_timeout = options.pop("_socket_timeout")
+    options.pop("_total_timeout")
+    celery_app.conf.broker_connection_timeout = connect_timeout
+    transport_options = dict(celery_app.conf.broker_transport_options or {})
+    transport_options.update(
+        socket_timeout=socket_timeout,
+        socket_connect_timeout=connect_timeout,
+    )
+    celery_app.conf.broker_transport_options = transport_options
+    try:
+        with celery_app.connection_for_write(
+            connect_timeout=connect_timeout,
+            transport_options=transport_options,
+        ) as connection:
+            producer = Producer(connection)
+            result = celery_app.send_task(
+                COMPLETION_TASK_NAME,
+                args=[event_id],
+                queue=COMPLETION_QUEUE,
+                producer=producer,
+                declare=[_COMPLETION_QUEUES[-1]],
+                delivery_mode=2,
+                **options,
+            )
+        task_id = str(getattr(result, "id", "") or "") or None
+    except Exception:
+        # Do not include broker/provider exception text in the runtime
+        # diagnostic; the pending row is the durable recovery record.
+        try:
+            _release_completion_claim(
+                event_id, claim_token, session_factory=session_factory
+            )
+        except Exception:
+            # A DB outage after a broker failure leaves the claim for the
+            # bounded stale-claim sweep; never mask the publish failure with
+            # an adapter/driver exception.
+            pass
+        _completion_diagnostic(
+            "completion_event_publish_failed",
+            event_id=event_id,
+            error_code="completion_publish_failed",
+        )
+        raise
+    marked = _mark_completion_enqueued(
+        event_id,
+        claim_token,
+        task_id,
+        session_factory=session_factory,
+    )
+    if marked:
+        _completion_diagnostic("completion_event_enqueued", event_id=event_id)
+    return task_id
+
+
+def _publish_completion_event_best_effort(
+    event_id: int,
+    *,
+    session_factory=None,
+    outcome: str | None = None,
+    item_state: str | None = None,
+) -> str | None:
+    """Low-latency publish that cannot change ingestion result semantics."""
+
+    try:
+        publisher = publish_ingest_completion_event
+        parameters = py_inspect.signature(publisher).parameters
+        if "session_factory" in parameters:
+            return publisher(event_id, session_factory=session_factory)
+        # Small fakes often monkeypatch a one-argument publisher.  Keep that
+        # test seam working without weakening the production session boundary.
+        return publisher(event_id)
+    except Exception:
+        _completion_diagnostic(
+            "completion_event_publish_failed",
+            event_id=event_id,
+            outcome=outcome,
+            item_state=item_state,
+            error_code="completion_publish_failed",
+        )
+        return None
 
 
 def _mark_dispatch_failed(
@@ -528,36 +1294,113 @@ def _mark_dispatch_failed(
     *,
     task_id: str | None = None,
     session_factory=None,
-) -> None:
+) -> int | None:
     factory = session_factory or get_session_factory()
     error_code = (
         "transient_fetch_failed"
         if isinstance(exc, TransientFetchError)
         else "ingestion_failed"
     )
+    event_id: int | None = None
+    event_created = False
+    event_outcome: str | None = None
+    event_item_state: str | None = None
+    event_error_code: str | None = None
     with factory() as db:
         dispatch = db.scalar(
             select(IngestDispatch)
             .where(IngestDispatch.id == dispatch_id)
             .with_for_update()
         )
-        if (
-            dispatch is None
-            or dispatch.state == "completed"
-            or (
-                task_id is not None
-                and dispatch.task_id not in {None, task_id}
+        if dispatch is None:
+            return None
+        if task_id is not None and dispatch.task_id not in {None, task_id}:
+            return None
+        # A repeated final failure hook must reuse the original event and
+        # snapshot.  It must never overwrite a stable error code or create a
+        # second row for the same attempt.
+        if dispatch.state == "completed":
+            return None
+        if dispatch.state == "failed":
+            existing = _find_completion_event(db, dispatch.id)
+            event_id = getattr(existing, "id", None) if existing is not None else None
+            if existing is not None:
+                event_outcome = getattr(existing, "outcome", "failed")
+                event_item_state = getattr(existing, "item_state", "failed")
+            if event_id is None:
+                item = db.get(ContentItem, dispatch.item_id)
+                if item is not None:
+                    event_outcome = "failed"
+                    event_item_state = "failed"
+                    event_error_code = dispatch.error_code or error_code
+                    event_id, event_created = _ensure_completion_event(
+                        db,
+                        dispatch,
+                        item,
+                        outcome=event_outcome,
+                        item_state=event_item_state,
+                        error_code=event_error_code,
+                    )
+            if event_id is not None:
+                db.commit()
+        else:
+            item = db.get(ContentItem, dispatch.item_id)
+            if (
+                item is not None
+                and item.state == "ready"
+                and dispatch.state in {"running", "enqueued"}
+            ):
+                # process_item commits ready before _complete_dispatch obtains
+                # its next transaction. A crash/failure in that window must
+                # preserve the item truth and converge the dispatch to success.
+                dispatch.state = "completed"
+                dispatch.error_code = None
+                dispatch.updated_at = datetime.now(UTC)
+                event_outcome = "completed"
+                event_item_state = "ready"
+                event_id, event_created = _ensure_completion_event(
+                    db,
+                    dispatch,
+                    item,
+                    outcome=event_outcome,
+                    item_state=event_item_state,
+                    error_code=None,
+                )
+            else:
+                dispatch.state = "failed"
+                dispatch.error_code = error_code
+                dispatch.updated_at = datetime.now(UTC)
+                if item is not None:
+                    item.state = "failed"
+                    item.fail_reason = error_code
+                    event_outcome = "failed"
+                    event_item_state = "failed"
+                    event_error_code = error_code
+                    event_id, event_created = _ensure_completion_event(
+                        db,
+                        dispatch,
+                        item,
+                        outcome=event_outcome,
+                        item_state=event_item_state,
+                        error_code=event_error_code,
+                    )
+            db.commit()
+    if event_id is not None:
+        if event_created:
+            _completion_diagnostic(
+                "completion_event_created",
+                event_id=event_id,
+                outcome=event_outcome,
+                item_state=event_item_state,
+                error_code=event_error_code,
             )
-        ):
-            return
-        dispatch.state = "failed"
-        dispatch.error_code = error_code
-        dispatch.updated_at = datetime.now(UTC)
-        item = db.get(ContentItem, dispatch.item_id)
-        if item is not None and item.state != "ready":
-            item.state = "failed"
-            item.fail_reason = error_code
-        db.commit()
+        _publish_completion_event_best_effort(
+            event_id,
+            session_factory=factory,
+            outcome=event_outcome,
+            item_state=event_item_state,
+        )
+    return event_id
 
 
 def ingest_url(url: str, *, user_id: int, why_saved: str | None = None, connector=None, embedder=None, object_store=None, session_factory=None) -> tuple[int, str]:

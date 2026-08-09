@@ -24,6 +24,8 @@ _STAGES = frozenset({
     "model_attempt", "tool_call", "embedding_started", "embedding_completed",
     "embedding_failed", "retrieval_started", "retrieval_completed", "retrieval_failed",
     "citation_validated", "context_compressed", "agent_failed", "action_validated",
+    "completion_event_created", "completion_event_enqueued",
+    "completion_event_publish_failed", "completion_event_sweep",
 })
 _ROUTES = frozenset({"agent", "command", "duplicate", "action"})
 _TOOLS = frozenset({
@@ -54,6 +56,7 @@ _ERRORS = frozenset({
     "save_failed", "save_unavailable", "invalid_url", "batch_too_large", "empty_batch",
     "channel_unavailable", "challenge_invalid", "challenge_expired",
     "challenge_used", "account_disabled", "web_login_unavailable",
+    "ingestion_failed", "transient_fetch_failed", "completion_publish_failed",
 })
 
 

@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 import inspect
 import time
+import re
 from typing import Literal
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -54,6 +55,123 @@ class ItemReference:
     platform: str
     platform_id: str
     canonical_url: str
+
+
+# Keep URL token handling in one place.  Action tools, the deterministic
+# bare-URL route, and exact-reference retrieval all need to agree on where a
+# URL ends (especially when a message ends in Chinese punctuation).
+_MESSAGE_URL_RE = re.compile(
+    r"https?://[^\s<>，。！？》」』】）\u3400-\u9fff]+",
+    re.IGNORECASE,
+)
+_SAFE_URL_TRAILING_PUNCTUATION = ".,!?)]}，。！？》」"
+_SAFE_MESSAGE_PUNCTUATION = (
+    " \t\r\n.,!?)]}，。！？》」、:：;；()（）[]【】<>\"'“”‘’"
+)
+
+
+@dataclass(frozen=True)
+class ParsedMessageReferences:
+    """Server-owned interpretation of URLs in one current user message.
+
+    ``ordered_urls`` retains every HTTP(S) token (including duplicates) for
+    action input matching.  ``references`` is a stable, de-duplicated set of
+    normalized platform references used to scope retrieval.  Unsupported or
+    malformed URL tokens remain visible in ``unsupported_urls`` so they never
+    accidentally become a successful bare supported-URL action.
+    """
+
+    ordered_urls: tuple[str, ...] = ()
+    supported_urls: tuple[str, ...] = ()
+    unsupported_urls: tuple[str, ...] = ()
+    references: tuple[tuple[str, str], ...] = ()
+    semantic_remainder: str = ""
+    non_url_remainder: str = ""
+
+    @property
+    def has_supported_urls(self) -> bool:
+        return bool(self.supported_urls)
+
+    @property
+    def has_semantic_text(self) -> bool:
+        return bool(self.semantic_remainder)
+
+    @property
+    def is_bare_supported_url_batch(self) -> bool:
+        """Whether the message has one unambiguous save-confirmation meaning."""
+
+        return bool(self.supported_urls) and not self.unsupported_urls and not self.semantic_remainder
+
+    @property
+    def is_url_only_batch(self) -> bool:
+        """Whether every semantic token in the message is an HTTP(S) URL."""
+
+        return bool(self.ordered_urls) and not self.non_url_remainder
+
+
+def parse_message_references(message: str) -> ParsedMessageReferences:
+    """Extract and normalize supported URL tokens from the raw message.
+
+    URL interpretation is deliberately deterministic and does not use model
+    history.  Only the existing safe trailing punctuation is stripped from a
+    token before passing it through :func:`normalize_item_reference`.
+    """
+
+    raw = str(message)
+    ordered: list[str] = []
+    supported: list[str] = []
+    unsupported: list[str] = []
+    references: list[tuple[str, str]] = []
+    seen_references: set[tuple[str, str]] = set()
+    remainder_parts: list[str] = []
+    non_url_remainder_parts: list[str] = []
+    cursor = 0
+
+    for match in _MESSAGE_URL_RE.finditer(raw):
+        token = match.group(0).rstrip(_SAFE_URL_TRAILING_PUNCTUATION)
+        # A token containing only punctuation after the scheme is still an
+        # invalid URL and must retain the safe validation path.
+        if not token:
+            token = match.group(0)
+        ordered.append(token)
+        non_url_remainder_parts.append(raw[cursor : match.start()])
+        try:
+            reference = normalize_item_reference(token)
+        except (InvalidURL, UnsupportedURL, ValueError):
+            unsupported.append(token)
+            remainder_parts.append(raw[cursor : match.end()])
+        else:
+            supported.append(token)
+            key = (reference.platform, reference.platform_id)
+            if key not in seen_references:
+                seen_references.add(key)
+                references.append(key)
+            # Remove the complete token and any punctuation captured directly
+            # after it from semantic-text classification.
+            remainder_parts.append(raw[cursor : match.start()])
+        cursor = match.end()
+    remainder_parts.append(raw[cursor:])
+    non_url_remainder_parts.append(raw[cursor:])
+    remainder = "".join(remainder_parts).translate(
+        {ord(value): " " for value in _SAFE_MESSAGE_PUNCTUATION}
+    )
+    # A harmless punctuation-only remainder is not semantic text.  Preserve
+    # meaningful words such as “保存” so an explicit save request cannot be
+    # mistaken for a bare URL confirmation.
+    semantic_remainder = " ".join(remainder.split())
+    non_url_remainder = " ".join(
+        "".join(non_url_remainder_parts)
+        .translate({ord(value): " " for value in _SAFE_MESSAGE_PUNCTUATION})
+        .split()
+    )
+    return ParsedMessageReferences(
+        ordered_urls=tuple(ordered),
+        supported_urls=tuple(supported),
+        unsupported_urls=tuple(unsupported),
+        references=tuple(references),
+        semantic_remainder=semantic_remainder,
+        non_url_remainder=non_url_remainder,
+    )
 
 
 @dataclass(frozen=True)

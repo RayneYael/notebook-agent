@@ -517,6 +517,80 @@ class IngestDispatch(Base):
     )
 
 
+class IngestCompletionEvent(Base):
+    """Durable outbox row for one terminal ingestion dispatch attempt.
+
+    The broker envelope intentionally contains only ``id``.  Consumers load
+    the event and its tenant-owned item from the trusted database and use the
+    stable row/public identifiers as their own idempotency key.
+    """
+
+    __tablename__ = "ingest_completion_event"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    public_id: Mapped[str] = mapped_column(Text, nullable=False)
+    dispatch_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("ingest_dispatch.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    item_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("content_item.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    # This is a terminal snapshot, not a live ContentItem state lookup.  It
+    # lets a future consumer distinguish a successful ready item from the
+    # normal needs_extension/needs_asr worker outcomes.
+    item_state: Mapped[str] = mapped_column(Text, nullable=False)
+    error_code: Mapped[str | None] = mapped_column(Text)
+    publish_state: Mapped[str] = mapped_column(
+        Text, nullable=False, server_default="pending"
+    )
+    claim_token: Mapped[str | None] = mapped_column(Text)
+    claimed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    publish_task_id: Mapped[str | None] = mapped_column(Text)
+    enqueued_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "public_id", name="uq_ingest_completion_event_public_id"
+        ),
+        UniqueConstraint(
+            "dispatch_id", name="uq_ingest_completion_event_dispatch"
+        ),
+        CheckConstraint(
+            "outcome IN ('completed', 'failed')",
+            name="ck_ingest_completion_event_outcome",
+        ),
+        CheckConstraint(
+            "item_state IN ('ready', 'needs_extension', 'needs_asr', 'failed')",
+            name="ck_ingest_completion_event_item_state",
+        ),
+        CheckConstraint(
+            "publish_state IN ('pending', 'claimed', 'enqueued')",
+            name="ck_ingest_completion_event_publish_state",
+        ),
+        CheckConstraint(
+            "(outcome = 'completed' AND item_state IN ('ready', 'needs_extension', 'needs_asr') AND error_code IS NULL) OR "
+            "(outcome = 'failed' AND item_state = 'failed' AND error_code IS NOT NULL)",
+            name="ck_ingest_completion_event_completed_error",
+        ),
+        Index(
+            "ix_ingest_completion_event_publish_claim",
+            "publish_state",
+            "claimed_at",
+        ),
+    )
+
+
 class Segment(Base):
     __tablename__ = "segment"
 
