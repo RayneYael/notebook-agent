@@ -149,6 +149,10 @@ class Settings:
     agent_output_token_limit: int = field(
         default_factory=lambda: _env_int("AGENT_OUTPUT_TOKEN_LIMIT", 2000)
     )
+    # Opt-in bounded single-Agent autonomy; rollout remains configuration-only.
+    agent_bounded_autonomy_enabled: bool = field(
+        default_factory=lambda: _env_bool("AGENT_BOUNDED_AUTONOMY_ENABLED", False)
+    )
     agent_composer_max_tokens: int = field(
         default_factory=lambda: _env_int("AGENT_COMPOSER_MAX_TOKENS", 1000)
     )
@@ -237,6 +241,8 @@ class Settings:
     def __post_init__(self) -> None:
         if self.notebook_agent_env not in {"development", "production"}:
             raise ValueError("NOTEBOOK_AGENT_ENV must be development or production")
+        if not isinstance(self.agent_bounded_autonomy_enabled, bool):
+            raise ValueError("AGENT_BOUNDED_AUTONOMY_ENABLED must be a boolean")
         if self.notebook_agent_log_retrieval_content and self.notebook_agent_env != "development":
             raise ValueError("retrieval content logging requires NOTEBOOK_AGENT_ENV=development")
         if not self.mcp_host.strip():

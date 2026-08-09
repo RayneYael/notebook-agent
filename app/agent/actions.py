@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from copy import deepcopy
 from dataclasses import asdict, dataclass
 from typing import Annotated, Literal
 
@@ -11,6 +12,7 @@ from app.agent.types import AgentRequest
 from app.channels.pending_actions import (
     ConfirmationResult,
     PendingConfirmationService,
+    PendingDeleteSnapshot,
     PendingSaveSnapshot,
     PendingValidationError,
 )
@@ -70,30 +72,133 @@ class AgentActionRuntime:
         *,
         enabled: bool,
         management_enabled: bool | None = None,
+        composable_reads: bool = False,
     ) -> None:
         self._request = request
         self._services = services
         self._enabled = enabled
         self._management_enabled = enabled if management_enabled is None else management_enabled
+        self._composable_reads = composable_reads
         self.outcome: ActionOutcome | None = None
         self.input_mismatch = False
         self._pending_snapshot: PendingSaveSnapshot | None = None
         self._pending_snapshot_read = False
+        self._pending_delete_snapshot: PendingDeleteSnapshot | None = None
+        self._pending_delete_snapshot_read = False
+        # Read-only inventory/detail results are observations on the opt-in
+        # path, not terminal business outcomes.  Keep only bounded public
+        # projections; item IDs remain references and never authorize writes.
+        self._read_action_results: list[dict] = []
+        self._observed_item_ids: list[int] = []
+        self._read_action_texts: list[str] = []
 
-    def pending_delete_snapshot(self):
-        if not self._management_enabled or self._services is None or self._services.management is None:
-            return None
+    @property
+    def composable_reads(self) -> bool:
+        return self._composable_reads
+
+    @property
+    def save_enabled(self) -> bool:
+        """Whether save and pending-save actions are usable for this turn."""
+
+        return self._enabled and self._services is not None
+
+    @property
+    def management_enabled(self) -> bool:
+        """Whether tenant-bound item management is usable for this turn."""
+
+        return (
+            self._management_enabled
+            and self._services is not None
+            and self._services.management is not None
+        )
+
+    @property
+    def read_action_results(self) -> tuple[dict, ...]:
+        """Canonical bounded read observations for this turn."""
+
+        return tuple(deepcopy(self._read_action_results))
+
+    @property
+    def observed_item_ids(self) -> tuple[int, ...]:
+        """Item IDs returned by successful current-run read observations."""
+
+        return tuple(self._observed_item_ids)
+
+    @property
+    def read_action_texts(self) -> tuple[str, ...]:
+        """Canonical server-rendered text for successful read observations."""
+
+        return tuple(self._read_action_texts)
+
+    def is_observed_item(self, item_id: int) -> bool:
+        if isinstance(item_id, bool) or not isinstance(item_id, int):
+            return False
+        return item_id > 0 and item_id in self._observed_item_ids
+
+    def _record_read_observation(
+        self, results: tuple[dict, ...], *, text: str | None = None
+    ) -> None:
+        if not self._composable_reads:
+            return
+        # One successful list/detail call maps to one canonical result row.
+        # The existing tool limits cap calls; this additional cap prevents a
+        # model loop from turning a transient run into unbounded context.
+        if len(self._read_action_results) < 10:
+            self._read_action_results.append(dict(results[0]) if len(results) == 1 else {"results": [dict(row) for row in results]})
+        if isinstance(text, str) and text.strip() and len(self._read_action_texts) < 10:
+            self._read_action_texts.append(text.strip())
+        for result in results:
+            rows = result.get("items") if isinstance(result, dict) else None
+            candidates = rows if isinstance(rows, list) else [result]
+            for row in candidates:
+                if not isinstance(row, dict):
+                    continue
+                value = row.get("item_id")
+                if isinstance(value, bool):
+                    continue
+                try:
+                    item_id = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if item_id > 0 and item_id not in self._observed_item_ids:
+                    self._observed_item_ids.append(item_id)
+
+    def pending_delete_snapshot(self) -> PendingDeleteSnapshot:
+        """Read the trusted pending-delete summary at most once per turn."""
+
+        if self._pending_delete_snapshot_read:
+            return self._pending_delete_snapshot or PendingDeleteSnapshot(active=False)
+        self._pending_delete_snapshot_read = True
+        if not self.management_enabled:
+            self._pending_delete_snapshot = PendingDeleteSnapshot(active=False)
+            return self._pending_delete_snapshot
         try:
-            return self._services.pending.inspect_delete(
+            snapshot = self._services.pending.inspect_delete(
                 self._request.tenant, self._request.thread_db_id
             )
         except Exception:
-            return None
+            snapshot = PendingDeleteSnapshot(active=False)
+        if (
+            not isinstance(snapshot, PendingDeleteSnapshot)
+            or not snapshot.active
+            or not 1 <= snapshot.count <= 10
+        ):
+            snapshot = PendingDeleteSnapshot(active=False)
+        self._pending_delete_snapshot = snapshot
+        return snapshot
 
     def _management_failure(self) -> ActionOutcome | None:
         if self._management_enabled and self._services is not None and self._services.management is not None:
             return None
         return self._finish(self._failure("management_unavailable"))
+
+    def _read_failure(self, code: str) -> ActionOutcome:
+        """Keep transient composable-read failures out of terminal action state."""
+
+        outcome = self._failure(code)
+        if self._composable_reads and code == "management_failed":
+            return outcome
+        return self._finish(outcome)
 
     def list_saved_items(self, **filters) -> ActionOutcome:
         if self.outcome is not None:
@@ -108,7 +213,7 @@ class AgentActionRuntime:
         except ManagementError as exc:
             return self._finish(self._failure(exc.error_code))
         except Exception:
-            return self._finish(self._failure("management_failed"))
+            return self._read_failure("management_failed")
         rows = [item.model_dump(mode="json") for item in page.items]
         if not rows:
             text = "回收站里没有可恢复条目。" if filters.get("location") == "trash" else "知识库里还没有保存的条目。"
@@ -120,11 +225,13 @@ class AgentActionRuntime:
         # channel delivery can resume the same bounded page without rerunning
         # retrieval or exposing a tenant credential.
         page_result = {"items": rows, "next_cursor": page.next_cursor}
-        return self._finish(
-            ActionOutcome(
-                "ok", "items_listed", text, (page_result,), history_visible=True
-            )
+        outcome = ActionOutcome(
+            "ok", "items_listed", text, (page_result,), history_visible=True
         )
+        if self._composable_reads:
+            self._record_read_observation(outcome.results, text=outcome.text)
+            return outcome
+        return self._finish(outcome)
 
     def get_saved_item(self, item_id: int) -> ActionOutcome:
         if self.outcome is not None:
@@ -137,12 +244,14 @@ class AgentActionRuntime:
         except ManagementError as exc:
             return self._finish(self._failure(exc.error_code))
         except Exception:
-            return self._finish(self._failure("management_failed"))
+            return self._read_failure("management_failed")
         row = item.model_dump(mode="json")
         text = _render_inventory_rows([row], location="library", detail=True)
-        return self._finish(
-            ActionOutcome("ok", "item_read", text, (row,), history_visible=True)
-        )
+        outcome = ActionOutcome("ok", "item_read", text, (row,), history_visible=True)
+        if self._composable_reads:
+            self._record_read_observation(outcome.results, text=outcome.text)
+            return outcome
+        return self._finish(outcome)
 
     def update_saved_item(self, item_id: int, why_saved: str | None) -> ActionOutcome:
         if self.outcome is not None:

@@ -8,7 +8,8 @@ knowledge-answer persistence path. It applies only to tenant-scoped knowledge
 answers. Video save and confirmation actions retain their existing terminal
 `ActionOutcome` behavior and do not consume retrieval budget.
 
-The runtime has two distinct model stages:
+With `AGENT_BOUNDED_AUTONOMY_ENABLED=false` (the default), the runtime keeps
+the legacy two-stage path:
 
 ```text
 trusted request -> retrieval/action planner -> trusted Citation cache
@@ -18,6 +19,71 @@ trusted request -> retrieval/action planner -> trusted Citation cache
 
 The planner's text is only a stop signal. It is never a user-visible answer,
 is never citation-validated, and is never persisted.
+
+With `AGENT_BOUNDED_AUTONOMY_ENABLED=true`, one primary Turn Agent chooses
+whether the current message needs private-knowledge tools and returns natural
+text. The application chooses the finalization path from trusted tool/action
+traces rather than a model-authored answer mode:
+
+```text
+trusted request + bounded context -> Turn Agent <-> visible atomic tools
+                                  -> terminal action wins, or
+                                  -> canonical read-only result, or
+                                  -> validated natural answer + server sources
+```
+
+The rollout flag changes orchestration only. Tenant identity, exact current-
+message reference scope, deleted/non-ready gates, pending confirmation,
+idempotency, side-effect claims, hard tool/request/output/time limits, and the
+current-run Citation allow-list remain server-owned.
+
+### 1.1 Bounded-autonomy contracts
+
+- Social replies, capability replies, and missing-context clarification may
+  finish with zero knowledge tools. Such text must not contain Citation
+  markers, URLs, or a model-authored source block. A current-message supported
+  URL plus a content question still requires an in-scope search.
+- A successful knowledge search requires the final natural text to contain at
+  least one exact `[S<positive segment id>]` marker. Every marker must belong
+  to the current run's Citation cache, satisfy exact reference scope when one
+  exists, and cover at most five source items. The server, never the model,
+  appends source titles, URLs, timestamps, and excerpts.
+- Invalid grounded text may receive one tool-free Composer repair against the
+  same evidence allow-list. The repair counts against the turn's two-action
+  RecoveryLedger and can happen at most once. Failure returns deterministic
+  trusted evidence. The repair currently receives its own `RunUsage`; do not
+  claim that primary-run provider/request usage is mechanically subtracted
+  until a separately tested shared-accounting change lands.
+- Inventory/detail reads are non-terminal observations on the rollout path, so
+  a turn may list items and then search within an item returned by the current
+  run or bounded trusted prior inventory context. Domain services repeat
+  tenant, active/deleted, ready-state, item, and exact-reference predicates.
+  If no knowledge search follows, visible text and history use canonical
+  server-rendered read text rather than unconstrained model prose.
+- Save, management mutation, confirmation, cancellation, restore, and explicit
+  ingestion retry remain terminal canonical outcomes. They are never retried
+  by Agent recovery, and model prose cannot replace their result.
+- Tool prepare policy hides disabled save/management groups, hides pending
+  decision tools without a matching cached trusted pending snapshot, and hides
+  unrelated management/pending tools under exact URL scope. Bare URL save
+  confirmation remains a deterministic pre-model route.
+- `todo_write` is optional working memory for one dependent multi-step turn.
+  It stores at most six short items with only `pending`, `in_progress`,
+  `completed`, or `blocked` states and at most one `in_progress` item. It is
+  discarded after `run()`, never authorizes a tool or mutation, and is never
+  persisted, added to history, or logged with its content.
+- Expected read failures expose only an allow-listed `ErrorEnvelope` and a
+  server-issued recovery grant. An exact read fingerprint may be retried once;
+  all recovery actions together are capped at two; answer repair is capped at
+  one and shares that count. Empty search is an observation and a true changed-
+  query reformulation consumes one recovery action. Mutation, confirmation,
+  provider/model, policy/security, tenant/scope, deleted/non-ready, and
+  side-effect-indeterminate failures receive no autonomous retry.
+- `ContextBuilder` projects only completed current-tenant/thread inventory and
+  prior source focus after current item/segment availability checks. Historical
+  segment IDs help resolve conversation focus but never enter the current-run
+  Citation allow-list. Failed ownership validation omits source focus rather
+  than broadening trust.
 
 ## 2. Signatures
 

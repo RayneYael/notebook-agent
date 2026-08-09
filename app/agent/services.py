@@ -192,12 +192,25 @@ class KnowledgeServices:
             ),
         }
 
-    def search_segments(self, query: str, *, limit: int = SEARCH_RESULT_LIMIT) -> list[Citation]:
+    def search_segments(
+        self,
+        query: str,
+        *,
+        limit: int = SEARCH_RESULT_LIMIT,
+        item_id: int | None = None,
+    ) -> list[Citation]:
         """Hybrid lexical/vector search, merged without exposing tenant arguments."""
 
         query = query.strip()
         if not query:
             return []
+        if item_id is not None:
+            try:
+                item_id = int(item_id)
+            except (TypeError, ValueError):
+                return []
+            if item_id <= 0:
+                return []
         limit = max(1, min(limit, self._max_results))
         candidate_limit = min(
             SEARCH_CANDIDATE_POOL_LIMIT,
@@ -207,22 +220,42 @@ class KnowledgeServices:
         self._event("retrieval_started")
         try:
             with self._session_factory() as db:
-                hits = bm25_search(
-                    db,
-                    query,
-                    user_id=self._tenant.app_user_id,
-                    k=candidate_limit,
-                    **self._search_scope_kwargs(),
-                )
-                hits.extend(
-                    vector_search(
+                if item_id is None:
+                    hits = bm25_search(
                         db,
-                        vector,
+                        query,
                         user_id=self._tenant.app_user_id,
                         k=candidate_limit,
                         **self._search_scope_kwargs(),
                     )
-                )
+                    hits.extend(
+                        vector_search(
+                            db,
+                            vector,
+                            user_id=self._tenant.app_user_id,
+                            k=candidate_limit,
+                            **self._search_scope_kwargs(),
+                        )
+                    )
+                else:
+                    scope_kwargs = self._search_scope_kwargs()
+                    scope_kwargs["item_id"] = item_id
+                    hits = bm25_search(
+                        db,
+                        query,
+                        user_id=self._tenant.app_user_id,
+                        k=candidate_limit,
+                        **scope_kwargs,
+                    )
+                    hits.extend(
+                        vector_search(
+                            db,
+                            vector,
+                            user_id=self._tenant.app_user_id,
+                            k=candidate_limit,
+                            **scope_kwargs,
+                        )
+                    )
 
                 selected_hits = _diversify_hits(hits, limit=limit)
                 segment_ids = [hit.segment_id for hit in selected_hits]
@@ -237,6 +270,7 @@ class KnowledgeServices:
                         ContentItem.deleted_at.is_(None),
                         ContentItem.state == "ready",
                         Segment.id.in_(segment_ids),
+                        *([Segment.item_id == item_id] if item_id is not None else []),
                         *self._reference_predicates(),
                     )
                 ).all()

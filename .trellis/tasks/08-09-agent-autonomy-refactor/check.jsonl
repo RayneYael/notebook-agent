@@ -1,0 +1,7 @@
+{"file": ".trellis/tasks/08-09-agent-autonomy-refactor/research/current-autonomy-audit.md", "reason": "Review the implementation against the agreed autonomy/safety split and explicitly documented reliability trade-off."}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "Verify retrieval limits, Citation origin/scope, exact-reference routing, fallback, and provider compatibility."}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Verify read-only composition does not weaken terminal mutations, confirmations, tenant isolation, or persistence."}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Verify new traces and persisted context remain production-redacted."}
+{"file": ".trellis/spec/backend/provider-tls-diagnostics.md", "reason": "Verify stable error mapping and limit diagnostics on both old and rollout paths."}
+{"file": ".trellis/spec/backend/mcp-channel-runtime.md", "reason": "Verify public MCP schemas, grants, read/full discovery, and management marker behavior remain compatible."}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Verify bridge fail-closed behavior and exactly one visible reply remain unchanged."}
