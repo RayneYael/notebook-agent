@@ -22,7 +22,9 @@ from app.ingest.tasks import (
 from app.models import (
     AppUser,
     Base,
+    ChannelIdentity,
     ContentItem,
+    ConversationThread,
     IngestCompletionEvent,
     IngestDispatch,
 )
@@ -34,6 +36,8 @@ def submission_factory(monkeypatch):
     schema = f"test_save_{uuid4().hex}"
     tables = [
         AppUser.__table__,
+        ChannelIdentity.__table__,
+        ConversationThread.__table__,
         ContentItem.__table__,
         IngestDispatch.__table__,
         IngestCompletionEvent.__table__,

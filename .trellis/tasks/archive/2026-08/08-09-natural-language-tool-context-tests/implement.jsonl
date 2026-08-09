@@ -1,0 +1,4 @@
+{"file": ".trellis/spec/backend/mcp-channel-runtime.md", "reason": "保持官方 MCP、full readiness、grant 与隐私边界"}
+{"file": ".trellis/spec/backend/agent-retrieval-convergence.md", "reason": "保持真实 Agent 工具预算、精确引用和诊断契约"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "保持库存、删除确认、恢复和重试状态语义"}
+{"file": ".trellis/spec/backend/ingest-completion-queue.md", "reason": "完整 ingestion/worker/broker 链路与就绪判据"}

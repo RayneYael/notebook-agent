@@ -28,6 +28,26 @@ consumer boundary.
 
 ## Broker boundary
 
+The historical broker publisher is now a rollback-compatible, disabled path.
+The authoritative user-facing sink is the PostgreSQL periodic poller:
+
+```text
+handler: source-channel.notification.v1
+task: app.ingest.tasks.deliver_pending_ingest_notifications_task
+queue: maintenance
+schedule: INGEST_NOTIFICATION_INTERVAL_SECONDS (default 10 seconds)
+```
+
+Terminal worker hooks create the durable event but do not publish a Redis
+envelope. The poller ignores ``publish_state`` and claims a separate
+``ingest_completion_delivery`` row with ``UNIQUE(event_id, handler_key)``.
+Only the existing ``ingest,maintenance`` worker is required. The retired
+``ingest-completion`` queue must not be added to that worker; operators stop
+old producers, verify database event coverage, and explicitly inspect/drain
+old backlog before deleting it. A future broker subscriber must use a distinct
+handler ownership contract and must never send the same source-channel
+notification alongside this poller.
+
 ```text
 queue: ingest-completion
 task name: app.ingest.completion.consume
@@ -55,14 +75,31 @@ delivery mode: persistent
 
 ## Repair sweep
 
-- Beat dispatches the completion repair task to the existing `maintenance`
-  queue. A single immediate publish gives low latency; the sweep repairs the
-  commit-before-publish crash window and stale claims.
+- The legacy broker repair sweep is retained only for rollback compatibility
+  and is not scheduled by the current Beat configuration. The notification
+  poller performs its own bounded database claim/ACK sweep on `maintenance`.
 - Claim bounded batches with PostgreSQL time, `FOR UPDATE SKIP LOCKED`, a
   random claim token, and a claim timeout. Never hold a database transaction
   across broker I/O.
+- When candidate discovery outer-joins events to an optional delivery row,
+  qualify the lock as `FOR UPDATE OF ingest_completion_event SKIP LOCKED`.
+  PostgreSQL rejects an unqualified `FOR UPDATE` on the nullable side of an
+  outer join. The event row is the serialization root for inserting or
+  reclaiming the unique handler delivery.
 - Apply a parameterized PostgreSQL `statement_timeout` derived from the
   remaining whole-sweep budget to claim, acknowledgement, and release SQL.
+- Reserve time for token-fenced ACK/release before the sweep deadline. If a
+  batch is claimed but an event has not started outbound I/O, release it as an
+  immediately eligible deferred delivery without consuming a transport retry
+  attempt; do not hide it behind the much longer stale-claim timeout.
+- Source-thread validation is part of admission correctness. Unsupported,
+  stale, disabled, or tenant-mismatched trusted records resolve to no target,
+  but a database/programming failure must abort admission rather than commit a
+  targetless dispatch that can never notify its source conversation.
+- Notification observability is best effort and numeric only. Cap an oldest-
+  eligible-age query to its explicit observation reserve (at most 10% of the
+  sweep and 250 ms), isolate its failure from delivery state, and reserve age
+  `0` for an empty eligible backlog.
 - Isolate each event. A publish failure for one event must not block peers.
   When the deadline expires after broker acceptance, leave the claim for stale
   recovery rather than starting unbounded SQL; the resulting duplicate is

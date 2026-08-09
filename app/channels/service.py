@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessagesTypeAdapter
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.agent.context import ContextBuilder, TurnContext
 from app.agent.runtime import KnowledgeAgent
 from app.agent.types import AgentAnswer, AgentRequest, Citation
 from app.channels.conversations import (
@@ -59,6 +60,18 @@ class ChannelService:
         self._agent = agent
         self._settings = settings
         self._locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
+        # The context projection is part of the opt-in bounded-autonomy path.
+        # Keep the legacy flag-off request hot path free of its extra DB read.
+        self._context_builder = (
+            ContextBuilder(
+                max_turns=getattr(settings, "context_max_turns", 8),
+                # Keep the context projection independent from the larger
+                # model message history budget; these are deliberately small
+                # row caps.
+            )
+            if bool(getattr(settings, "agent_bounded_autonomy_enabled", False))
+            else None
+        )
 
     async def handle(self, envelope: ChannelEnvelope) -> AgentAnswer:
         # Every in-process entry point gets an internal correlation ID. The
@@ -167,6 +180,11 @@ class ChannelService:
                 )
                 .limit(1)
             )
+            context = (
+                self._context_builder.build(db, thread, tenant)
+                if self._context_builder is not None
+                else TurnContext()
+            )
             request = AgentRequest(
                 question=envelope.text,
                 tenant=tenant,
@@ -180,6 +198,7 @@ class ChannelService:
                 latest_turn_message_id=(
                     latest_turn.message_id if latest_turn is not None else None
                 ),
+                context=context,
             )
             db.commit()
 

@@ -72,6 +72,11 @@ process or test framework to install handlers or set `notebook_agent.runtime` to
 - `RequestDiagnostics.event()` accepts explicit allow-listed enum and numeric fields. Exceptions are projected to
   class names only. Unknown strings are omitted or replaced with fixed safe values; arbitrary `extra` dictionaries are
   forbidden.
+- Bounded-autonomy diagnostics may add only fixed recovery category/action/
+  outcome values, safe numeric recovery counts, a boolean Todo-used flag, and
+  the allow-listed `todo_write` tool name. Todo titles/items, exact-read
+  fingerprints, retry arguments, error-envelope payloads, and model drafts are
+  forbidden in every environment.
 - Provider HTTP failures always additionally project `http_status` only when it is a non-boolean integer in the
   inclusive range 100–599. In production, response bodies, exception messages, request schemas and provider payloads
   remain forbidden. In explicit development mode, the same event additionally carries the complete exception message,
@@ -98,6 +103,7 @@ process or test framework to install handlers or set `notebook_agent.runtime` to
 | invalid/uppercase/oversized trace ID | `ChannelEnvelope` validation fails; never reuse it as request ID |
 | missing trace ID at a trusted local boundary | create a new random trace ID without changing tenant/business identity |
 | request/tool/output usage limit | emit fixed `limit_kind`, safe counts and exception class; omit exception message |
+| bounded read/answer recovery | emit only fixed category/action/outcome and numeric count; omit fingerprint, arguments, Todo and evidence |
 | unknown usage-limit text | classify as `unknown`; never copy the source string into logs |
 | provider returns HTTP 4xx/5xx in production | include safe `http_status`, phase and exception class; omit body/message/schema |
 | provider returns HTTP 4xx/5xx in development | include status/phase/class plus complete exception message, model and response body |

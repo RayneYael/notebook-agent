@@ -87,17 +87,48 @@ class FakeSubmission:
     def __init__(self, result):
         self.result = result
         self.calls = []
+        self.retry_calls = []
+        self.retry_result = SaveItemResult(
+            "A1", 0, "queued", item_id=41, state="pending"
+        )
 
-    def submit_urls(self, tenant, urls, *, why_saved, request_key):
+    def submit_urls(
+        self,
+        tenant,
+        urls,
+        *,
+        why_saved,
+        request_key,
+        source_thread_id=None,
+    ):
         self.calls.append(
             {
                 "tenant": tenant,
                 "urls": list(urls),
                 "why_saved": why_saved,
                 "request_key": request_key,
+                "source_thread_id": source_thread_id,
             }
         )
         return self.result
+
+    def retry_item(
+        self,
+        tenant,
+        item_id,
+        *,
+        request_key,
+        source_thread_id=None,
+    ):
+        self.retry_calls.append(
+            {
+                "tenant": tenant,
+                "item_id": item_id,
+                "request_key": request_key,
+                "source_thread_id": source_thread_id,
+            }
+        )
+        return self.retry_result
 
 
 class FakePending:
@@ -396,6 +427,29 @@ async def test_explicit_save_uses_trusted_request_context_once():
     call = submission.calls[0]
     assert call["tenant"].app_user_id == 57
     assert call["request_key"] == "thread-public:message-id:save"
+    assert call["source_thread_id"] == 12
+
+
+def test_retry_uses_trusted_request_thread_for_new_dispatch():
+    submission = FakeSubmission(_queued_result())
+    runtime = AgentActionRuntime(
+        _request("重试条目 41"),
+        AgentActionServices(submission, FakePending(), object()),
+        enabled=True,
+        management_enabled=True,
+    )
+
+    outcome = runtime.retry_item_ingestion(41)
+
+    assert outcome.error_code == "retry_queued"
+    assert submission.retry_calls == [
+        {
+            "tenant": _request("重试条目 41").tenant,
+            "item_id": 41,
+            "request_key": "thread-public:message-id:retry",
+            "source_thread_id": 12,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -546,6 +600,16 @@ async def test_bare_invalid_or_unsupported_input_has_no_side_effect(
 async def test_confirm_uses_server_urls_and_cancel_does_not_submit():
     submission = FakeSubmission(_queued_result())
     pending = FakePending()
+    # The runtime now requires a trusted pending-save summary before routing
+    # confirmation/cancel actions.  Seed the fixture with one active save;
+    # this test is about server-owned URLs and source-thread propagation.
+    pending.snapshot = PendingSaveSnapshot(active=True, count=1)
+    pending.confirm_result = ConfirmationResult(
+        "confirmed",
+        urls=("https://www.youtube.com/watch?v=dQw4w9WgXcQ",),
+        action_id=81,
+        thread_id=34,
+    )
     confirmed_runtime = _runtime(
         _tool_model("confirm_video_save", {}),
         submission,
@@ -561,6 +625,7 @@ async def test_confirm_uses_server_urls_and_cancel_does_not_submit():
     assert submission.calls[0]["request_key"] == (
         "thread-public:message-id:confirm"
     )
+    assert submission.calls[0]["source_thread_id"] == 34
 
     cancelled_submission = FakeSubmission(_queued_result())
     cancelled_runtime = _runtime(

@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Preserve MCP listener, grant, URL-token, readiness, and privacy contracts while changing process startup."}
+{"file":".trellis/spec/backend/knowledge-item-management.md","reason":"Preserve the separate worker/Beat, required queues, durable ingestion, maintenance, and fail-closed mutation contracts."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Keep runtime and migration URLs, single-head checks, and production migration safety intact."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Keep provider CA composition and secret-safe diagnostics consistent across supervised gateway and worker children."}
+{"file":"docs/environment-configuration.md","reason":"Use the existing profile and environment ownership boundaries as the source for minimal configuration."}
+{"file":"docs/deployment.md","reason":"Preserve supported startup ordering, readiness, process separation, rollback, and secret handling."}

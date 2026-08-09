@@ -234,6 +234,25 @@ def test_openclaw_tls_and_poll_readiness_contract_is_versioned() -> None:
     assert "@self.route('/readiness', methods=['GET'])" in patch_text
 
 
+def test_send_message_patch_is_redacted_and_keeps_api_key_route(
+    applied_langbot_source: Path,
+) -> None:
+    controller = (
+        applied_langbot_source
+        / "langbot/pkg/api/http/controller/groups/platform/bots.py"
+    ).read_text(encoding="utf-8")
+
+    compile(controller, "bots.py", "exec")
+    route_start = controller.index("@self.route('/<bot_uuid>/send_message'")
+    route_end = controller.index("# ============ Bot Admins", route_start)
+    send_message_route = controller[route_start:route_end]
+    assert "auth_type=group.AuthType.API_KEY" in send_message_route
+    assert "traceback.print_exc()" not in send_message_route
+    assert "str(e)" not in send_message_route
+    assert "Failed to send message: " not in send_message_route
+    assert "'Failed to send message'" in send_message_route
+
+
 def test_applied_openclaw_default_tls_is_unchanged_and_explicit_ca_is_verified(
     applied_langbot_source: Path, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

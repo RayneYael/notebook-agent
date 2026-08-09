@@ -1,5 +1,6 @@
 from app.models import (
     ConversationTurn,
+    IngestCompletionDelivery,
     IngestDispatch,
     PendingChannelAction,
 )
@@ -37,6 +38,7 @@ def test_ingest_dispatch_has_request_and_active_item_idempotency():
         "id",
         "public_id",
         "item_id",
+        "source_thread_id",
         "request_key",
         "attempt",
         "state",
@@ -49,6 +51,16 @@ def test_ingest_dispatch_has_request_and_active_item_idempotency():
         constraint.name == "uq_ingest_dispatch_request_item"
         for constraint in table.constraints
     )
+    source_fk = next(
+        foreign_key
+        for foreign_key in table.foreign_keys
+        if str(foreign_key.column) == "conversation_thread.id"
+    )
+    assert source_fk.ondelete == "SET NULL"
+    assert any(
+        index.name == "ix_ingest_dispatch_source_thread"
+        for index in table.indexes
+    )
     active = next(
         index
         for index in table.indexes
@@ -59,6 +71,24 @@ def test_ingest_dispatch_has_request_and_active_item_idempotency():
     assert "pending" in predicate
     assert "enqueued" in predicate
     assert "running" in predicate
+
+
+def test_completion_delivery_terminal_dispositions_require_failed_status():
+    contract = next(
+        constraint
+        for constraint in IngestCompletionDelivery.__table__.constraints
+        if constraint.name == "ck_ingest_completion_delivery_state_contract"
+    )
+    sql = str(contract.sqltext)
+    succeeded_clause = sql.split("(status = 'succeeded'", 1)[1].split(
+        ") OR (status = 'failed'", 1
+    )[0]
+    failed_clause = sql.split(") OR (status = 'failed'", 1)[1]
+
+    assert "terminal_failure" not in succeeded_clause
+    assert "retry_exhausted" not in succeeded_clause
+    assert "terminal_failure" in failed_clause
+    assert "retry_exhausted" in failed_clause
 
 
 def test_conversation_turn_persists_original_answer_and_action_contract():

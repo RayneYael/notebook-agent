@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend full-scope quality entry point."}
+{"file":".trellis/spec/backend/ingest-completion-queue.md","reason":"Verify the poller preserves atomic event durability while safely retiring unused broker publication."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Verify outbound changes preserve fail-closed LangBot privacy and do not break inbound exactly-one replies."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify model/migration/head/hosted revision synchronization and safe rollback."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/current-consumer-boundary.md","reason":"Verify the poller has a real durable business effect and preserves the durable ledger/privacy boundary."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/source-channel-outbound-notification.md","reason":"Verify exact source-channel target propagation, LangBot API contract, identity/deletion races and privacy."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/periodic-notification-poller.md","reason":"Verify periodic claims, retry/backoff, Beat failure recovery, queue retirement and no dual-send ownership."}

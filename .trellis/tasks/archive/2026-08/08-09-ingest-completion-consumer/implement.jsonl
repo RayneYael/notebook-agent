@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend package entry point and quality/spec routing."}
+{"file":".trellis/spec/backend/ingest-completion-queue.md","reason":"Preserve atomic completion-event durability while retiring the now-unused broker publication path."}
+{"file":".trellis/spec/backend/langbot-channel-runtime.md","reason":"Required LangBot bridge readiness, channel privacy, and exactly-one inbound reply boundary."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Migration head, hosted revision synchronization, and database safety contract."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/current-consumer-boundary.md","reason":"Durable ledger, deletion, privacy, and business-effect findings; its dedicated queue-worker recommendation is superseded by the periodic poller research."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/source-channel-outbound-notification.md","reason":"Trusted source-target propagation, official LangBot outbound API, platform target, privacy, and race findings."}
+{"file":".trellis/tasks/08-09-ingest-completion-consumer/research/periodic-notification-poller.md","reason":"Authoritative Beat/maintenance poller design, retry/claim semantics, queue retirement, and monitoring requirements."}

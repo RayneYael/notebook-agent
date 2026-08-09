@@ -978,3 +978,17 @@ index f4ae79b..3599f8b 100644
      enable_marketplace: true
      display_plugin_debug_url: 'ws://localhost:5401/plugin/debug/ws'
      binary_storage:
+
+diff --git a/source/langbot/pkg/api/http/controller/groups/platform/bots.py b/target/langbot/pkg/api/http/controller/groups/platform/bots.py
+--- a/langbot/pkg/api/http/controller/groups/platform/bots.py
++++ b/langbot/pkg/api/http/controller/groups/platform/bots.py
+@@ -60,5 +60,4 @@
+-            except Exception as e:
+-                import traceback
+-
+-                traceback.print_exc()
+-                return self.http_status(500, -1, f'Failed to send message: {str(e)}')
++            except Exception:
++                # Outbound message failures may contain target/content or
++                # credentials. Keep the public response fixed and redacted.
++                return self.http_status(500, -1, 'Failed to send message')

@@ -37,6 +37,7 @@ from app.models import (
     Segment,
 )
 from app.agent.management import RecycleBinPurgeService
+from app.ingest.notifications import IngestNotificationPoller
 from app.tls import configure_trusted_ca
 
 
@@ -58,6 +59,9 @@ celery_app.conf.task_routes = {
     "app.ingest.tasks.fetch_text_task": {"queue": "ingest"},
     "app.ingest.tasks.purge_expired_items_task": {"queue": "maintenance"},
     "app.ingest.tasks.publish_pending_ingest_completion_events_task": {
+        "queue": "maintenance"
+    },
+    "app.ingest.tasks.deliver_pending_ingest_notifications_task": {
         "queue": "maintenance"
     },
     COMPLETION_TASK_NAME: {"queue": COMPLETION_QUEUE},
@@ -721,6 +725,22 @@ def publish_pending_ingest_completion_events_task() -> dict[str, int]:
     return service.sweep_once().as_dict()
 
 
+@celery_app.task(name="app.ingest.tasks.deliver_pending_ingest_notifications_task")
+def deliver_pending_ingest_notifications_task() -> dict[str, int]:
+    """Deliver source-channel completion notifications on maintenance.
+
+    The task has no event/target arguments.  PostgreSQL is the durable source
+    and the delivery ledger owns claims; Celery retries are intentionally not
+    used so one slow or failed outbound event cannot replay an entire batch.
+    """
+
+    settings = get_settings()
+    result = IngestNotificationPoller(
+        get_session_factory(), settings=settings
+    ).sweep_once()
+    return result.as_dict()
+
+
 @celery_app.task(name="app.ingest.tasks.purge_expired_items_task")
 def purge_expired_items_task() -> dict[str, int]:
     """Run one bounded recycle-bin sweep and emit only safe counters."""
@@ -768,12 +788,29 @@ def _completion_interval_from_env() -> int:
     return value
 
 
-_completion_interval = _completion_interval_from_env()
+def _notification_interval_from_env() -> int:
+    """Fail closed for the bounded source-channel notification schedule."""
+
+    raw_value = os.getenv("INGEST_NOTIFICATION_INTERVAL_SECONDS", "10")
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "INGEST_NOTIFICATION_INTERVAL_SECONDS must be a positive integer"
+        ) from exc
+    if value <= 0:
+        raise ValueError(
+            "INGEST_NOTIFICATION_INTERVAL_SECONDS must be a positive integer"
+        )
+    return value
+
+
+_notification_interval = _notification_interval_from_env()
 
 celery_app.conf.beat_schedule = {
-    "publish-pending-ingest-completion-events": {
-        "task": "app.ingest.tasks.publish_pending_ingest_completion_events_task",
-        "schedule": float(_completion_interval),
+    "deliver-pending-ingest-notifications": {
+        "task": "app.ingest.tasks.deliver_pending_ingest_notifications_task",
+        "schedule": float(_notification_interval),
         "options": {"queue": "maintenance"},
     },
     "purge-expired-items": {
@@ -899,12 +936,9 @@ def _claim_dispatch(
                 item_state="failed",
                 error_code="item_deleted",
             )
-        _publish_completion_event_best_effort(
-            deleted_event_id,
-            session_factory=factory,
-            outcome="failed",
-            item_state="failed",
-        )
+        # Source-channel notifications are owned by the periodic PostgreSQL
+        # poller.  Keep the durable event row; do not publish the retired
+        # completion Redis envelope from a request/worker terminal hook.
     return None
 
 
@@ -1011,12 +1045,8 @@ def _complete_dispatch(
                 item_state=event_item_state,
                 error_code="item_deleted" if event_outcome == "failed" else None,
             )
-        _publish_completion_event_best_effort(
-            event_id,
-            session_factory=factory,
-            outcome=event_outcome,
-            item_state=event_item_state,
-        )
+        # The event is durable and independently discoverable by the
+        # notification ledger poller; no immediate broker publication here.
     return event_id
 
 
@@ -1478,12 +1508,8 @@ def _mark_dispatch_failed(
                 item_state=event_item_state,
                 error_code=event_error_code,
             )
-        _publish_completion_event_best_effort(
-            event_id,
-            session_factory=factory,
-            outcome=event_outcome,
-            item_state=event_item_state,
-        )
+        # Notification delivery is deliberately decoupled from this terminal
+        # transaction and is picked up by the maintenance poller.
     return event_id
 
 

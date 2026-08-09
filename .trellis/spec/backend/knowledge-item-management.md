@@ -15,9 +15,13 @@ items. It also covers ingestion work that races with deletion or restoration.
 - `update_saved_item` changes only `why_saved`. Trim input, normalize an empty
   string to `null`, enforce the public length bound, and keep identical writes
   idempotent.
-- Management operations bypass retrieval composition. The application renders
-  the canonical outcome and persists only bounded, server-owned management
-  context needed for safe follow-ups such as “next page” or “the second item.”
+- Management mutations and confirmations bypass retrieval composition and
+  remain terminal canonical outcomes. With bounded autonomy enabled,
+  inventory/detail reads are non-terminal observations and may be followed by
+  item-scoped knowledge retrieval in the same turn. A read-only-only turn still
+  renders canonical server-owned inventory text. Persist only bounded public
+  management context needed for safe follow-ups such as “next page” or “the
+  second item”; item references never authorize a later read or write.
 - Cursor tokens are versioned, tenant/filter-bound, length-bounded, and
   validated by the application. Never trust a model-authored cursor or ordinal
   without resolving it against persisted canonical context.
