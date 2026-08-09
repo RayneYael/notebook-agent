@@ -296,7 +296,7 @@ class ChannelService:
         if not argument:
             return AgentAnswer(
                 status="failed",
-                text="用法：发送 /link telegram、/link wechat 或 /link <绑定码>。",
+                text="用法：发送 /link telegram、/link wechat、/link web 或 /link <绑定码>。",
                 error_code="link_usage",
             )
         try:
@@ -304,7 +304,7 @@ class ChannelService:
         except IdentityConflict:
             return AgentAnswer(
                 status="failed",
-                text="目前只支持 Telegram 与微信之间绑定。",
+                text="目前只支持 Telegram、微信与 Web 之间绑定。",
                 error_code="link_channel_unsupported",
             )
         except InvalidLinkToken:
@@ -348,8 +348,8 @@ class ChannelService:
                 status="ok",
                 text=(
                     f"绑定码：{token}\n"
-                    f"请在 {value} 中发送 /link {token}。"
-                    f"该绑定码约 {ttl_minutes} 分钟内有效且只能使用一次。"
+                    + ("请在已登录的 Web 页面中使用该绑定码。" if value == "web" else f"请在 {value} 中发送 /link {token}。")
+                    + f"该绑定码约 {ttl_minutes} 分钟内有效且只能使用一次。"
                 ),
             )
 

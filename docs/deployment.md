@@ -230,7 +230,7 @@ docker compose ps
 .venv/bin/alembic check
 ```
 
-当前 head 应为 `b2c3d4e5f6a7`，`alembic check` 应显示没有新的 upgrade operation。
+当前 head 应为 `f1a2b3c4d5e6`，`alembic check` 应显示没有新的 upgrade operation。
 
 本地 Compose Redis 使用持久卷、AOF 和 `appendfsync=always`，使 Celery 接收到的
 persistent 完成消息在确认 publish 前落盘。确认配置没有被覆盖：
@@ -277,6 +277,22 @@ EMBEDDING_BATCH_SIZE=64
 
 ## 6. 启动 ingestion worker 与 Notebook Agent gateway
 
+### Web API 与同进程 MCP
+
+Web 登录与 Streamable HTTP MCP 共用 `mcp-server --transport streamable-http`
+进程。启用前设置 `WEB_AUTH_ENABLED=true`、HTTPS `WEB_PUBLIC_ORIGIN`、至少 32 字符的
+`WEB_AUTH_SECRET`、`RESEND_API_KEY` 与已验证的 `RESEND_FROM_EMAIL`；生产 Redis 不可用时
+登录会 fail closed，既有 Telegram、WeChat 和 MCP grant 不受影响。
+
+反向代理必须终止 HTTPS 并将 Cookie 原样转发，禁止为 `/api/v1` 配置 CORS。对所有 Web
+状态变更请求保留原始 `Origin` header；只对列入 `WEB_TRUSTED_PROXY_HOSTS` 的代理转发
+`X-Forwarded-For`。Web 对话的应用预算为 45 秒，proxy upstream read timeout 必须至少为
+60 秒。访问日志不得记录 Cookie、Authorization、验证码、link token、邮件地址、消息正文
+或完整 MCP capability URL。
+
+上线时由指定操作者使用 direct Neon URL 执行 `alembic upgrade head`，再检查
+`alembic current`；不要通过 pooled runtime URL、Vercel build 或请求处理执行 migration。
+
 ### 6.1 readiness 与 Celery worker
 
 保持 `AGENT_SAVE_ENABLED=false` 与 `AGENT_ITEM_MANAGEMENT_ENABLED=false`。先确认三个依赖均 ready：
@@ -292,7 +308,7 @@ curl --fail http://127.0.0.1:9000/minio/health/ready
 
 通过条件分别为 postgres/redis/minio healthy、Redis 返回 `PONG` 且本地实例报告
 `appendonly=yes`、`appendfsync=always`、MinIO ready endpoint
-返回成功、schema 为 `b2c3d4e5f6a7 (head)`。若 worker 不与 Redis 位于同一主机，必须在
+返回成功、schema 为 `f1a2b3c4d5e6 (head)`。若 worker 不与 Redis 位于同一主机，必须在
 worker 的私有环境中显式设置完整 `REDIS_URL`；不要依赖示例的 localhost 默认值。
 
 在独立终端或受管理服务中启动消费 `ingest` 与 `maintenance` queue 的 worker：
@@ -524,7 +540,7 @@ MiXer 等 URL-only 客户端只有在显式设置 `MCP_URL_TOKEN_MODE=true` 后�
 
 MCP 进程可用性不等于数据库、模型、embedding、Redis、MinIO、Celery 或 maintenance
 readiness。read-only 问答可以不启动 Redis/MinIO/worker；启用 full 的保存、重试和
-回收站操作前，必须检查相应依赖和 migration `b2c3d4e5f6a7 (head)`。
+回收站操作前，必须检查相应依赖和 migration `f1a2b3c4d5e6 (head)`。
 
 ## 7. 安装 LangBot 桥接（可选）
 
@@ -941,7 +957,7 @@ WHERE deleted_at IS NOT NULL;
 1. 停止 LangBot adapters/plugin，阻止新请求。
 2. 备份 PostgreSQL、MinIO 与 LangBot 配置。
 3. 设置 `AGENT_SAVE_ENABLED=false`、`AGENT_ITEM_MANAGEMENT_ENABLED=false`，重启 gateway 并停止 `web-server`，从而冻结全部 Web 写入，再安装新的 Python 依赖。仅重启而不停止 `web-server` 只能禁用 batch/retry，不能禁用备注、归档和恢复。
-4. 执行 `alembic upgrade head`，确认 revision `b2c3d4e5f6a7`。
+4. 执行 `alembic upgrade head`，确认 revision `f1a2b3c4d5e6`。
 5. 在 `web/` 执行 `corepack pnpm install --frozen-lockfile`、`check:api`、`test`、
    `typecheck`、`lint` 与 `build`，禁止继续提供旧的 `web/dist`。
 6. 启动 compatible worker（`ingest,maintenance`）与单一 beat，确认 ingest queue、completion outbox publisher、CA、Redis AOF 与 MinIO readiness。

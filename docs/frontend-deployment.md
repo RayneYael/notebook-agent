@@ -185,7 +185,7 @@ corepack pnpm --dir web lint
 corepack pnpm --dir web build
 
 printf 'COMMIT_SHA=%s\nSCHEMA_HEAD=%s\nFRONTEND_ARTIFACT=%s\nAPI_ENTRYPOINT=%s\n' \
-  "${release_sha}" 'a7b8c9d0e1f2' 'web/dist' 'app.cli web-server' \
+  "${release_sha}" 'f1a2b3c4d5e6' 'web/dist' 'app.cli web-server' \
   > release-manifest.env
 exit
 ```
@@ -279,7 +279,7 @@ until the API and dependency checks below pass.
 
 The local `/api/v1/health` check proves only that the Web process is alive; it is
 not full dependency readiness. Before enabling save/retry, also confirm the
-database is at `a7b8c9d0e1f2`, Redis answers `PONG` with the documented AOF
+database is at `f1a2b3c4d5e6`, Redis answers `PONG` with the documented AOF
 settings, MinIO is ready, and the expected Celery worker/beat queues are active,
 using the commands in [the main deployment runbook](deployment.md#61-readiness-与-celery-worker).
 `After=docker.service` in the unit controls startup order only and is not a

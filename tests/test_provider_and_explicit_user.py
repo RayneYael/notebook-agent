@@ -167,6 +167,7 @@ def test_save_disabled_composition_has_no_action_factory():
         replace(
             Settings(),
             agent_save_enabled=False,
+            agent_item_management_enabled=False,
             zhipu_api_key=None,
         ),
         session_factory=lambda: None,

@@ -17,6 +17,7 @@ from app.ingest.tasks import ingest_url
 from app.models import AppUser, ChannelIdentity
 from app.retrieval.search import bm25_search, vector_search
 from app.mcp_grants import McpGrantError, McpGrantService
+from app.web_auth import revoke_web_sessions
 
 
 def _print(name, hits):
@@ -162,6 +163,7 @@ def _users(args) -> None:
             raise SystemExit(f"app user {args.user_id} not found")
         if args.user_command == "disable":
             user.disabled_at = datetime.now(UTC)
+            revoke_web_sessions(db, user.id)
             db.commit()
         elif args.user_command == "enable":
             user.disabled_at = None

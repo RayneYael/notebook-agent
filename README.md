@@ -170,6 +170,55 @@ material is printed only by those two commands and is not recoverable later.
 .venv/bin/python -m app.cli mcp-server --transport streamable-http
 ```
 
+### Web Email Login API
+
+The Web API and Streamable HTTP MCP share the command above, but retain
+separate authentication boundaries: browser requests use a server-side session
+Cookie at `/api/v1/*`, while `/mcp` continues to require an MCP bearer grant.
+
+The browser chat's `conversation_id`, server `thread_id`, message idempotency,
+and reset contract are documented in [Web 对话接口契约](docs/web-conversation-api.md).
+
+Before starting it, add the following to the private root `.env` file. Do not
+commit provider credentials or the Web auth secret. `WEB_PUBLIC_ORIGIN` must be the exact
+HTTPS origin used by the browser, with no trailing slash.
+
+```dotenv
+WEB_AUTH_ENABLED=true
+WEB_PUBLIC_ORIGIN=https://localhost:8443
+WEB_AUTH_SECRET=<a private random value of at least 32 characters>
+EMAIL_PROVIDER=smtp
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_USERNAME=<local test Gmail address>
+SMTP_PASSWORD=<local Gmail App Password>
+SMTP_FROM_EMAIL=<local test Gmail address>
+```
+
+Run database migrations before exposing the Web API, then start the same
+long-running HTTP process:
+
+```bash
+.venv/bin/alembic upgrade head
+.venv/bin/python -m app.cli mcp-server --transport streamable-http
+```
+
+Place the process behind an HTTPS reverse proxy. It must preserve Cookie and
+`Origin` headers, must not enable CORS for `/api/v1`, and should use an upstream
+read timeout of at least 60 seconds. Production login also requires Redis; if
+the selected mail provider or Redis is unavailable, login fails closed. For the
+current local-development Gmail SMTP setup, use the values above plus
+`SMTP_TIMEOUT_SECONDS` (default: `10`). The Gmail App Password and test address
+must stay only in the private local `.env`; never commit them. Resend remains
+available through `EMAIL_PROVIDER=resend` with `RESEND_API_KEY` and
+`RESEND_FROM_EMAIL`, but it is not required for the current environment and
+does not require a DNS/domain-verification decision. Production must explicitly
+select and fully configure a provider; the final production provider remains
+undecided. Development/test with no provider uses an in-memory Fake Sender, so
+its verification code is intentionally unavailable to Postman or logs; use the
+automated Web tests instead.
+
 `tools/list` verifies only protocol connectivity. A measured smoke must call
 `ask_notebook_agent` with a natural-language question so the request reaches
 the Notebook Agent model/retrieval path. The browser/demo profile should use a

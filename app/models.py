@@ -226,8 +226,31 @@ class WebLoginChallenge(Base):
     )
 
 
+class WebAuthChallenge(Base):
+    """One-time, HMAC-protected email login challenge."""
+
+    __tablename__ = "web_auth_challenge"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    email: Mapped[str] = mapped_column(Text, nullable=False)
+    code_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    attempt_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    invalidated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivery_failed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        Index("ix_web_auth_challenge_email_expiry", "email", "expires_at"),
+    )
+
+
 class WebSession(Base):
-    """Opaque server-side Web session with a session-bound CSRF secret."""
+    """One browser session schema shared by channel and email login flows."""
 
     __tablename__ = "web_session"
 
@@ -241,6 +264,12 @@ class WebSession(Base):
         nullable=False,
     )
     login_channel: Mapped[str] = mapped_column(Text, nullable=False)
+    # Channel-assisted sessions predate this linkage.  Email-auth sessions
+    # populate it; existing upstream sessions intentionally leave it NULL.
+    channel_identity_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("channel_identity.id", ondelete="CASCADE"),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -248,6 +277,7 @@ class WebSession(Base):
         DateTime(timezone=True), nullable=False
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     __table_args__ = (
         Index("ix_web_session_user_expires", "app_user_id", "expires_at"),
@@ -257,6 +287,8 @@ class WebSession(Base):
             "revoked_at",
             postgresql_where=text("revoked_at IS NOT NULL"),
         ),
+        Index("ix_web_session_token_active", "token_hash", "revoked_at"),
+        Index("ix_web_session_user_active", "app_user_id", "revoked_at"),
     )
 
 

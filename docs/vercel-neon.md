@@ -47,7 +47,7 @@ alembic upgrade head
 alembic current
 ```
 
-The committed deployment currently expects revision `a7b8c9d0e1f2`. Update
+The committed deployment currently expects revision `f1a2b3c4d5e6`. Update
 Keep `EXPECTED_DATABASE_REVISION` in `vercel.json` aligned with the single
 schema revision required by the deployed application. Never make the health
 check accept an older revision merely to avoid a red deployment: readiness must
@@ -122,7 +122,7 @@ https://<project-domain>/api/health
 Expected body:
 
 ```json
-{"status":"ok","environment":"competition","database":{"status":"ok","revision":"a7b8c9d0e1f2"}}
+{"status":"ok","environment":"competition","database":{"status":"ok","revision":"f1a2b3c4d5e6"}}
 ```
 
 Missing credentials, a direct/non-TLS runtime URL, database downtime, or schema

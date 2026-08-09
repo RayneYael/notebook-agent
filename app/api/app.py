@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth_routes import build_auth_router
+from app.api.email_auth_routes import build_email_auth_router
 from app.api.library_routes import build_library_router
 from app.api.library_schemas import ErrorResponse
 from app.channels.types import UserScope
@@ -67,7 +68,7 @@ class CapabilitiesResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     supported_platforms: tuple[Literal["youtube"], ...] = ("youtube",)
-    web_login_channels: tuple[Literal["telegram", "wechat"], ...] = (
+    web_login_channels: tuple[Literal["email", "telegram", "wechat"], ...] = (
         "telegram",
         "wechat",
     )
@@ -87,6 +88,8 @@ class WebApiServices:
     library: Any
     submission: Any
     transcript: Any
+    email_auth: Any | None = None
+    trusted_proxy_hosts: str = ""
 
 
 _SAFE_MESSAGES = {
@@ -192,7 +195,7 @@ def create_app(
         not web_login_channels
         or len(set(web_login_channels)) != len(web_login_channels)
         or any(
-            channel not in {"telegram", "wechat"}
+            channel not in {"email", "telegram", "wechat"}
             for channel in web_login_channels
         )
     ):
@@ -296,13 +299,26 @@ def create_app(
         )
 
     if services is not None:
-        app.include_router(
-            build_auth_router(
-                services.web_auth,
-                expected_origin=expected_origin or "",
-                cookie_secure=cookie_secure,
+        if services.email_auth is None:
+            # Kept only as a construction-level compatibility boundary for
+            # callers that supply the legacy service.  The production runtime
+            # always provides ``email_auth`` and therefore exposes email OTP.
+            app.include_router(
+                build_auth_router(
+                    services.web_auth,
+                    expected_origin=expected_origin or "",
+                    cookie_secure=cookie_secure,
+                )
             )
-        )
+        else:
+            app.include_router(
+                build_email_auth_router(
+                    services.email_auth,
+                    expected_origin=expected_origin or "",
+                    cookie_secure=cookie_secure,
+                    trusted_proxy_hosts=services.trusted_proxy_hosts,
+                )
+            )
 
         def authenticated_scope(request: Request) -> UserScope:
             raw_token = request.cookies.get(SESSION_COOKIE_NAME, "")

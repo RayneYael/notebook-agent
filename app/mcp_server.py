@@ -1431,9 +1431,19 @@ def run_streamable_http(server=None, *, settings: Settings | None = None, grant_
                     mutation_error_code=readiness.error_code,
                 ),
             )
-    app = create_streamable_http_app(
-        server=server, grant_service=grant_service, settings=settings
-    )
+    if settings.web_auth_enabled:
+        # The dispatcher routes MCP before FastAPI so bearer authorization is
+        # never interpreted as a browser cookie/session.
+        from app.web_runtime import create_combined_asgi_app
+        app = create_combined_asgi_app(
+            settings=settings,
+            mcp_server=server,
+            grant_service=grant_service,
+        )
+    else:
+        app = create_streamable_http_app(
+            server=server, grant_service=grant_service, settings=settings
+        )
     import uvicorn
 
     config = uvicorn.Config(
