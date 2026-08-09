@@ -36,6 +36,7 @@ STATE_FILE = STATE_DIR / "runtime.json"
 LOCK_FILE = STATE_DIR / "lifecycle.lock"
 LOG_DIR = STATE_DIR / "logs"
 PROFILES = ("read", "full", "langbot")
+HEALTH_FAILURE_THRESHOLD = 3
 
 
 class DeploymentError(RuntimeError):
@@ -677,7 +678,10 @@ def start(profile: str | None, *, foreground: bool) -> None:
                 STATE_FILE.unlink(missing_ok=True)
                 raise DeploymentError("failed to launch the runtime supervisor") from exc
         assert process is not None
-        deadline = time.monotonic() + 65
+        # Full startup can perform up to three bounded health snapshots after
+        # worker/listener readiness, so the launcher must outlive that retry
+        # budget instead of killing a supervisor that is still validating.
+        deadline = time.monotonic() + 120
         while time.monotonic() < deadline:
             state = _active_state()
             if (
@@ -1082,6 +1086,53 @@ def _update_health_state(run_id: str, checks: Mapping[str, bool]) -> None:
     os.replace(tmp, STATE_FILE)
 
 
+def _failed_health_checks(checks: Mapping[str, bool]) -> tuple[str, ...]:
+    if not checks:
+        return ("snapshot",)
+    return tuple(sorted(name for name, ready in checks.items() if not ready))
+
+
+def _health_failure_result(
+    checks: Mapping[str, bool], previous_failures: int
+) -> tuple[int, bool]:
+    if checks and all(checks.values()):
+        return 0, False
+    failures = previous_failures + 1
+    return failures, failures >= HEALTH_FAILURE_THRESHOLD
+
+
+def _wait_for_startup_health(
+    profile: str,
+    env: Mapping[str, str],
+    children: Mapping[str, subprocess.Popen],
+    managed_services: Sequence[str],
+    *,
+    should_stop: Callable[[], bool],
+) -> dict[str, bool]:
+    checks: dict[str, bool] = {}
+    for attempt in range(1, HEALTH_FAILURE_THRESHOLD + 1):
+        checks = _health_snapshot(
+            profile,
+            env,
+            children,
+            managed_services,
+            should_stop=should_stop,
+        )
+        if checks and all(checks.values()):
+            return checks
+        failed = ", ".join(_failed_health_checks(checks))
+        print(
+            f"startup health attempt {attempt}/{HEALTH_FAILURE_THRESHOLD} failed: {failed}",
+            flush=True,
+        )
+        if attempt < HEALTH_FAILURE_THRESHOLD:
+            time.sleep(1)
+    raise DeploymentError(
+        "runtime health checks failed during startup: "
+        + ", ".join(_failed_health_checks(checks))
+    )
+
+
 def _signal_child_group(child: subprocess.Popen, sig: int) -> None:
     try:
         os.killpg(child.pid, sig)
@@ -1125,19 +1176,18 @@ def supervise(profile: str, run_id: str) -> int:
                 )
         _wait_for_listener(profile, env, children, should_stop=lambda: stopping)
         managed_services = build_plan(profile, env).compose_services
-        checks = _health_snapshot(
+        checks = _wait_for_startup_health(
             profile,
             env,
             children,
             managed_services,
             should_stop=lambda: stopping,
         )
-        if not checks or not all(checks.values()):
-            raise DeploymentError("runtime health checks failed during startup")
         _write_state(
             run_id, profile, children, checks, managed_services
         )
         next_health_update = time.monotonic() + 10
+        consecutive_health_failures = 0
         while not stopping:
             for child in children.values():
                 if child.poll() is not None:
@@ -1156,10 +1206,29 @@ def supervise(profile: str, run_id: str) -> int:
                     run_id,
                     refreshed_checks,
                 )
-                if not refreshed_checks or not all(refreshed_checks.values()):
+                previous_failures = consecutive_health_failures
+                consecutive_health_failures, stop_for_health = (
+                    _health_failure_result(
+                        refreshed_checks, consecutive_health_failures
+                    )
+                )
+                if consecutive_health_failures:
+                    failed = ", ".join(
+                        _failed_health_checks(refreshed_checks)
+                    )
+                    print(
+                        "runtime health degraded "
+                        f"({consecutive_health_failures}/{HEALTH_FAILURE_THRESHOLD}): "
+                        f"{failed}",
+                        flush=True,
+                    )
+                elif previous_failures:
+                    print("runtime health recovered", flush=True)
+                if stop_for_health:
                     # MCP computes mutation readiness at process startup. Stop
-                    # the whole owned runtime on degradation so stale full
-                    # capabilities cannot remain available.
+                    # the whole owned runtime after bounded consecutive
+                    # failures so stale full capabilities cannot persist while
+                    # a single busy-worker probe remains non-fatal.
                     unexpected_exit = True
                     stopping = True
                 next_health_update = time.monotonic() + 10

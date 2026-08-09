@@ -566,6 +566,43 @@ def test_health_snapshot_checks_cancellation_between_bounded_probes(monkeypatch)
         )
 
 
+def test_startup_health_retries_transient_busy_worker(monkeypatch):
+    snapshots = iter(
+        [
+            {"dependency.worker": False, "listener": True},
+            {"dependency.worker": True, "listener": True},
+        ]
+    )
+    monkeypatch.setattr(
+        deployment,
+        "_health_snapshot",
+        lambda *_args, **_kwargs: next(snapshots),
+    )
+    monkeypatch.setattr(deployment.time, "sleep", lambda _seconds: None)
+    checks = deployment._wait_for_startup_health(
+        "full", {}, {}, (), should_stop=lambda: False
+    )
+    assert checks == {"dependency.worker": True, "listener": True}
+
+
+def test_runtime_health_requires_consecutive_failures():
+    failures = 0
+    for expected in (1, 2):
+        failures, should_stop = deployment._health_failure_result(
+            {"dependency.worker": False}, failures
+        )
+        assert failures == expected
+        assert should_stop is False
+    failures, should_stop = deployment._health_failure_result(
+        {"dependency.worker": False}, failures
+    )
+    assert failures == deployment.HEALTH_FAILURE_THRESHOLD
+    assert should_stop is True
+    assert deployment._health_failure_result(
+        {"dependency.worker": True}, failures
+    ) == (0, False)
+
+
 def test_supervisor_stops_siblings_when_required_child_exits(monkeypatch, tmp_path):
     class Child:
         next_pid = 100

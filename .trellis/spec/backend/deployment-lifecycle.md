@@ -45,9 +45,12 @@ identity before signaling it.
 
 Startup order is dependencies, migration, worker readiness, Beat, then the
 remaining application components. All pre-start checks and subprocesses must
-have bounded timeouts. If a child exits or a required dependency degrades, the
-supervisor stops every process owned by that run. Shutdown must include process
-groups and Celery descendants without signaling unrelated processes.
+have bounded timeouts. A child exit stops the owned runtime immediately; a
+dependency probe must fail three consecutive periodic snapshots before the
+supervisor stops the run, so a busy single worker cannot trigger a false
+shutdown. Log each failed snapshot using redacted check names. Shutdown must
+include process groups and Celery descendants without signaling unrelated
+processes.
 
 External PostgreSQL, Redis, and object storage are readiness-checked but never
 stopped or mutated. Compose services may be rolled back only when the current
