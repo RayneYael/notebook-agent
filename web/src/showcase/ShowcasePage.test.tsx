@@ -41,6 +41,8 @@ describe("ShowcasePage", () => {
     expect(screen.getByRole("heading", { name: "选一个场景，看答案出处。" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "下次需要答案，直接回到原文。" })).toBeInTheDocument();
     expect(container.querySelectorAll(".showcase-audience__icon")).toHaveLength(4);
+    expect(screen.getByRole("heading", { name: "跨平台收集" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "多渠道使用者" })).not.toBeInTheDocument();
     expect(screen.getByText(/不会调用模型或上传数据/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /进入资料库/ })).toHaveAttribute("href", "/login");
     expect(screen.getByLabelText("从视频到可追溯答案的处理路径")).toBeInTheDocument();

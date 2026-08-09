@@ -206,7 +206,7 @@ const audiences: Array<{ icon: AudienceIconName; title: string; copy: string }> 
   },
   {
     icon: "channels",
-    title: "多渠道使用者",
+    title: "跨平台收集",
     copy: "如果部署启用了多个聊天入口，绑定后的账号可以共用一份私人资料库，并通过已启用的可信入口完成 Web 登录。",
   },
 ];
