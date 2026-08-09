@@ -122,3 +122,30 @@
 - The only reported check failure is the external Vercel repository-owner
   authorization link. The PR records that as an environment/ownership gate,
   not as a passing deployment claim.
+
+## 2026-08-09 final residual frontend pass
+
+- Integration owner remains `/root` in this worktree. It is the only owner of
+  Git integration, final validation processes, fork push, and PR updates.
+- Residual product UI changes are owned by two source worktrees:
+  `web-mvp-final` for brand/login/Showcase presentation and
+  `why-saved-collections` for library progress and transcript reading.
+- The source worktrees will receive narrow recovery commits before their new
+  commits are integrated here one at a time. Their old histories must not be
+  pushed over the existing PR branch because both are behind the current
+  integration head.
+- Root `main`, its untracked `web/` build/dependency tree, screenshots, runtime
+  directories, and the Showcase worktree's unrelated `uv.lock` remain outside
+  this delivery.
+- The untracked `design-qa.md` contains machine-local absolute evidence paths
+  and is not a portable repository artifact. Its durable conclusions are
+  summarized here instead: the login background uses a generated raster
+  halftone asset, retains card legibility, respects reduced motion, and passed
+  desktop/mobile overflow checks in the producing task.
+- Review removed one false-precision behavior before integration: subtitle
+  links now retain backend-provided block timestamps and source URLs instead of
+  inventing per-sentence times. The approximate queue progress remains clearly
+  labeled as an estimate and resets when the visible work item set changes.
+- No live server is currently owned by this pass. If a final browser smoke is
+  required, `/root` will use a new task-owned loopback port and will not touch
+  the existing 5173/5175 listeners.

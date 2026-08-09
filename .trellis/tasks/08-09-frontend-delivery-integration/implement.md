@@ -43,3 +43,17 @@
   head; do not push or update `main`.
 - [x] Update the existing upstream PR without merging; include architecture decision,
   verification, and external deployment gates.
+
+## Gate 5 - Final residual frontend integration
+
+- [ ] Create a narrow recovery commit for each residual source worktree while
+  excluding runtime/build output, machine-local QA paths, and unrelated WIP.
+- [ ] Integrate the collection/progress/transcript commit and the
+  brand/login/Showcase commit one at a time, preserving both sides of shared
+  stylesheet changes.
+- [ ] Run full frontend tests, frozen OpenAPI check, typecheck, lint, production
+  build, deployment contract tests, and a final independent code/architecture
+  review on the integrated head.
+- [ ] Refresh `upstream/main`, preserve a fast-forward fork push, update PR 2
+  with completed frontend work plus deployment-ready and external-gate status,
+  and do not merge it.
