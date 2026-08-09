@@ -15,7 +15,7 @@
   "branch": "codex/web-video-library-mvp",
   "base_branch": "main",
   "worktree_path": null,
-  "commit": "eb8a009c49d8e69709d4619a56e346019574ec1c",
+  "commit": "96b7651f379c292d08e6b53a8f1c66040c5cec8f",
   "pr_url": "https://github.com/deequoique/notebook-agent/pull/2",
   "subtasks": [],
   "children": [
