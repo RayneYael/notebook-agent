@@ -617,8 +617,10 @@ LangBot。不要先启动 adapter 试图“等它自己恢复”。
 
 ## 9. Linux systemd 示例
 
-下面只管理 Notebook Agent gateway；LangBot 按其部署方式单独管理。把路径和用户
-改成实际值，并把 secret 文件权限设为 `0600`。
+下面的内联示例管理 Notebook Agent gateway；LangBot 按其部署方式单独管理。把路径和用户
+改成实际值，并把 secret 文件权限设为 `0600`。独立静态前端 + API-only Web 的可安装
+Nginx 与 systemd 模板位于 `deploy/nginx/` 和 `deploy/systemd/notebook-agent-web*.service`，
+完整构建、原子切换、TLS、smoke 与回滚步骤见 [Frontend deployment](frontend-deployment.md)。
 
 ```ini
 [Unit]
