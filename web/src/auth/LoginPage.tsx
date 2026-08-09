@@ -1,6 +1,6 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { FormEvent } from "react";
+import type { ReactNode } from "react";
 import { useNavigate } from "react-router";
 
 import {
@@ -16,16 +16,17 @@ import type {
   LoginChannel,
   SessionInfo,
 } from "../api/contracts";
+import { BrandLogo } from "../app/BrandLogo";
 
-type LoginView = "methods" | "password";
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
+const LAST_LOGIN_CHANNEL_STORAGE_KEY = "notebook-agent:last-login-channel";
 
 interface LoginMethodOptionProps {
   ariaLabel: string;
-  icon: string;
-  kind: "primary" | "reserved";
+  icon: ReactNode;
+  iconClassName?: string;
   title: string;
-  description: string;
+  remembered?: boolean;
   status: string;
   statusTone?: "ready" | "muted" | "error";
   disabled?: boolean;
@@ -49,11 +50,7 @@ export function LoginPage({
 }: LoginPageProps) {
   const navigate = useNavigate();
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
-  const [view, setView] = useState<LoginView>("methods");
-  const [account, setAccount] = useState("");
-  const [password, setPassword] = useState("");
-  const [passwordVisible, setPasswordVisible] = useState(false);
-  const [passwordFeedback, setPasswordFeedback] = useState<string | null>(null);
+  const [lastLoginChannel, setLastLoginChannel] = useState<LoginChannel | null>(readLastLoginChannel);
   const capabilities = useQuery({
     queryKey: ["capabilities"],
     queryFn: loadCapabilities,
@@ -74,6 +71,8 @@ export function LoginPage({
   const exchange = useMutation({
     mutationFn: () => exchangeSession(challenge!.public_id, challenge!.browser_secret),
     onSuccess: (session) => {
+      rememberLoginChannel(session.login_channel);
+      setLastLoginChannel(session.login_channel);
       if (onAuthenticated) onAuthenticated(session);
       else navigate("/library", { replace: true });
     },
@@ -98,43 +97,16 @@ export function LoginPage({
     exchange.reset();
   }
 
-  function openPasswordLogin() {
-    clearPasswordLogin();
-    setView("password");
-  }
-
-  function closePasswordLogin() {
-    clearPasswordLogin();
-    setView("methods");
-  }
-
-  function clearPasswordLogin() {
-    setAccount("");
-    setPassword("");
-    setPasswordVisible(false);
-    setPasswordFeedback(null);
-  }
-
-  function submitPasswordLogin(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!account.trim() || !password) {
-      setPasswordFeedback("请输入账号和密码。");
-      return;
-    }
-    setPasswordFeedback("当前版本暂未接入账号密码认证，请使用微信或 Telegram。");
-  }
-
   return (
     <main className="login-page">
       <div className="paper-glow" aria-hidden="true" />
       <section className="login-card" aria-labelledby="login-title">
         <a className="wordmark" href="/" aria-label="Notebook Agent 首页">
-          <span className="wordmark__sigil" aria-hidden="true">N</span>
+          <BrandLogo className="wordmark__sigil" />
           <span>Notebook Agent</span>
         </a>
         <p className="eyebrow">你的私人视频资料库</p>
         <h1 id="login-title">登录你的视频资料库</h1>
-        <p className="login-intro">选择已经绑定的聊天渠道确认身份。账号密码入口目前仅作界面预留。</p>
 
         {challenge ? (
           <div className="login-flow">
@@ -154,80 +126,19 @@ export function LoginPage({
               ← 更换登录方式
             </button>
           </div>
-        ) : view === "password" ? (
-          <form className="password-login" onSubmit={submitPasswordLogin} noValidate>
-            <div className="login-view-heading">
-              <div>
-                <p className="login-view-kicker">前端预留</p>
-                <h2>账号密码登录</h2>
-              </div>
-              <button
-                className="login-back-button"
-                type="button"
-                aria-label="返回其他登录方式"
-                onClick={closePasswordLogin}
-              >
-                ← 返回其他登录方式
-              </button>
-            </div>
-            <p className="password-login__intro">界面已经准备完成，当前版本仍以微信和 Telegram 认证为准。</p>
-            <div className="login-field">
-              <label htmlFor="login-account">账号</label>
-              <input
-                id="login-account"
-                name="account"
-                type="text"
-                autoComplete="username"
-                value={account}
-                onChange={(event) => {
-                  setAccount(event.target.value);
-                  setPasswordFeedback(null);
-                }}
-              />
-            </div>
-            <div className="login-field">
-              <label htmlFor="login-password">密码</label>
-              <span className="login-password-control">
-                <input
-                  id="login-password"
-                  name="password"
-                  type={passwordVisible ? "text" : "password"}
-                  autoComplete="current-password"
-                  value={password}
-                  onChange={(event) => {
-                    setPassword(event.target.value);
-                    setPasswordFeedback(null);
-                  }}
-                />
-                <button
-                  type="button"
-                  aria-label={passwordVisible ? "隐藏密码" : "显示密码"}
-                  onClick={() => setPasswordVisible((visible) => !visible)}
-                >
-                  {passwordVisible ? "隐藏" : "显示"}
-                </button>
-              </span>
-            </div>
-            {passwordFeedback ? (
-              <p className="inline-error" role="alert">{passwordFeedback}</p>
-            ) : (
-              <p className="password-login__status">不会发送或保存你在这里输入的内容。</p>
-            )}
-            <button className="button button--primary button--wide" type="submit">登录</button>
-          </form>
         ) : (
           <div className="login-method-panel">
             <div className="login-method-heading">
               <span>登录方式</span>
-              <small>优先使用已绑定的聊天账号</small>
+              <small>使用已绑定的聊天账号继续</small>
             </div>
             <div className="login-methods" aria-label="选择登录方式">
               <LoginMethodOption
                 ariaLabel="使用微信登录"
-                icon="微"
-                kind="primary"
+                icon={<WechatBrandIcon />}
+                iconClassName="login-method__icon--wechat"
                 title="微信"
-                description="在已绑定的微信聊天中确认身份"
+                remembered={lastLoginChannel === "wechat"}
                 status={channelStatusLabel(wechatAvailability, mutation.isPending && mutation.variables === "wechat")}
                 statusTone={channelStatusTone(wechatAvailability)}
                 disabled={wechatAvailability !== "available" || mutation.isPending}
@@ -235,24 +146,14 @@ export function LoginPage({
               />
               <LoginMethodOption
                 ariaLabel="使用 Telegram 登录"
-                icon="TG"
-                kind="primary"
+                icon={<TelegramBrandIcon />}
+                iconClassName="login-method__icon--telegram"
                 title="Telegram"
-                description="通过已绑定的 Telegram 账号确认"
+                remembered={lastLoginChannel === "telegram"}
                 status={channelStatusLabel(telegramAvailability, mutation.isPending && mutation.variables === "telegram")}
                 statusTone={channelStatusTone(telegramAvailability)}
                 disabled={telegramAvailability !== "available" || mutation.isPending}
                 onClick={() => startChannelLogin("telegram")}
-              />
-              <LoginMethodOption
-                ariaLabel="使用账号密码登录"
-                icon="••"
-                kind="reserved"
-                title="账号密码"
-                description="查看预留的账号密码登录界面"
-                status="查看表单"
-                statusTone="muted"
-                onClick={openPasswordLogin}
               />
             </div>
             {capabilities.isError ? (
@@ -264,12 +165,12 @@ export function LoginPage({
                   aria-label="重试"
                   onClick={() => void capabilities.refetch()}
                 >
-                  重新检测渠道
+                  重新加载登录方式
                 </button>
               </div>
             ) : null}
             {capabilities.isPending ? (
-              <p className="login-capability-note" aria-live="polite">正在确认当前部署可用的聊天渠道…</p>
+              <p className="login-capability-note" aria-live="polite">正在加载登录方式…</p>
             ) : null}
           </div>
         )}
@@ -294,9 +195,9 @@ export function LoginPage({
 function LoginMethodOption({
   ariaLabel,
   icon,
-  kind,
+  iconClassName,
   title,
-  description,
+  remembered = false,
   status,
   statusTone = "muted",
   disabled = false,
@@ -304,21 +205,59 @@ function LoginMethodOption({
 }: LoginMethodOptionProps) {
   return (
     <button
-      className={`login-method login-method--${kind}`}
+      className="login-method"
       type="button"
       aria-label={ariaLabel}
       disabled={disabled}
       onClick={onClick}
     >
-      <span className="login-method__icon" aria-hidden="true">{icon}</span>
+      <span className={`login-method__icon${iconClassName ? ` ${iconClassName}` : ""}`} aria-hidden="true">
+        {icon}
+      </span>
       <span className="login-method__copy">
-        <span className="login-method__kind">{kind === "primary" ? "主要方式" : "前端预留"}</span>
-        <strong>{title}</strong>
-        <small>{description}</small>
+        <span className="login-method__title-row">
+          <strong>{title}</strong>
+          {remembered ? <span className="login-method__remembered">上次使用</span> : null}
+        </span>
       </span>
       <span className={`login-method__status login-method__status--${statusTone}`}>{status}</span>
     </button>
   );
+}
+
+function WechatBrandIcon() {
+  return (
+    <svg data-testid="wechat-brand-icon" viewBox="0 0 32 32" focusable="false">
+      <path d="M13.5 5.4C7.3 5.4 2.3 9.6 2.3 14.8c0 2.9 1.6 5.5 4.1 7.2l-1 3.6 4-2c1.3.4 2.7.7 4.1.7h.7a8.8 8.8 0 0 1-.5-2.9c0-5.1 4.7-9.2 10.5-9.4-1.5-3.8-5.7-6.6-10.7-6.6Zm-3.8 7.1a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm7.5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z" />
+      <path d="M29.7 21.4c0-4.2-4-7.6-8.8-7.6S12 17.2 12 21.4s4 7.6 8.9 7.6c1.2 0 2.3-.2 3.3-.6l3.2 1.7-.8-2.9a7.3 7.3 0 0 0 3.1-5.8Zm-11.8-1.2a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Zm6 0a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z" />
+    </svg>
+  );
+}
+
+function TelegramBrandIcon() {
+  return (
+    <svg data-testid="telegram-brand-icon" viewBox="0 0 24 24" focusable="false">
+      <path d="M21.7 3.4 18.5 20c-.2 1.2-.9 1.5-1.9.9l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6 13.7l-4.8-1.5c-1.1-.3-1.1-1.1.2-1.6L20.2 3.3c.9-.3 1.7.2 1.5 1.1Z" />
+    </svg>
+  );
+}
+
+function readLastLoginChannel(): LoginChannel | null {
+  try {
+    const channel = window.localStorage.getItem(LAST_LOGIN_CHANNEL_STORAGE_KEY);
+    return channel === "wechat" || channel === "telegram" ? channel : null;
+  } catch {
+    return null;
+  }
+}
+
+function rememberLoginChannel(channel: LoginChannel): boolean {
+  try {
+    window.localStorage.setItem(LAST_LOGIN_CHANNEL_STORAGE_KEY, channel);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function channelAvailability(
@@ -338,7 +277,7 @@ function channelStatusLabel(availability: ChannelAvailability, isStarting: boole
     case "available":
       return "可以使用";
     case "disabled":
-      return "当前部署未启用";
+      return "暂不可用";
     case "unavailable":
       return "暂时无法连接";
   }

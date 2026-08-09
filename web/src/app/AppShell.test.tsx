@@ -9,7 +9,7 @@ describe("application shell", () => {
   it("keeps one quiet top bar and exposes an explicit logout", async () => {
     const onLogout = vi.fn();
     const user = userEvent.setup();
-    render(
+    const { container } = render(
       <MemoryRouter>
         <AppShell loginChannel="telegram" onLogout={onLogout}>
           <h1>我的资料库</h1>
@@ -18,6 +18,7 @@ describe("application shell", () => {
     );
 
     expect(screen.getAllByText("Notebook Agent")).toHaveLength(1);
+    expect(container.querySelector(".wordmark .brand-logo")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "跳到主要内容" })).toHaveAttribute(
       "href",
       "#main-content",

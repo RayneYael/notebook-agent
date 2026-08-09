@@ -1,3 +1,5 @@
+import { BrandLogo } from "../app/BrandLogo";
+
 interface EmptyProps {
   trueFirstEmpty: boolean;
   onAdd?: () => void;
@@ -15,7 +17,7 @@ export function LibraryEmptyState({ trueFirstEmpty, onAdd }: EmptyProps) {
   }
   return (
     <section className="state-card welcome-card">
-      <div className="agent-mark" aria-hidden="true">N</div>
+      <BrandLogo className="agent-mark" />
       <p className="eyebrow">开始使用</p>
       <h2>资料库还是空的</h2>
       <p>添加 YouTube 链接后，系统会整理视频信息、章节和字幕。</p>

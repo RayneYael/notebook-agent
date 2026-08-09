@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router";
-import { describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { Capabilities } from "../api/contracts";
 import { challengePollInterval, LoginPage } from "./LoginPage";
@@ -19,6 +19,34 @@ const capabilities: Capabilities = {
 };
 
 describe("login page", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  });
+
+  it("shows only user-facing chat login options without developer placeholder copy", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    const { container } = render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage loadCapabilities={vi.fn().mockResolvedValue(capabilities)} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const wechat = await screen.findByRole("button", { name: "使用微信登录" });
+    const telegram = screen.getByRole("button", { name: "使用 Telegram 登录" });
+    expect(container.querySelector(".wordmark .brand-logo")).toBeInTheDocument();
+    expect(within(wechat).getByTestId("wechat-brand-icon")).toBeInTheDocument();
+    expect(within(telegram).getByTestId("telegram-brand-icon")).toBeInTheDocument();
+    expect(screen.queryByText("主要方式")).not.toBeInTheDocument();
+    expect(screen.queryByText("在已绑定的微信聊天中确认身份")).not.toBeInTheDocument();
+    expect(screen.queryByText("通过已绑定的 Telegram 账号确认")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "使用账号密码登录" })).not.toBeInTheDocument();
+    expect(screen.queryByText(/前端预留|查看预留|查看表单|当前版本|当前部署/)).not.toBeInTheDocument();
+  });
+
   it("creates a channel challenge and keeps its browser secret in memory", async () => {
     const createChallenge = vi.fn().mockResolvedValue({
       public_id: "challenge-public",
@@ -92,6 +120,27 @@ describe("login page", () => {
     expect(await screen.findByText("登录已确认，正在打开资料库…")).toBeInTheDocument();
     expect(exchangeSession).toHaveBeenCalledWith("challenge-public", "browser-only-secret");
     expect(onAuthenticated).toHaveBeenCalledOnce();
+    expect(window.localStorage.getItem("notebook-agent:last-login-channel")).toBe("telegram");
+    expect(window.localStorage).toHaveLength(1);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it("marks the last successfully used chat channel on the next visit", async () => {
+    window.localStorage.setItem("notebook-agent:last-login-channel", "telegram");
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage loadCapabilities={vi.fn().mockResolvedValue(capabilities)} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const telegram = await screen.findByRole("button", { name: "使用 Telegram 登录" });
+    expect(within(telegram).getByText("上次使用")).toBeInTheDocument();
+    expect(within(screen.getByRole("button", { name: "使用微信登录" })).queryByText("上次使用"))
+      .not.toBeInTheDocument();
   });
 
   it("lets the user restart in place after challenge polling fails", async () => {
@@ -127,7 +176,7 @@ describe("login page", () => {
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
-  it("keeps every login method visible and disables channels not advertised by the server", async () => {
+  it("keeps both chat channels visible and disables channels not advertised by the server", async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
 
     render(
@@ -145,8 +194,8 @@ describe("login page", () => {
 
     await waitFor(() => expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeEnabled());
     expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
-    expect(screen.getByText("当前部署未启用")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "使用账号密码登录" })).not.toBeInTheDocument();
+    expect(screen.getByText("暂不可用")).toBeInTheDocument();
   });
 
   it("keeps channel entries visible with a retryable status when capabilities fail", async () => {
@@ -168,7 +217,7 @@ describe("login page", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent("登录方式暂时无法加载");
     expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "使用账号密码登录" })).not.toBeInTheDocument();
     expect(screen.getAllByText("暂时无法连接")).toHaveLength(2);
     await user.click(screen.getByRole("button", { name: "重试" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "使用微信登录" })).toBeEnabled());
@@ -187,52 +236,9 @@ describe("login page", () => {
 
     expect(screen.getByRole("button", { name: "使用 Telegram 登录" })).toBeDisabled();
     expect(screen.getByRole("button", { name: "使用微信登录" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "使用账号密码登录" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "使用账号密码登录" })).not.toBeInTheDocument();
     expect(screen.getAllByText("正在检测")).toHaveLength(2);
-  });
-
-  it("validates the reserved password form without calling an authentication API", async () => {
-    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const createChallenge = vi.fn();
-    const exchangeSession = vi.fn();
-    const user = userEvent.setup();
-
-    render(
-      <QueryClientProvider client={client}>
-        <MemoryRouter>
-          <LoginPage
-            loadCapabilities={vi.fn().mockResolvedValue(capabilities)}
-            createChallenge={createChallenge}
-            exchangeSession={exchangeSession}
-          />
-        </MemoryRouter>
-      </QueryClientProvider>,
-    );
-
-    await user.click(await screen.findByRole("button", { name: "使用账号密码登录" }));
-    const account = screen.getByRole("textbox", { name: "账号" });
-    const password = screen.getByLabelText("密码");
-    expect(password).toHaveAttribute("type", "password");
-    await user.click(screen.getByRole("button", { name: "显示密码" }));
-    expect(password).toHaveAttribute("type", "text");
-
-    await user.click(screen.getByRole("button", { name: "登录" }));
-    expect(screen.getByRole("alert")).toHaveTextContent("请输入账号和密码");
-
-    await user.type(account, "demo-user");
-    await user.type(password, "not-sent-anywhere");
-    await user.click(screen.getByRole("button", { name: "登录" }));
-    expect(screen.getByRole("alert")).toHaveTextContent(
-      "当前版本暂未接入账号密码认证，请使用微信或 Telegram",
-    );
-    expect(createChallenge).not.toHaveBeenCalled();
-    expect(exchangeSession).not.toHaveBeenCalled();
-    expect(window.localStorage).toHaveLength(0);
-    expect(window.sessionStorage).toHaveLength(0);
-
-    await user.click(screen.getByRole("button", { name: "返回其他登录方式" }));
-    expect(screen.getByRole("button", { name: "使用微信登录" })).toBeEnabled();
-    expect(screen.queryByRole("textbox", { name: "账号" })).not.toBeInTheDocument();
+    expect(screen.getByText("正在加载登录方式…")).toBeInTheDocument();
   });
 
   it("stops polling after an error even when the previous result was pending", () => {

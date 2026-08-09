@@ -5,8 +5,9 @@ import { LibraryEmptyState, LibraryErrorState, LibraryLoadingState } from "./Lib
 
 describe("library page states", () => {
   it("shows agent guidance only for a true first empty library", () => {
-    const { rerender } = render(<LibraryEmptyState trueFirstEmpty />);
+    const { container, rerender } = render(<LibraryEmptyState trueFirstEmpty />);
     expect(screen.getByText("资料库还是空的")).toBeInTheDocument();
+    expect(container.querySelector(".agent-mark.brand-logo")).toBeInTheDocument();
     expect(screen.queryByText(/我是你的资料整理助手/)).not.toBeInTheDocument();
 
     rerender(<LibraryEmptyState trueFirstEmpty={false} />);

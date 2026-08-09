@@ -2,6 +2,7 @@ import { type ReactNode, useEffect, useRef } from "react";
 import { Link } from "react-router";
 
 import type { LoginChannel } from "../api/contracts";
+import { BrandLogo } from "./BrandLogo";
 
 interface AppShellProps {
   children: ReactNode;
@@ -31,7 +32,7 @@ export function AppShell({ children, loginChannel, onLogout, logoutPending = fal
       <header className="topbar">
         <div className="topbar__inner">
           <Link className="wordmark" to="/library" aria-label="Notebook Agent 资料库">
-            <span className="wordmark__sigil" aria-hidden="true">N</span>
+            <BrandLogo className="wordmark__sigil" />
             <span>Notebook Agent</span>
           </Link>
           <details className="account-menu" ref={accountMenuRef}>

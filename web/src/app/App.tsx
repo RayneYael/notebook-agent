@@ -16,6 +16,7 @@ import { LibraryPage } from "../library/LibraryPage";
 import { ShowcasePage } from "../showcase/ShowcasePage";
 import { VideoDetailPage } from "../videos/VideoDetailPage";
 import { AppShell } from "./AppShell";
+import { BrandLogo } from "./BrandLogo";
 
 type NavigateFn = (path: string, options: { replace: boolean }) => void;
 
@@ -75,7 +76,7 @@ function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
   });
 
   if (session.isPending) {
-    return <main className="route-loading" aria-label="正在验证登录" aria-busy="true"><span className="wordmark__sigil">N</span></main>;
+    return <main className="route-loading" aria-label="正在验证登录" aria-busy="true"><BrandLogo className="wordmark__sigil" /></main>;
   }
   if (session.isError) return <Navigate to="/login" replace />;
   return (
