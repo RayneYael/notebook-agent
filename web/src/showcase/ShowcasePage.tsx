@@ -498,13 +498,13 @@ export function ShowcasePage() {
                     aria-label="显示中文要点"
                     aria-pressed={summaryLanguage === "zh"}
                     onClick={() => setSummaryLanguage("zh")}
-                  >中</button>
+                  ><span aria-hidden="true">中</span></button>
                   <button
                     type="button"
                     aria-label="显示英文要点"
                     aria-pressed={summaryLanguage === "en"}
                     onClick={() => setSummaryLanguage("en")}
-                  >EN</button>
+                  ><span aria-hidden="true">EN</span></button>
                 </div>
                 <div className="demo-subtitle-bar" data-testid="demo-subtitle-ticker">
                   <span className="demo-subtitle-bar__mark" aria-hidden="true">要点</span>

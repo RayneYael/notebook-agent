@@ -75,6 +75,8 @@ describe("Web document shell", () => {
     const css = readFileSync(resolve(process.cwd(), "src/styles.css"), "utf8");
 
     expect(css).toMatch(/\.demo-subtitle-language button\s*\{[^}]*width:\s*2\.75rem;[^}]*height:\s*2\.75rem;/);
+    expect(css).toMatch(/\.demo-subtitle-language button > span\s*\{[^}]*width:\s*1\.75rem;[^}]*height:\s*1\.75rem;/);
+    expect(css).toMatch(/\.demo-subtitle-language button\[aria-pressed="true"\] > span\s*\{[^}]*background:\s*var\(--showcase-signal\);/);
     expect(css).toMatch(/\.transcript-list a\s*\{[^}]*min-width:\s*44px;[^}]*min-height:\s*44px;/);
     expect(css).not.toMatch(/\.demo-subtitle-language button\s*\{[^}]*min-height:\s*1\.(?:35|5)rem;/);
   });
