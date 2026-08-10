@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Verify both child requests share the proxy without regressing subtitle selection, bounds, CA inheritance, or real-ingest acceptance."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Check that TLS stays verified and proxy/provider failures remain redacted and distinguishable."}
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Check environment-file ownership, worker-only restart, public-listener prohibition, and reversible production activation."}
+{"file":".trellis/tasks/08-10-youtube-ip-throttling/research/current-production-evidence.md","reason":"Check live validation against the correct host and avoid overstating what the original 429 probe proves."}
+{"file":".trellis/tasks/08-10-youtube-ip-throttling/research/local-acquisition-and-datacenter-proxy.md","reason":"Check the final implementation matches the selected foreground Mac egress and fail-closed tunnel behavior."}

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
 from collections.abc import Callable, Mapping
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 
@@ -14,6 +16,26 @@ from app.ingest.validate import IngestLimitExceeded
 _ALLOWED_HOST_SUFFIXES = (".youtube.com", ".googlevideo.com")
 _ALLOWED_HEADERS = frozenset({"accept", "accept-language", "user-agent"})
 _CHUNK_BYTES = 64 * 1024
+EXIT_CONTENT_TOO_LARGE = 10
+EXIT_FETCH_FAILED = 11
+EXIT_RATE_LIMITED = 12
+EXIT_PROXY_UNAVAILABLE = 13
+EXIT_PROXY_TIMEOUT = 14
+EXIT_PROXY_AUTHENTICATION_FAILED = 15
+
+
+def _proxy_url_error_exit_code(exc: URLError, *, proxy_enabled: bool) -> int:
+    if not proxy_enabled:
+        return EXIT_FETCH_FAILED
+    reason = exc.reason
+    reason_text = str(reason).lower()
+    if "407" in reason_text or "proxy authentication required" in reason_text:
+        return EXIT_PROXY_AUTHENTICATION_FAILED
+    if isinstance(reason, (socket.timeout, TimeoutError)) or any(
+        marker in reason_text for marker in ("timed out", "timeout")
+    ):
+        return EXIT_PROXY_TIMEOUT
+    return EXIT_PROXY_UNAVAILABLE
 
 
 def _trusted_https_url(value: object) -> str:
@@ -91,9 +113,24 @@ def main() -> int:
             socket_timeout_seconds=float(payload["socket_timeout_seconds"]),
         )
     except IngestLimitExceeded:
-        return 10
+        return EXIT_CONTENT_TOO_LARGE
+    except HTTPError as exc:
+        if exc.code == 429:
+            return EXIT_RATE_LIMITED
+        if payload.get("proxy_enabled") and exc.code == 407:
+            return EXIT_PROXY_AUTHENTICATION_FAILED
+        return EXIT_FETCH_FAILED
+    except (socket.timeout, TimeoutError):
+        if payload.get("proxy_enabled"):
+            return EXIT_PROXY_TIMEOUT
+        return EXIT_FETCH_FAILED
+    except URLError as exc:
+        return _proxy_url_error_exit_code(
+            exc,
+            proxy_enabled=bool(payload.get("proxy_enabled")),
+        )
     except Exception:
-        return 11
+        return EXIT_FETCH_FAILED
     sys.stdout.buffer.write(body)
     return 0
 
