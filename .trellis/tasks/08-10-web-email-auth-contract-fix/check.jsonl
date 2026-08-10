@@ -1,0 +1,9 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Check that the implementation remains a private video library and does not introduce unrelated chat UI scope."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Check privacy, CSRF, cache clearing, browser QA, and all required frontend gates."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Check deterministic OpenAPI generation and absence of handwritten or manually edited DTOs."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Check accessible native fields, status announcements, touch targets, and mobile layout."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Check that auth state is not persisted and tenant cache is cleared on logout/401."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Check correct explicit session responses, cookie mutation, and complete ASGI behavior."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Check the single Alembic head and synchronized revision expectations."}
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Check that browser cookie changes do not weaken or wrap MCP bearer authentication."}
+{"file":".trellis/tasks/08-10-web-email-auth-contract-fix/research/frontend-pr-auth-integration-audit.md","reason":"Check every reproduced blocker and divergence against the post-fix behavior."}

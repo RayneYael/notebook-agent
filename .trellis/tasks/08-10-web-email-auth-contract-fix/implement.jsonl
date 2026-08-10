@@ -1,0 +1,11 @@
+{"file":".trellis/spec/frontend/index.md","reason":"Defines the private video library product boundary and ownership between FastAPI and React."}
+{"file":".trellis/spec/frontend/directory-structure.md","reason":"Requires API calls and generated browser contracts to remain in the established frontend boundaries."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Defines accessible form, native control, mobile-first, and browser-safe DTO requirements for the email login UI."}
+{"file":".trellis/spec/frontend/hook-guidelines.md","reason":"Defines TanStack Query mutation, session, bounded retry, and login lifecycle patterns."}
+{"file":".trellis/spec/frontend/state-management.md","reason":"Requires cookie-owned security state, component-local ephemeral auth state, and tenant cache teardown."}
+{"file":".trellis/spec/frontend/type-safety.md","reason":"Makes Pydantic/OpenAPI the canonical DTO source and forbids handwritten contract workarounds."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Defines explicit FastAPI response/cookie behavior for state-changing session routes."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Defines single Alembic head and revision synchronization requirements."}
+{"file":".trellis/spec/backend/channel-identity-linking.md","reason":"Protects existing cross-channel identity and tenant merge semantics while canonicalizing Web auth."}
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Protects the separate MCP bearer boundary when changing the combined ASGI Web application."}
+{"file":".trellis/tasks/08-10-web-email-auth-contract-fix/research/frontend-pr-auth-integration-audit.md","reason":"Provides reproduced failures, PR lineage, contract divergence, and validation evidence driving the repair."}

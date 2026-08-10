@@ -21,6 +21,11 @@ TypeScript runs in strict mode. FastAPI Pydantic response and request models are
 
 Never duplicate lifecycle, login-channel, batch-status, or transcript response unions by hand.
 
+The exporter must instantiate the same email-enabled canonical route
+composition used in production, with inert injected services where external
+providers would otherwise be constructed. A schema generated from a legacy or
+partial app is stale even when its generated files are internally consistent.
+
 ---
 
 ## Validation
@@ -45,6 +50,8 @@ export type LibraryLifecycle = LibraryItem["lifecycle"];
 - Narrow unknown errors by behavior rather than using `any`.
 - Use generated nullable fields exactly as returned by the API.
 - Treat transcript cursors and public IDs as opaque strings.
+- Regenerate `openapi.json` and `schema.d.ts` together and require
+  `pnpm check:api` in CI.
 
 ---
 
