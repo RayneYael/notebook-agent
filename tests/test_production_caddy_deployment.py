@@ -111,6 +111,7 @@ def test_deploy_dispatcher_accepts_only_an_exact_sha_and_keeps_data():
     assert "rm -" not in script
     assert "docker compose down" not in script
     assert ".release-built" in script
+    assert '/usr/bin/env --chdir="$release_dir/web"' in script
     assert "dependency admission failed; previous release restored" in script
     assert "application startup failed; previous release restored" in script
 
