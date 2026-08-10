@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend spec routing and documentation language requirements."}
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"YouTube track selection, yt-dlp runtime, live-ingest acceptance, and bounded subtitle contract."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Trusted CA precedence, verified HTTPS, environment export, and redacted diagnostics contract."}
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Direct and managed worker startup, configuration precedence, and CA safety gates."}
+{"file":".trellis/tasks/08-10-youtube-subtitle-ca-fix/research/subtitle-ca-root-cause.md","reason":"Reproduced SSL failure and certifi-controlled success that define the regression."}
