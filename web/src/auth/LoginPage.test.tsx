@@ -357,4 +357,29 @@ describe("login page", () => {
     expect(screen.getByRole("textbox", { name: "邮箱地址" })).toHaveValue("first@example.test");
     expect(screen.queryByRole("textbox", { name: "6 位验证码" })).not.toBeInTheDocument();
   });
+
+  it("announces a one-time account-link success notice without persisting route state", async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={[{
+          pathname: "/login",
+          state: { accountLinkSuccess: true },
+        }]}
+        >
+          <LoginPage
+            loadCapabilities={vi.fn().mockResolvedValue({
+              ...capabilities,
+              web_login_channels: ["email"],
+            })}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    expect(await screen.findByRole("status")).toHaveTextContent("Telegram 已绑定");
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
 });

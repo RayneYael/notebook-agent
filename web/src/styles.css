@@ -156,6 +156,7 @@ h2 { line-height: 1.1; }
 .email-login-form .field input { min-height: 3rem; font-size: 1rem; }
 .email-login-form .button { margin-top: 0.25rem; }
 .email-login-confirmation { margin: 0 0 0.25rem; color: var(--muted); font-size: 0.82rem; line-height: 1.55; }
+.login-success-note { margin: 1rem 0 0; padding: 0.8rem 1rem; border-left: 3px solid var(--green); background: rgba(49, 94, 83, 0.09); color: var(--green); font-size: 0.88rem; line-height: 1.55; }
 .email-login-form .login-back-button { justify-self: start; }
 .privacy-note { margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid rgba(91, 80, 63, 0.1); color: var(--muted); font-size: 0.75rem; line-height: 1.55; }
 .challenge-card { display: grid; grid-template-columns: auto 1fr; gap: 1rem; margin-top: 2rem; padding: 1.15rem; border: 1px solid var(--line); border-radius: 1rem; background: #f3eee4; }
@@ -172,9 +173,32 @@ h2 { line-height: 1.1; }
 .account-menu summary svg { width: 1.35rem; height: 1.35rem; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
 .account-popover { position: absolute; top: calc(100% + 0.7rem); right: 0; width: 13rem; padding: 1rem; border: 1px solid var(--line); border-radius: 1rem; background: var(--paper); box-shadow: var(--shadow); }
 .account-popover strong { display: block; margin-bottom: 1rem; }
+.account-popover__link { display: flex; min-height: 44px; align-items: center; justify-content: center; margin-bottom: 0.55rem; border: 1px solid var(--line); border-radius: 0.7rem; color: var(--accent-dark); font-size: 0.78rem; font-weight: 800; text-decoration: none; }
+.account-popover__link:hover, .account-popover__link:focus-visible { border-color: rgba(187, 75, 47, 0.48); background: rgba(187, 75, 47, 0.06); }
 .account-popover button { width: 100%; min-height: 44px; border: 0; border-radius: 0.7rem; background: var(--ink); color: white; font-weight: 800; }
 .account-popover__error { margin: 0.75rem 0 0; color: var(--accent-dark); font-size: 0.72rem; line-height: 1.45; }
 .page-container { width: min(100% - 2rem, 1080px); min-height: calc(100vh - 68px); margin-inline: auto; padding: 2.25rem 0 5rem; }
+
+.account-link-page { max-width: 960px; margin-inline: auto; }
+.account-link-page__heading { max-width: 46rem; margin-bottom: 2rem; }
+.account-link-page__heading h1 { max-width: 12ch; margin-bottom: 0.9rem; }
+.account-link-page__heading > p:last-child { max-width: 42rem; color: var(--muted); line-height: 1.7; }
+.account-link-grid { display: grid; gap: 1rem; }
+.account-link-card { min-width: 0; padding: clamp(1.2rem, 4vw, 2rem); border: 1px solid var(--line); border-radius: 1.2rem 1.2rem 1.2rem 0.35rem; background: rgba(251, 248, 241, 0.82); box-shadow: 0 12px 32px rgba(57, 48, 36, 0.055); }
+.account-link-card .step-number { margin: 0 0 1rem; }
+.account-link-card h2 { margin-bottom: 0.65rem; font-size: clamp(1.35rem, 4vw, 1.85rem); }
+.account-link-card > p:not(.step-number) { color: var(--muted); line-height: 1.65; }
+.account-link-card > .button { margin-top: 0.55rem; }
+.account-link-command { display: grid; gap: 0.65rem; margin-top: 1.1rem; padding: 1rem; border: 1px solid rgba(49, 94, 83, 0.2); border-radius: 0.9rem; background: rgba(49, 94, 83, 0.055); }
+.account-link-command p { margin: 0; color: var(--muted); font-size: 0.78rem; line-height: 1.55; }
+.account-link-command code { display: block; min-width: 0; padding: 0.85rem; overflow-wrap: anywhere; border-radius: 0.6rem; background: var(--ink); color: white; font-size: clamp(0.95rem, 4vw, 1.1rem); }
+.account-link-command .field-help { margin: 0; }
+.account-link-form { margin-top: 1rem; }
+.account-link-form .field { margin-bottom: 0.8rem; }
+.account-link-form .field input { min-height: 3rem; font-size: 1rem; }
+.account-link-form .inline-error { margin-top: 0.8rem; }
+.account-link-status { margin: 0; color: var(--green); font-size: 0.78rem; font-weight: 700; line-height: 1.55; }
+.account-link-warning { max-width: 54rem; margin: 1.5rem 0 0; padding-top: 1rem; border-top: 1px solid rgba(91, 80, 63, 0.12); color: var(--muted); font-size: 0.76rem; line-height: 1.6; }
 
 .page-container,
 .login-page,
@@ -433,6 +457,7 @@ h2 { line-height: 1.1; }
   .collection-create { grid-template-columns: minmax(0, 1fr) auto; align-items: end; }
   .collection-create .button { width: auto; }
   .detail-hero { grid-template-columns: minmax(19rem, 50%) minmax(0, 1fr); align-items: center; }
+  .account-link-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); align-items: start; }
 }
 
 @media (min-width: 1040px) {

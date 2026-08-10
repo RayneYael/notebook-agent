@@ -10,6 +10,7 @@ import {
 
 import { getSession, logout, setUnauthorizedHandler } from "../api/client";
 import type { SessionInfo } from "../api/contracts";
+import { AccountLinkPage } from "../account/AccountLinkPage";
 import { LoginPage } from "../auth/LoginPage";
 import { LibraryPage } from "../library/LibraryPage";
 import { ShowcasePage } from "../showcase/ShowcasePage";
@@ -18,7 +19,14 @@ import { AppShell } from "./AppShell";
 import { BrandLogo } from "./BrandLogo";
 import { useRouteNavigate } from "./RouteTransition";
 
-type NavigateFn = (path: string, options: { replace: boolean }) => void;
+type NavigateFn = (
+  path: string,
+  options: { replace: boolean; state?: unknown },
+) => void;
+
+export interface SessionEndOptions {
+  accountLinkSuccess?: boolean;
+}
 
 export async function logoutAndClear(
   client: QueryClient,
@@ -34,9 +42,14 @@ export function endPrivateSession(
   client: QueryClient,
   navigate: NavigateFn,
   rotateClient: () => void,
+  options: SessionEndOptions = {},
 ): void {
   client.clear();
   rotateClient();
+  if (options.accountLinkSuccess) {
+    navigate("/login", { replace: true, state: { accountLinkSuccess: true } });
+    return;
+  }
   navigate("/login", { replace: true });
 }
 
@@ -88,6 +101,15 @@ function ProtectedLayout({ rotateClient }: { rotateClient: () => void }) {
   );
 }
 
+function AccountLinkRoute({ rotateClient }: { rotateClient: () => void }) {
+  const client = useQueryClient();
+  const navigate = useRouteNavigate();
+  const onLinked = useCallback(() => {
+    endPrivateSession(client, navigate, rotateClient, { accountLinkSuccess: true });
+  }, [client, navigate, rotateClient]);
+  return <AccountLinkPage onLinked={onLinked} />;
+}
+
 function LoginRoute({ activateSession }: { activateSession: (session: SessionInfo) => void }) {
   const navigate = useRouteNavigate();
   return (
@@ -117,6 +139,7 @@ function UnauthorizedBoundary({ rotateClient }: { rotateClient: () => void }) {
       <Route element={<ProtectedLayout rotateClient={rotateClient} />}>
         <Route path="/library" element={<LibraryPage />} />
         <Route path="/videos/:id" element={<VideoDetailPage />} />
+        <Route path="/account/link" element={<AccountLinkRoute rotateClient={rotateClient} />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

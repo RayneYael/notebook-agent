@@ -4,8 +4,12 @@ import type {
   AcceptedResponse,
   Capabilities,
   ChallengeStatus,
+  ConsumeLinkTokenInput,
   EmailChallengeInput,
   EmailVerifyInput,
+  LinkTokenInput,
+  LinkTokenResponse,
+  LinkedResponse,
   LibraryItem,
   LibraryPageResponse,
   LoginChallenge,
@@ -136,6 +140,22 @@ export function getSession(): Promise<SessionInfo> {
 
 export function logout(): Promise<void> {
   return requestJson("/api/v1/auth/session", { method: "DELETE" });
+}
+
+export function createTelegramLinkToken(): Promise<LinkTokenResponse> {
+  const input: LinkTokenInput = { target_channel: "telegram" };
+  return requestJson("/api/v1/link-tokens", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function consumeLinkToken(token: string): Promise<LinkedResponse> {
+  const input: ConsumeLinkTokenInput = { token };
+  return requestJson("/api/v1/link-tokens/consume", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
 }
 
 export function getCapabilities(): Promise<Capabilities> {

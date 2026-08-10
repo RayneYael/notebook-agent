@@ -27,6 +27,10 @@ describe("application shell", () => {
     expect(screen.getByRole("heading", { name: "我的资料库" })).toBeInTheDocument();
     await user.click(screen.getByLabelText("打开账户菜单，当前登录方式：Telegram"));
     expect(screen.queryByText("TG")).not.toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "绑定 Telegram" })).toHaveAttribute(
+      "href",
+      "/account/link",
+    );
     await user.click(screen.getByRole("button", { name: "退出登录" }));
     expect(onLogout).toHaveBeenCalledOnce();
   });

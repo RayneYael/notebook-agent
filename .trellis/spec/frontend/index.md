@@ -20,13 +20,14 @@ The frontend is a mobile-first React and TypeScript application under `web/`. It
 | [State Management](./state-management.md) | Local, URL, session, and tenant-cache ownership | Active |
 | [Quality Guidelines](./quality-guidelines.md) | Required checks, security boundaries, and test expectations | Active |
 | [Type Safety](./type-safety.md) | OpenAPI-generated types and runtime validation ownership | Active |
+| [Account Linking](./account-linking.md) | Telegram link-token handling, cache teardown, and error contracts | Active |
 
 ---
 
 ## Product Boundary
 
 - Supported content: YouTube video URLs only.
-- Supported routes: `/login`, `/library`, and `/videos/:id`.
+- Supported routes: `/login`, `/library`, `/videos/:id`, and protected `/account/link`.
 - The first-empty Agent message is static copy and must never call an LLM.
 - Search segments are not a transcript source. The detail page consumes the raw JSON3 transcript API.
 - `summary` is optional and hidden when null. YouTube description is labeled as description, never summary.
