@@ -124,3 +124,155 @@ connector.match(url)
 
 This ordering configures both the current process and all subsequently spawned
 YouTube children without weakening TLS verification.
+
+## Scenario: On-demand loopback home egress
+
+### 1. Scope / Trigger
+
+Trigger: YouTube throttles the production server IP while public metadata and
+subtitle acquisition still works from an operator's Mac. For short-term
+personal use, only the two YouTube connector subprocesses may use an on-demand
+home egress. The rest of the worker and every other service must retain its
+existing direct route.
+
+### 2. Signatures
+
+Application environment:
+
+```text
+YOUTUBE_PROXY_URL=http://127.0.0.1:18080  # optional
+```
+
+Connector construction:
+
+```python
+YouTubeConnector(
+    max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
+    fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
+    proxy_url=settings.youtube_proxy_url,
+)
+```
+
+Foreground Mac command:
+
+```sh
+./scripts/youtube-home-egress SSH_TARGET LOCAL_PROXY_PORT REMOTE_PROXY_PORT
+```
+
+The production invocation is:
+
+```sh
+./scripts/youtube-home-egress ubuntu@51.79.159.110 18080 18080
+```
+
+### 3. Contracts
+
+- `YOUTUBE_PROXY_URL` is absent for direct/rollback behavior. When present it
+  must use scheme `http`, host `127.0.0.1` or `localhost`, and an explicit port
+  from 1 through 65535. Credentials, path (including `/`), query, fragment,
+  whitespace, external hosts, and IPv6 are rejected during `Settings`
+  construction.
+- `_connector()` configures the trusted CA before constructing
+  `YouTubeConnector`, then passes the validated proxy value.
+- A proxied connector copies the current process environment without mutating
+  `os.environ`, preserves `SSL_CERT_FILE` and `REQUESTS_CA_BUNDLE`, sets both
+  uppercase and lowercase HTTP/HTTPS proxy variables, removes ambient
+  `ALL_PROXY` variants, and replaces `NO_PROXY` variants with loopback-only
+  values.
+- The yt-dlp metadata child and bounded subtitle child receive separate copies
+  of the same environment values. Neither child may be retried without that
+  environment when the configured proxy is unavailable.
+- Raw yt-dlp stderr, proxy values, signed subtitle URLs, response bodies, and
+  user content never appear in connector exception text. Stable internal
+  classifications are `youtube_rate_limited`, `youtube_proxy_unavailable`,
+  `youtube_proxy_timeout`, `youtube_proxy_authentication_failed`,
+  `youtube_fetch_failed`, and `subtitle_fetch_failed`.
+- The bounded subtitle child retains its HTTPS destination allowlist, safe
+  header allowlist, streaming size limit, timeouts, and verified TLS. Exit
+  codes 10 through 15 distinguish size, generic fetch, rate limit, proxy
+  unavailable, proxy timeout, and proxy authentication without returning raw
+  error text.
+- The Mac helper owns tinyproxy and reverse SSH in one foreground lifecycle.
+  It preflights both loopback ports before either long-running child, binds
+  tinyproxy only to `127.0.0.1`, allows only HTTPS CONNECT 443, uses
+  `FilterType ere` plus `FilterDefaultDeny Yes` for YouTube/Googlevideo hosts,
+  and binds the SSH reverse listener to server `127.0.0.1`.
+- The helper never installs tinyproxy, changes macOS system proxy settings,
+  creates a LaunchAgent/service, opens a router/public port, or persists
+  configuration. Ctrl-C or either child exit terminates its sibling and
+  removes private temporary state.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required outcome |
+| --- | --- |
+| Proxy setting absent | Preserve existing direct subprocess inheritance. |
+| Malformed, credential-bearing, or non-loopback proxy URL | `Settings` raises `ValueError` before worker use. |
+| Metadata or subtitle provider response is 429 | Raise `TransientFetchError("youtube_rate_limited")`. |
+| Configured proxy refuses/fails connection | Raise `TransientFetchError("youtube_proxy_unavailable")`; do not make a direct attempt. |
+| Configured proxy exceeds the socket or wall-clock budget | Raise `TransientFetchError("youtube_proxy_timeout")`; do not make a direct attempt. |
+| Proxy responds with 407 | Raise `TransientFetchError("youtube_proxy_authentication_failed")`. |
+| Bounded subtitle exceeds the byte limit | Raise `IngestLimitExceeded` exactly as the direct path does. |
+| tinyproxy/ssh/python missing or either loopback port occupied | Helper exits before opening a long-running tunnel. |
+| tinyproxy or SSH exits after readiness | Helper stops its sibling, removes temporary state, and exits non-zero. |
+
+### 5. Good / Base / Bad Cases
+
+- Good: `http://127.0.0.1:18080`, both child environments contain the same
+  proxy and verified CA values, and stopping the tunnel produces
+  `youtube_proxy_unavailable` with one proxied attempt.
+- Base: `YOUTUBE_PROXY_URL` is absent, so existing local direct behavior and
+  subprocess inheritance remain unchanged.
+- Bad: set worker-global proxy variables, allow `http://proxy.example`, leave
+  `.youtube.com` in ambient `NO_PROXY`, retry after proxy failure without an
+  `env`, bind tinyproxy/SSH to `0.0.0.0`, or include raw stderr in the raised
+  exception.
+
+### 6. Tests Required
+
+- Validate both accepted loopback forms and every rejected URL component.
+- Assert yt-dlp and bounded subtitle runner calls receive identical proxy and
+  CA values, ambient `ALL_PROXY` and YouTube `NO_PROXY` cannot bypass routing,
+  and the parent environment is unchanged.
+- Assert metadata and subtitle timeout/rate-limit/proxy error paths emit the
+  stable classifications and make no unproxied retry.
+- Run a real bounded child against an absent loopback proxy to prove failure is
+  closed before any provider connection.
+- Syntax-check the helper and statically assert loopback listeners, CONNECT
+  443, default-deny filters, fail-fast SSH keepalives, cleanup traps, and no
+  automatic Homebrew/service configuration.
+- Before production activation, canary metadata and a non-empty bounded
+  subtitle through server loopback, verify the listener is not public, and
+  submit at most one user item after the public canary succeeds.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+os.environ["HTTPS_PROXY"] = settings.youtube_proxy_url
+result = subprocess.run(yt_dlp_args)
+if result.returncode:
+    result = subprocess.run(yt_dlp_args, env_without_proxy)
+```
+
+This proxies every later worker dependency, mutates shared process state, and
+leaks to the production IP when the tunnel is unavailable.
+
+#### Correct
+
+```python
+child_env = os.environ.copy()
+child_env.update({
+    "HTTP_PROXY": proxy_url,
+    "HTTPS_PROXY": proxy_url,
+    "NO_PROXY": "127.0.0.1,localhost,::1",
+})
+result = subprocess.run(yt_dlp_args, env=child_env)
+if result.returncode:
+    raise TransientFetchError(classify_without_raw_stderr(result.stderr))
+```
+
+The real implementation also supplies lowercase proxy variables, preserves
+both trusted CA variables, removes ambient `ALL_PROXY`, and gives an equivalent
+environment copy to the bounded subtitle child.

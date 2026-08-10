@@ -50,6 +50,42 @@ def test_youtube_fetch_timeout_must_be_positive():
         Settings(youtube_fetch_timeout_seconds=0)
 
 
+@pytest.mark.parametrize(
+    "proxy_url",
+    (
+        "http://127.0.0.1:18080",
+        "http://localhost:18080",
+    ),
+)
+def test_youtube_proxy_accepts_only_explicit_loopback_http_urls(proxy_url):
+    assert Settings(youtube_proxy_url=proxy_url).youtube_proxy_url == proxy_url
+
+
+@pytest.mark.parametrize(
+    "proxy_url",
+    (
+        "",
+        " http://127.0.0.1:18080",
+        "https://127.0.0.1:18080",
+        "http://127.0.0.1",
+        "http://127.0.0.1:0",
+        "http://127.0.0.1:65536",
+        "http://localhost:18080/",
+        "http://localhost:18080/path",
+        "http://localhost:18080?",
+        "http://localhost:18080?mode=connect",
+        "http://localhost:18080#fragment",
+        "http://user@localhost:18080",
+        "http://user:password@localhost:18080",
+        "http://proxy.example:18080",
+        "http://[::1]:18080",
+    ),
+)
+def test_youtube_proxy_rejects_unsafe_or_ambiguous_urls(proxy_url):
+    with pytest.raises(ValueError, match="YOUTUBE_PROXY_URL"):
+        Settings(youtube_proxy_url=proxy_url)
+
+
 def test_batch_preflight_preserves_order_and_safe_validation_results():
     prepared = prepare_submission(
         [

@@ -3,18 +3,36 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import sys
 from datetime import datetime, timezone
 
 from app.connectors.base import Cue, ItemMeta, NeedsASR, TextResult, TransientFetchError
+from app.connectors.bounded_fetch import (
+    EXIT_CONTENT_TOO_LARGE,
+    EXIT_PROXY_AUTHENTICATION_FAILED,
+    EXIT_PROXY_TIMEOUT,
+    EXIT_PROXY_UNAVAILABLE,
+    EXIT_RATE_LIMITED,
+)
 from app.ingest.validate import IngestLimitExceeded, guard_transcript
 
 
 _ID_RE = re.compile(r"(?:youtu\.be/|youtube\.com/(?:watch\?.*?v=|shorts/|embed/))([\w-]{11})")
 DEFAULT_MAX_TRANSCRIPT_BYTES = 5_000_000
 DEFAULT_FETCH_TIMEOUT_SECONDS = 30.0
+_PROXY_AUTH_MARKERS = ("http error 407", "proxy authentication required")
+_PROXY_TIMEOUT_MARKERS = ("proxy timeout", "proxy timed out")
+_PROXY_UNAVAILABLE_MARKERS = (
+    "connection refused",
+    "failed to connect to proxy",
+    "unable to connect to proxy",
+    "cannot connect to proxy",
+    "proxy connection failed",
+    "proxyerror",
+)
 
 
 def _normalise_language(value: object) -> str:
@@ -64,6 +82,7 @@ class YouTubeConnector:
         subtitle_runner=subprocess.run,
         max_transcript_bytes: int = DEFAULT_MAX_TRANSCRIPT_BYTES,
         fetch_timeout_seconds: float = DEFAULT_FETCH_TIMEOUT_SECONDS,
+        proxy_url: str | None = None,
     ) -> None:
         if max_transcript_bytes <= 0 or fetch_timeout_seconds <= 0:
             raise ValueError("connector limits must be positive")
@@ -71,13 +90,61 @@ class YouTubeConnector:
         self._subtitle_runner = subtitle_runner
         self._max_transcript_bytes = max_transcript_bytes
         self._fetch_timeout_seconds = fetch_timeout_seconds
+        self._proxy_url = proxy_url
+        self._proxy_environment = self._build_proxy_environment(proxy_url)
         self._meta: dict[str, dict] = {}
+
+    @staticmethod
+    def _build_proxy_environment(proxy_url: str | None) -> dict[str, str] | None:
+        if proxy_url is None:
+            return None
+        environment = os.environ.copy()
+        environment.pop("ALL_PROXY", None)
+        environment.pop("all_proxy", None)
+        environment.update(
+            {
+                "HTTP_PROXY": proxy_url,
+                "HTTPS_PROXY": proxy_url,
+                "http_proxy": proxy_url,
+                "https_proxy": proxy_url,
+                "NO_PROXY": "127.0.0.1,localhost,::1",
+                "no_proxy": "127.0.0.1,localhost,::1",
+            }
+        )
+        return environment
+
+    def _child_environment(self) -> dict[str, str] | None:
+        if self._proxy_environment is None:
+            return None
+        return self._proxy_environment.copy()
+
+    def _classify_yt_dlp_failure(self, stderr: object) -> str:
+        message = str(stderr or "").lower()
+        if "429" in message or "too many requests" in message:
+            return "youtube_rate_limited"
+        if self._proxy_url is not None:
+            if any(marker in message for marker in _PROXY_AUTH_MARKERS):
+                return "youtube_proxy_authentication_failed"
+            if any(marker in message for marker in _PROXY_TIMEOUT_MARKERS):
+                return "youtube_proxy_timeout"
+            if any(marker in message for marker in _PROXY_UNAVAILABLE_MARKERS):
+                return "youtube_proxy_unavailable"
+        return "youtube_fetch_failed"
 
     def match(self, url: str) -> str | None:
         match = _ID_RE.search(url)
         return match.group(1) if match else None
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess[str]:
+        run_kwargs = {
+            "text": True,
+            "capture_output": True,
+            "check": False,
+            "timeout": self._fetch_timeout_seconds,
+        }
+        child_environment = self._child_environment()
+        if child_environment is not None:
+            run_kwargs["env"] = child_environment
         try:
             result = self._runner(
                 [
@@ -91,18 +158,17 @@ class YouTubeConnector:
                     "youtube:player_client=android_vr",
                     *args,
                 ],
-                text=True,
-                capture_output=True,
-                check=False,
-                timeout=self._fetch_timeout_seconds,
+                **run_kwargs,
             )
         except subprocess.TimeoutExpired:
-            raise TransientFetchError("youtube_fetch_timeout") from None
+            classification = (
+                "youtube_proxy_timeout"
+                if self._proxy_url is not None
+                else "youtube_fetch_timeout"
+            )
+            raise TransientFetchError(classification) from None
         if result.returncode:
-            message = result.stderr.strip() or "yt-dlp failed"
-            if "429" in message or "Too Many Requests" in message:
-                raise TransientFetchError(f"YouTube rate limited this video: {message}")
-            raise TransientFetchError(message)
+            raise TransientFetchError(self._classify_yt_dlp_failure(result.stderr))
         return result
 
     def _download_subtitle(self, url: str, headers: object) -> bytes:
@@ -112,20 +178,43 @@ class YouTubeConnector:
                 "headers": headers if isinstance(headers, dict) else {},
                 "max_bytes": self._max_transcript_bytes,
                 "socket_timeout_seconds": min(10.0, self._fetch_timeout_seconds),
+                "proxy_enabled": self._proxy_url is not None,
             }
         ).encode("utf-8")
+        run_kwargs = {
+            "input": request,
+            "capture_output": True,
+            "check": False,
+            "timeout": self._fetch_timeout_seconds,
+        }
+        child_environment = self._child_environment()
+        if child_environment is not None:
+            run_kwargs["env"] = child_environment
         try:
             result = self._subtitle_runner(
                 [sys.executable, "-m", "app.connectors.bounded_fetch"],
-                input=request,
-                capture_output=True,
-                check=False,
-                timeout=self._fetch_timeout_seconds,
+                **run_kwargs,
             )
         except subprocess.TimeoutExpired:
-            raise TransientFetchError("subtitle_fetch_timeout") from None
-        if result.returncode == 10 or len(result.stdout) > self._max_transcript_bytes:
+            classification = (
+                "youtube_proxy_timeout"
+                if self._proxy_url is not None
+                else "subtitle_fetch_timeout"
+            )
+            raise TransientFetchError(classification) from None
+        if (
+            result.returncode == EXIT_CONTENT_TOO_LARGE
+            or len(result.stdout) > self._max_transcript_bytes
+        ):
             raise IngestLimitExceeded()
+        subtitle_failures = {
+            EXIT_RATE_LIMITED: "youtube_rate_limited",
+            EXIT_PROXY_UNAVAILABLE: "youtube_proxy_unavailable",
+            EXIT_PROXY_TIMEOUT: "youtube_proxy_timeout",
+            EXIT_PROXY_AUTHENTICATION_FAILED: "youtube_proxy_authentication_failed",
+        }
+        if result.returncode in subtitle_failures:
+            raise TransientFetchError(subtitle_failures[result.returncode])
         if result.returncode:
             raise TransientFetchError("subtitle_fetch_failed")
         return bytes(result.stdout)

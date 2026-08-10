@@ -189,6 +189,7 @@ def _connector(url: str) -> YouTubeConnector:
     connector = YouTubeConnector(
         max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
         fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
+        proxy_url=settings.youtube_proxy_url,
     )
     if connector.match(url):
         return connector

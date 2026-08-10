@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Defines the existing yt-dlp, bounded subtitle child, CA inheritance, error, and live-ingest contract that the proxy boundary must preserve."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Requires CA resolution before connector construction, verified TLS, child inheritance, and privacy-safe provider diagnostics."}
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Defines production environment ownership, systemd isolation, targeted restarts, secret redaction, and rollback boundaries."}
+{"file":".trellis/tasks/08-10-youtube-ip-throttling/research/current-production-evidence.md","reason":"Provides the confirmed 51.79.159.110 production identity, active service state, 429 evidence, and retry-amplification limits."}
+{"file":".trellis/tasks/08-10-youtube-ip-throttling/research/local-acquisition-and-datacenter-proxy.md","reason":"Records the selected Mac reverse-tunnel topology, alternative evaluation, and short-term personal-use constraints."}

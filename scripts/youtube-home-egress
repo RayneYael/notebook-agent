@@ -1,0 +1,269 @@
+#!/bin/sh
+set -eu
+
+usage() {
+    echo "usage: $0 SSH_TARGET LOCAL_PROXY_PORT REMOTE_PROXY_PORT" >&2
+    echo "example: $0 ubuntu@51.79.159.110 18080 18080" >&2
+    exit 64
+}
+
+fail() {
+    echo "youtube-home-egress: $1" >&2
+    exit "${2:-1}"
+}
+
+validate_port() {
+    port_value=$1
+    port_name=$2
+    case "$port_value" in
+        ''|*[!0-9]*) fail "$port_name must be an integer from 1 to 65535" 64 ;;
+    esac
+    if [ "$port_value" -lt 1 ] || [ "$port_value" -gt 65535 ]; then
+        fail "$port_name must be an integer from 1 to 65535" 64
+    fi
+}
+
+if [ "$#" -ne 3 ]; then
+    usage
+fi
+
+ssh_target=$1
+local_proxy_port=$2
+remote_proxy_port=$3
+
+case "$ssh_target" in
+    *@*) ;;
+    *) fail "SSH_TARGET must use the explicit user@host form" 64 ;;
+esac
+case "$ssh_target" in
+    *@*@*|*[!A-Za-z0-9._@-]*)
+        fail "SSH_TARGET contains unsupported characters" 64
+        ;;
+esac
+ssh_user=${ssh_target%%@*}
+ssh_host=${ssh_target#*@}
+if [ -z "$ssh_user" ] || [ -z "$ssh_host" ]; then
+    fail "SSH_TARGET must use the explicit user@host form" 64
+fi
+
+validate_port "$local_proxy_port" "LOCAL_PROXY_PORT"
+validate_port "$remote_proxy_port" "REMOTE_PROXY_PORT"
+
+if ! ssh_bin=$(command -v ssh); then
+    fail "ssh is required" 69
+fi
+if ! tinyproxy_bin=$(command -v tinyproxy); then
+    fail "tinyproxy is required; install it separately with: brew install tinyproxy" 69
+fi
+if ! python_bin=$(command -v python3); then
+    fail "python3 is required for loopback port preflight" 69
+fi
+if ! mktemp_bin=$(command -v mktemp); then
+    fail "mktemp is required" 69
+fi
+
+proxy_pid=
+ssh_pid=
+state_dir=
+cleanup_started=0
+
+cleanup() {
+    if [ "$cleanup_started" -eq 1 ]; then
+        return
+    fi
+    cleanup_started=1
+    trap - EXIT HUP INT TERM
+
+    if [ -n "$ssh_pid" ]; then
+        kill "$ssh_pid" 2>/dev/null || true
+    fi
+    if [ -n "$proxy_pid" ]; then
+        kill "$proxy_pid" 2>/dev/null || true
+    fi
+
+    cleanup_attempt=0
+    while [ "$cleanup_attempt" -lt 5 ]; do
+        children_running=0
+        if [ -n "$ssh_pid" ] && kill -0 "$ssh_pid" 2>/dev/null; then
+            children_running=1
+        fi
+        if [ -n "$proxy_pid" ] && kill -0 "$proxy_pid" 2>/dev/null; then
+            children_running=1
+        fi
+        if [ "$children_running" -eq 0 ]; then
+            break
+        fi
+        cleanup_attempt=$((cleanup_attempt + 1))
+        sleep 1
+    done
+
+    if [ -n "$ssh_pid" ] && kill -0 "$ssh_pid" 2>/dev/null; then
+        kill -KILL "$ssh_pid" 2>/dev/null || true
+    fi
+    if [ -n "$proxy_pid" ] && kill -0 "$proxy_pid" 2>/dev/null; then
+        kill -KILL "$proxy_pid" 2>/dev/null || true
+    fi
+    if [ -n "$ssh_pid" ]; then
+        wait "$ssh_pid" 2>/dev/null || true
+    fi
+    if [ -n "$proxy_pid" ]; then
+        wait "$proxy_pid" 2>/dev/null || true
+    fi
+
+    if [ -n "$state_dir" ] && [ -d "$state_dir" ]; then
+        rm -f \
+            "$state_dir/tinyproxy.conf" \
+            "$state_dir/tinyproxy.filter" \
+            "$state_dir/tinyproxy.log" \
+            "$state_dir/tinyproxy.pid"
+        rmdir "$state_dir" 2>/dev/null || true
+    fi
+}
+
+trap cleanup EXIT
+trap 'exit 130' HUP INT TERM
+
+local_port_free() {
+    "$python_bin" - "$local_proxy_port" <<'PY'
+import socket
+import sys
+
+sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+try:
+    sock.bind(("127.0.0.1", int(sys.argv[1])))
+except OSError:
+    raise SystemExit(1)
+finally:
+    sock.close()
+PY
+}
+
+if ! local_port_free; then
+    fail "the selected Mac loopback port is already in use" 73
+fi
+
+remote_bind_check="python3 -c 'import socket,sys; sock=socket.socket(); sock.bind((\"127.0.0.1\", int(sys.argv[1]))); sock.close()' $remote_proxy_port"
+if ! "$ssh_bin" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o RequestTTY=no \
+    "$ssh_target" \
+    "$remote_bind_check"; then
+    fail "SSH key access failed or the selected server loopback port is in use" 73
+fi
+
+state_dir=$(
+    "$mktemp_bin" -d "${TMPDIR:-/tmp}/notebook-agent-youtube-egress.XXXXXX"
+) || fail "could not create private temporary state" 73
+chmod 700 "$state_dir"
+
+filter_file=$state_dir/tinyproxy.filter
+config_file=$state_dir/tinyproxy.conf
+log_file=$state_dir/tinyproxy.log
+pid_file=$state_dir/tinyproxy.pid
+
+cat >"$filter_file" <<'EOF'
+(^|\.)youtube\.com$
+(^|\.)googlevideo\.com$
+EOF
+
+cat >"$config_file" <<EOF
+Port $local_proxy_port
+Listen 127.0.0.1
+Timeout 30
+LogFile "$log_file"
+LogLevel Warning
+PidFile "$pid_file"
+MaxClients 8
+Allow 127.0.0.1
+ViaProxyName "notebook-agent-home-egress"
+Filter "$filter_file"
+FilterURLs No
+FilterType ere
+FilterCaseSensitive No
+FilterDefaultDeny Yes
+ConnectPort 443
+EOF
+chmod 600 "$filter_file" "$config_file"
+
+"$tinyproxy_bin" -d -c "$config_file" >/dev/null 2>&1 &
+proxy_pid=$!
+
+local_proxy_ready() {
+    "$python_bin" - "$local_proxy_port" <<'PY'
+import socket
+import sys
+
+try:
+    connection = socket.create_connection(("127.0.0.1", int(sys.argv[1])), 1)
+except OSError:
+    raise SystemExit(1)
+connection.close()
+PY
+}
+
+startup_attempt=0
+while ! local_proxy_ready; do
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+        fail "tinyproxy failed to start; no tunnel was opened" 70
+    fi
+    startup_attempt=$((startup_attempt + 1))
+    if [ "$startup_attempt" -ge 10 ]; then
+        fail "tinyproxy did not become ready; no tunnel was opened" 70
+    fi
+    sleep 1
+done
+
+"$ssh_bin" \
+    -NT \
+    -o BatchMode=yes \
+    -o ExitOnForwardFailure=yes \
+    -o ServerAliveInterval=30 \
+    -o ServerAliveCountMax=3 \
+    -o TCPKeepAlive=yes \
+    -o RequestTTY=no \
+    -R "127.0.0.1:$remote_proxy_port:127.0.0.1:$local_proxy_port" \
+    "$ssh_target" &
+ssh_pid=$!
+
+remote_connect_check="python3 -c 'import socket,sys; socket.create_connection((\"127.0.0.1\", int(sys.argv[1])), 2).close()' $remote_proxy_port"
+startup_attempt=0
+while ! "$ssh_bin" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=10 \
+    -o RequestTTY=no \
+    "$ssh_target" \
+    "$remote_connect_check" >/dev/null 2>&1; do
+    if ! kill -0 "$ssh_pid" 2>/dev/null; then
+        fail "the reverse SSH tunnel failed to start" 70
+    fi
+    startup_attempt=$((startup_attempt + 1))
+    if [ "$startup_attempt" -ge 10 ]; then
+        fail "the server loopback tunnel did not become ready" 70
+    fi
+    sleep 1
+done
+
+echo "YouTube home egress is ready. Keep this terminal open; press Ctrl-C to stop."
+
+while :; do
+    if ! kill -0 "$proxy_pid" 2>/dev/null; then
+        if wait "$proxy_pid"; then
+            child_status=1
+        else
+            child_status=$?
+        fi
+        echo "youtube-home-egress: tinyproxy stopped; closing the tunnel" >&2
+        exit "$child_status"
+    fi
+    if ! kill -0 "$ssh_pid" 2>/dev/null; then
+        if wait "$ssh_pid"; then
+            child_status=1
+        else
+            child_status=$?
+        fi
+        echo "youtube-home-egress: SSH tunnel stopped; closing the proxy" >&2
+        exit "$child_status"
+    fi
+    sleep 1
+done

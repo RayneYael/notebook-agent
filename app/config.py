@@ -97,6 +97,41 @@ def _validate_langbot_outbound_url(value: str) -> None:
         )
 
 
+def _validate_youtube_proxy_url(value: str | None) -> None:
+    """Restrict the temporary YouTube proxy contract to a local tunnel."""
+
+    if value is None:
+        return
+    if not isinstance(value, str) or value != value.strip() or not value:
+        raise ValueError(
+            "YOUTUBE_PROXY_URL must be a credential-free loopback HTTP URL "
+            "with an explicit port"
+        )
+    parsed = urlsplit(value)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError(
+            "YOUTUBE_PROXY_URL must be a credential-free loopback HTTP URL "
+            "with an explicit port"
+        ) from exc
+    if (
+        parsed.scheme != "http"
+        or parsed.hostname not in {"127.0.0.1", "localhost"}
+        or parsed.username is not None
+        or parsed.password is not None
+        or port is None
+        or not 1 <= port <= 65535
+        or parsed.path
+        or "?" in value
+        or "#" in value
+    ):
+        raise ValueError(
+            "YOUTUBE_PROXY_URL must be a credential-free loopback HTTP URL "
+            "with an explicit port"
+        )
+
+
 @dataclass(frozen=True)
 class Settings:
     # --- Private runtime diagnostics ---
@@ -204,6 +239,9 @@ class Settings:
     )
     youtube_fetch_timeout_seconds: float = field(
         default_factory=lambda: _env_float("YOUTUBE_FETCH_TIMEOUT_SECONDS", 30.0)
+    )
+    youtube_proxy_url: str | None = field(
+        default_factory=lambda: _env("YOUTUBE_PROXY_URL")
     )
 
     # --- MinIO (S3-compatible object storage) ---
@@ -623,6 +661,7 @@ class Settings:
             raise ValueError("INGEST_CONTENT_LIMITS must be positive")
         if self.youtube_fetch_timeout_seconds <= 0:
             raise ValueError("YOUTUBE_FETCH_TIMEOUT_SECONDS must be positive")
+        _validate_youtube_proxy_url(self.youtube_proxy_url)
         if self.ingest_notification_interval_seconds <= 0:
             raise ValueError("INGEST_NOTIFICATION_INTERVAL_SECONDS must be positive")
         if (

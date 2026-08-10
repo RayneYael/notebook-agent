@@ -43,7 +43,11 @@ def test_celery_task_declares_exponential_item_retry():
 
 
 def test_worker_connector_resolves_trusted_ca_before_construction(monkeypatch):
-    settings = replace(Settings(), tls_ca_bundle="/operator/ca.pem")
+    settings = replace(
+        Settings(),
+        tls_ca_bundle="/operator/ca.pem",
+        youtube_proxy_url="http://127.0.0.1:18080",
+    )
     calls = []
     monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
     monkeypatch.setattr(
@@ -65,6 +69,7 @@ def test_worker_connector_resolves_trusted_ca_before_construction(monkeypatch):
     assert isinstance(connector, Connector)
     assert calls[0] == ("ca", "/operator/ca.pem")
     assert calls[1][0] == "constructor"
+    assert calls[1][1]["proxy_url"] == "http://127.0.0.1:18080"
 
 
 def test_worker_connector_fails_closed_before_constructor_for_invalid_ca(
