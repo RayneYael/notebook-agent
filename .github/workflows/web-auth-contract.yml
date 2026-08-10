@@ -30,7 +30,10 @@ jobs:
           python-version: "3.11"
           cache: pip
       - name: Install Python dependencies
-        run: python -m pip install --upgrade pip && python -m pip install -e '.[dev]'
+        run: |
+          python -m venv .venv
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install -e '.[dev]'
       - uses: pnpm/action-setup@v4
         with:
           version: 11.16.0
@@ -44,14 +47,15 @@ jobs:
         working-directory: web
       - name: Focused Web/Auth backend tests
         run: >-
-          pytest -q tests/test_web_api.py tests/test_web_api_public.py
+          .venv/bin/python -m pytest -q
+          tests/test_web_api.py tests/test_web_api_public.py
           tests/test_web_api_runtime.py tests/test_web_api_app.py
           tests/test_web_api_auth.py tests/test_web_auth.py
           tests/test_web_auth_migration.py tests/test_web_email_auth.py
           tests/test_multiuser_integration.py
           tests/test_mcp_server.py
       - name: Alembic graph
-        run: alembic heads
+        run: .venv/bin/alembic heads
       - name: Check generated browser contract
         run: pnpm check:api
         working-directory: web

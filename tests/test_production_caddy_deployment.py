@@ -79,6 +79,12 @@ def test_dependency_compose_has_no_postgres_and_publishes_only_loopback():
 def test_production_workflow_requires_ci_environment_and_serialization():
     workflow = _text(".github/workflows/web-auth-contract.yml")
 
+    gates = workflow[: workflow.index("  deploy-production:")]
+    assert "python -m venv .venv" in gates
+    assert ".venv/bin/python -m pip install -e '.[dev]'" in gates
+    assert ".venv/bin/python -m pytest -q" in gates
+    assert ".venv/bin/alembic heads" in gates
+
     deploy = workflow[workflow.index("  deploy-production:") :]
     assert "needs: deterministic-web-gates" in deploy
     assert "name: Production" in deploy
