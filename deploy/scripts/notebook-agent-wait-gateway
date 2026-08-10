@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+
+for attempt in {1..30}; do
+  if curl --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:8765/health >/dev/null; then
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Notebook Agent channel gateway did not become ready" >&2
+exit 1

@@ -992,3 +992,15 @@ diff --git a/source/langbot/pkg/api/http/controller/groups/platform/bots.py b/ta
 +                # Outbound message failures may contain target/content or
 +                # credentials. Keep the public response fixed and redacted.
 +                return self.http_status(500, -1, 'Failed to send message')
+
+diff --git a/source/langbot/pkg/api/http/controller/main.py b/target/langbot/pkg/api/http/controller/main.py
+--- a/langbot/pkg/api/http/controller/main.py
++++ b/langbot/pkg/api/http/controller/main.py
+@@ -78,7 +78,7 @@ class HTTPController:
+             self.ap.task_mgr.create_task(
+                 exception_handler(
+-                    host='0.0.0.0',
++                    host='127.0.0.1',
+                     port=self.ap.instance_config.data['api']['port'],
+                     shutdown_trigger=shutdown_trigger_placeholder,
+                 ),

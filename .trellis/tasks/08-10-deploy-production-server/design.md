@@ -21,6 +21,10 @@ combined ASGI / worker / Beat
         |-- direct Neon URL for one-shot Alembic only
         |-- loopback Redis broker/backend
         `-- loopback MinIO object storage
+
+Telegram -> patched LangBot 4.10.6 -> required bridge plugin
+                                      -> 127.0.0.1:8765 gateway
+                                      -> Notebook Agent ChannelService
 ```
 
 The combined ASGI entry point is
@@ -31,7 +35,10 @@ cannot authenticate Web routes. A separate `web-server` process would duplicate
 the Web listener and is therefore not part of this topology.
 
 No component binds a new public port. Caddy remains the only public HTTP/TLS
-listener. Channel Gateway and LangBot are absent.
+listener. Channel Gateway binds `127.0.0.1:8765`; the patched LangBot WebUI/API
+binds `127.0.0.1:5300` and is accessed only through an SSH tunnel. LangBot's
+stdio plugin runtime is process-private. Only Telegram is configured; WeChat
+and every other adapter remain absent or disabled.
 
 ## Release and configuration ownership
 
@@ -40,6 +47,10 @@ listener. Channel Gateway and LangBot are absent.
 - `/etc/notebook-agent/notebook-agent.env` is root-owned, mode `0600`, read by
   systemd before it changes to the service identity, and never sourced as
   shell code.
+- `/var/lib/notebook-agent/langbot` and `/opt/notebook-agent/shared/langbot`
+  are owned by a dedicated `notebook-langbot` service identity. The bridge
+  plugin's mode-`0600` `.env` contains only its gateway secret, loopback URL,
+  and Telegram bot UUID mapping; it never receives database or model secrets.
 - Runtime logs and mutable object/data paths live outside releases.
 - GitHub owns only the deploy host/user, pinned host key, and dedicated SSH
   private key. Application DSNs and provider credentials never enter GitHub.
@@ -82,6 +93,12 @@ release pointer. Database data is never deleted during rollback.
   written to config or logs; the dedicated Caddy site discards access logs.
 - Redis/MinIO: independent random production credentials generated on the
   server. Values are redacted from command and health output.
+- Telegram: LangBot 4.10.6 is installed from the pinned wheel whose SHA-256 is
+  `ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff`.
+  The repository patch redacts private-channel diagnostics, waits for the
+  required bridge plugin, fails closed on bridge loss, and forces the WebUI/API
+  listener to loopback. The Telegram Bot Token is entered through the private
+  management UI and persists only in LangBot-owned data.
 
 ## GitHub deployment flow
 
@@ -116,8 +133,9 @@ migrations, starts worker and the single Beat, starts the combined ASGI service,
 then validates Web, Gmail, MCP read behavior, full mutation discovery, and a
 bounded ingestion submission before enabling production mutations.
 
-Rollback switches `current` to the prior retained release and restarts only
-Notebook Agent units. It restores the backed-up Caddy config only when the site
-addition itself must be removed. Redis/MinIO data and remote Neon data are
-preserved. Migration rollback is not automatic; incompatible schema changes
-require an explicit forward-compatible plan before deployment.
+Rollback stops LangBot before Gateway, switches `current` to the prior retained
+release, and restarts only Notebook Agent-owned units in dependency order.
+LangBot data, Telegram configuration, Redis/MinIO data, and remote Neon data are
+preserved. It restores the backed-up Caddy config only when the site addition
+itself must be removed. Migration rollback is not automatic; incompatible
+schema changes require an explicit forward-compatible plan before deployment.

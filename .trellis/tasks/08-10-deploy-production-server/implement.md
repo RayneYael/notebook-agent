@@ -9,6 +9,8 @@
 - [ ] Add production deployment assets: combined ASGI systemd unit, worker,
       single Beat, migration admission, isolated Redis/MinIO configuration,
       restricted server deploy entry point, and operator documentation.
+- [ ] Add a loopback Gateway unit, patched LangBot unit, pinned-wheel installer,
+      required bridge plugin configuration, and private SSH-tunnel operations.
 - [ ] Extend `.github/workflows/web-auth-contract.yml` or add a dependent
       production workflow with `environment: Production`, `concurrency`, exact
       SHA reporting, pinned host-key verification, and restricted SSH use.
@@ -19,6 +21,8 @@
 
 - [ ] Run focused backend deployment, Web runtime, MCP, tasks, and notification
       tests.
+- [ ] Apply the LangBot patch to the verified 4.10.6 wheel, compile changed
+      files, and run the bridge/startup patch tests.
 - [ ] Run `alembic heads` and require exactly one head.
 - [ ] Run Web `check:api`, tests, typecheck, lint, and build.
 - [ ] Run shell/systemd/config syntax checks and `git diff --check`.
@@ -31,6 +35,8 @@
 - [ ] Re-snapshot OS resources, installed packages, listening ports, running
       services/processes, Caddy config/hash, DNS, and existing target paths.
 - [ ] Confirm `127.0.0.1:8800` and selected Redis/MinIO loopback ports are free.
+- [ ] Confirm `127.0.0.1:8765` and `127.0.0.1:5300` are free and no existing
+      LangBot installation or channel data will be replaced.
 - [ ] Verify outbound GitHub, Neon, Gmail SMTP, model, embedding, and certificate
       endpoints without printing credentials.
 - [ ] Stop without mutation if resource, firewall, package, port, or ownership
@@ -46,7 +52,11 @@
 - [ ] Transfer the pooled/direct Neon, model, embedding, and Gmail settings into
       the root-owned environment file without echoing values.
 - [ ] Install and validate systemd units for migration, combined ASGI, worker,
-      and exactly one Beat. Do not install gateway/LangBot units.
+      exactly one Beat, loopback Gateway, and patched LangBot.
+- [ ] Install the loopback Gateway and patched LangBot units under dedicated
+      ownership. Generate an independent gateway secret, install the bridge
+      plugin with mode-`0600` private configuration, and keep its bot mapping
+      empty until the Telegram bot UUID is created through the private UI.
 - [ ] Back up Caddy, add the isolated `notebookai.deequoique.tech` site, validate,
       gracefully reload, and immediately recheck existing routes.
 - [ ] Install the forced-command SSH deploy boundary and configure the GitHub
@@ -74,6 +84,10 @@
       the worker processes it.
 - [ ] Enable mutation flags only after all readiness gates pass, restart only
       Notebook Agent units, and repeat critical checks.
+- [ ] Access LangBot through an SSH tunnel, create only the Telegram adapter and
+      bridge-only pipeline, update `KB_BOT_CHANNELS` with its UUID, restart
+      LangBot, and require the patched bridge-initialized marker before the
+      Telegram adapter starts. Complete one human Telegram E2E message.
 
 ## 6. Automated release and rollback proof
 

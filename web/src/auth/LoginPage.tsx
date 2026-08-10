@@ -1,6 +1,7 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
+import { useLocation } from "react-router";
 
 import {
   createLoginChallenge,
@@ -23,6 +24,15 @@ import { useRouteNavigate } from "../app/RouteTransition";
 
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
 type EmailStep = "email" | "code";
+
+function hasAccountLinkSuccess(state: unknown): boolean {
+  return (
+    typeof state === "object"
+    && state !== null
+    && "accountLinkSuccess" in state
+    && (state as { accountLinkSuccess?: unknown }).accountLinkSuccess === true
+  );
+}
 
 interface LoginMethodOptionProps {
   ariaLabel: string;
@@ -55,6 +65,8 @@ export function LoginPage({
   onAuthenticated,
 }: LoginPageProps) {
   const navigate = useRouteNavigate();
+  const location = useLocation();
+  const [accountLinkSuccess, setAccountLinkSuccess] = useState(false);
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
@@ -94,6 +106,14 @@ export function LoginPage({
       confirmEmailChallenge(address, value),
     onSuccess: activate,
   });
+
+  useEffect(() => {
+    if (!hasAccountLinkSuccess(location.state)) return;
+    setAccountLinkSuccess(true);
+    // Consume the one-time notice from history immediately.  It carries no
+    // token or account identifier and is never written to browser storage.
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location.pathname, location.state, navigate]);
 
   function activate(session: SessionInfo) {
     if (onAuthenticated) onAuthenticated(session);
@@ -172,6 +192,11 @@ export function LoginPage({
         </a>
         <p className="eyebrow">你的私人视频资料库</p>
         <h1 id="login-title">登录你的视频资料库</h1>
+        {accountLinkSuccess ? (
+          <p className="login-success-note" role="status" aria-live="polite">
+            Telegram 已绑定。请使用邮箱验证码重新登录，进入合并后的私人资料库。
+          </p>
+        ) : null}
 
         {emailEnabled ? (
           <EmailLoginFlow

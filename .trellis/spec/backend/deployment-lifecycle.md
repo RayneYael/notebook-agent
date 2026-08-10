@@ -114,7 +114,9 @@ provider credentials or mutate external services.
 - The deployment owns only the `notebook-agent` systemd units, the
   `notebook-agent` Compose project and volumes, `/opt/notebook-agent`,
   `/etc/notebook-agent`, `/var/lib/notebook-agent`,
-  `/var/log/notebook-agent`, and the dedicated Caddy site block.
+  `/var/log/notebook-agent`, `/opt/notebook-agent/shared/langbot`, the
+  dedicated `notebook-langbot` service identity, and the dedicated Caddy site
+  block.
 
 ### 2. Signatures
 
@@ -132,6 +134,9 @@ provider credentials or mutate external services.
   lowercase hexadecimal characters and equals the current `origin/main`.
 - Caddy site: `notebookai.deequoique.tech` reverse proxies only to
   `127.0.0.1:8800`.
+- Production full runtime additionally owns a loopback Channel Gateway at
+  `127.0.0.1:8765` and patched LangBot 4.10.6 WebUI/API at
+  `127.0.0.1:5300`. LangBot administration uses an SSH tunnel, never Caddy.
 
 ### 3. Contracts
 
@@ -158,6 +163,13 @@ provider credentials or mutate external services.
 - Every systemd application unit that can emit file logs must set the writable
   log directory and grant that directory through its sandbox. Secrets remain
   in root-owned mode-`0600` environment files and must not appear in logs.
+- The LangBot unit runs under a dedicated service identity, loads only the
+  SHA-256-verified patched package, and starts after Gateway health. Its
+  required bridge plugin must initialize before the sole Telegram adapter may
+  start. WeChat/OpenClaw is not installed or configured in this rollout.
+- Upstream LangBot 4.10.6 binds its API to all interfaces; production must use
+  the versioned patch that forces `127.0.0.1`, and validation must prove the
+  public server address cannot reach port 5300.
 
 ### 4. Validation & Error Matrix
 
@@ -188,14 +200,16 @@ provider credentials or mutate external services.
 ### 6. Tests Required
 
 - Static deployment tests assert the combined runtime contains `mcp-server`,
-  excludes `web-server`, binds MCP to loopback, enables Web auth, and disables
-  MCP URL tokens.
+  excludes `web-server`, binds MCP to loopback, enables Web auth, and enables
+  only the HTTPS MCP capability-path mode (never query tokens).
 - Compose tests assert there is no PostgreSQL service, every published
   dependency port starts with `127.0.0.1`, Redis persistence/auth are enabled,
   and `minio-init` admits the configured bucket.
 - Systemd tests assert worker queues, the unique Beat state paths, migration
   gating, `NOTEBOOK_AGENT_LOG_DIR`, writable log paths, and separation of
-  runtime versus migration credentials.
+  runtime versus migration credentials. Gateway/LangBot tests additionally
+  assert loopback listeners, dedicated ownership, patched package admission,
+  required bridge readiness, and no WeChat adapter configuration.
 - Caddy tests assert only the Notebook Agent hostname and loopback upstream are
   present. Operational validation must run `caddy validate` against the full
   candidate configuration before a graceful reload and probe old routes after.

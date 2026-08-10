@@ -1,0 +1,63 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly bot_uuid=${1:-}
+readonly plugin_env=/var/lib/notebook-agent/langbot/data/plugins/notebook-agent__notebook-knowledge-agent/.env
+
+if [[ ! $bot_uuid =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]]; then
+  echo "usage: configure-production-telegram <LangBot-bot-uuid>" >&2
+  exit 64
+fi
+if [[ ! -f $plugin_env ]]; then
+  echo "required bridge plugin configuration is missing" >&2
+  exit 66
+fi
+
+python3 - "$plugin_env" "$bot_uuid" <<'PY'
+import json
+import os
+import sys
+import tempfile
+from pathlib import Path
+
+path = Path(sys.argv[1])
+bot_uuid = sys.argv[2].lower()
+lines = path.read_text(encoding="utf-8").splitlines()
+prefix = "KB_BOT_CHANNELS="
+if sum(line.startswith(prefix) for line in lines) != 1:
+    raise SystemExit("invalid KB_BOT_CHANNELS configuration")
+replacement = prefix + json.dumps({bot_uuid: "telegram"}, separators=(",", ":"))
+updated = [replacement if line.startswith(prefix) else line for line in lines]
+fd, temporary_name = tempfile.mkstemp(prefix=".env.", dir=path.parent, text=True)
+try:
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write("\n".join(updated) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
+    os.chmod(temporary_name, 0o600)
+    os.chown(temporary_name, path.stat().st_uid, path.stat().st_gid)
+    os.replace(temporary_name, path)
+except BaseException:
+    try:
+        os.unlink(temporary_name)
+    except FileNotFoundError:
+        pass
+    raise
+PY
+
+langbot_started_at=$(date --iso-8601=seconds)
+systemctl restart notebook-agent-langbot.service
+for attempt in {1..60}; do
+  if curl --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:5300/healthz >/dev/null \
+    && journalctl -u notebook-agent-langbot.service --since "$langbot_started_at" \
+      --no-pager -o cat \
+      | grep -F 'Required plugins initialized; message adapters may start.' >/dev/null; then
+    echo "Telegram bot mapping updated; complete a human Telegram message test"
+    exit 0
+  fi
+  sleep 1
+done
+
+echo "Telegram mapping was saved, but LangBot readiness failed closed" >&2
+exit 70

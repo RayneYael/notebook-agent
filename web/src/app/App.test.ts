@@ -1,7 +1,15 @@
 import { QueryClient } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
+import { createElement } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { createPrivateQueryClient, createSessionQueryClient, logoutAndClear } from "./App";
+import {
+  App,
+  createPrivateQueryClient,
+  createSessionQueryClient,
+  endPrivateSession,
+  logoutAndClear,
+} from "./App";
 
 describe("private cache boundary", () => {
   it("clears all cached tenant data after a successful logout", async () => {
@@ -70,5 +78,96 @@ describe("private cache boundary", () => {
     expect(nextClient).not.toBe(oldClient);
     expect(nextClient.getQueryData(["library"])).toBeUndefined();
     expect(nextClient.getQueryData(["session"])).toEqual(session);
+  });
+
+  it("returns from a successful account link with an ephemeral notice after rotating cache", () => {
+    const client = createPrivateQueryClient();
+    client.setQueryData(["library"], { private: "previous-user" });
+    const navigate = vi.fn();
+    const rotateClient = vi.fn();
+
+    endPrivateSession(client, navigate, rotateClient, { accountLinkSuccess: true });
+
+    expect(client.getQueryData(["library"])).toBeUndefined();
+    expect(rotateClient).toHaveBeenCalledOnce();
+    expect(navigate).toHaveBeenCalledWith("/login", {
+      replace: true,
+      state: { accountLinkSuccess: true },
+    });
+  });
+
+  it("keeps a late old-session mutation isolated after a successful account link", async () => {
+    const oldClient = createPrivateQueryClient();
+    const replacementClient = createPrivateQueryClient();
+    let activeClient = oldClient;
+    let resolveMutation: (value: { private: string }) => void = () => undefined;
+    const lateResult = new Promise<{ private: string }>((resolve) => {
+      resolveMutation = resolve;
+    });
+    const mutation = oldClient.getMutationCache().build(oldClient, {
+      mutationFn: () => lateResult,
+      onSuccess: (value) => oldClient.setQueryData(["library-item", "absorbed"], value),
+    });
+    const pendingMutation = mutation.execute(undefined);
+
+    endPrivateSession(
+      oldClient,
+      vi.fn(),
+      () => { activeClient = replacementClient; },
+      { accountLinkSuccess: true },
+    );
+    resolveMutation({ private: "absorbed-tenant" });
+    await pendingMutation;
+
+    expect(oldClient.getQueryData(["library-item", "absorbed"])).toEqual({
+      private: "absorbed-tenant",
+    });
+    expect(activeClient).toBe(replacementClient);
+    expect(activeClient.getQueryData(["library-item", "absorbed"])).toBeUndefined();
+  });
+
+  it("rejects direct unauthenticated access to the account-link route", async () => {
+    window.history.replaceState({}, "", "/account/link");
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const path = String(input);
+      if (path === "/api/v1/auth/session") {
+        return new Response(JSON.stringify({ code: "session_invalid", message: "登录已失效" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (path === "/api/v1/capabilities") {
+        return new Response(JSON.stringify({ web_login_channels: ["email"] }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      throw new Error(`Unexpected request: ${path}`);
+    });
+
+    render(createElement(App));
+
+    expect(await screen.findByRole("heading", { name: "登录你的视频资料库" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "绑定 Telegram" })).not.toBeInTheDocument();
+    expect(window.location.pathname).toBe("/login");
+  });
+
+  it("allows an authenticated user to open the account-link route", async () => {
+    window.history.replaceState({}, "", "/account/link");
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({
+        authenticated: true,
+        login_channel: "email",
+        expires_at: "2026-08-10T12:00:00Z",
+      }), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    render(createElement(App));
+
+    expect(await screen.findByRole("heading", { name: "绑定 Telegram" })).toBeInTheDocument();
+    expect(window.location.pathname).toBe("/account/link");
   });
 });

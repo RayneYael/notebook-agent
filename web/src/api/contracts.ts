@@ -13,6 +13,11 @@ export type EmailVerifyInput = Schemas["EmailVerifyRequest"];
 export type AcceptedResponse = Schemas["AcceptedResponse"];
 export type ApiErrorResponse = Schemas["AuthErrorResponse"];
 
+export type LinkTokenInput = Schemas["LinkTokenInput"];
+export type LinkTokenResponse = Schemas["LinkTokenResponse"];
+export type ConsumeLinkTokenInput = Schemas["ConsumeLinkTokenInput"];
+export type LinkedResponse = Schemas["LinkedResponse"];
+
 export type BatchSubmitInput = Schemas["BatchSaveRequest"];
 export type BatchSubmitItem = Schemas["BatchItemResponse"];
 export type BatchSubmitResponse = Schemas["BatchSaveResponse"];

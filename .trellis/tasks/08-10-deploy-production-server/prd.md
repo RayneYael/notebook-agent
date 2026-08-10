@@ -34,9 +34,13 @@ service, and data set on the host.
 
 - Phase one includes the React SPA, Python Web API, public Streamable HTTP MCP,
   local Redis, local MinIO, one Celery worker consuming `ingest,maintenance`,
-  and exactly one Celery Beat.
-- Channel Gateway, LangBot, Telegram, and WeChat runtimes are not installed,
-  configured, started, or exposed.
+  exactly one Celery Beat, the loopback Channel Gateway, and a patched LangBot
+  4.10.6 core/plugin runtime for Telegram.
+- Enable Telegram through the required Notebook Agent bridge plugin. Do not
+  install or enable a WeChat/OpenClaw adapter in this rollout.
+- Keep Channel Gateway, LangBot WebUI/API, and plugin runtime private to
+  loopback. Operators access the LangBot management UI only through an SSH
+  tunnel; Caddy must not expose a LangBot route or subdomain.
 - Use the current email-enabled combined ASGI runtime so one loopback process
   serves the SPA, `/api/v1/*`, and `/mcp` while keeping Web cookies and MCP
   Bearer authentication isolated.
@@ -54,12 +58,14 @@ service, and data set on the host.
   values. Run migrations only through the direct URL; runtime traffic uses the
   pooled URL.
 - Generate independent production Redis, MinIO, Web Auth, and deployment-owned
-  secrets on the server. Keep all application/provider secrets solely in a
-  restricted server environment file, not GitHub Actions.
+  secrets on the server, including a dedicated Channel Gateway shared secret
+  and LangBot login keys. Keep all application/provider secrets solely in
+  restricted server/plugin configuration, not GitHub Actions.
 - Deploy into a dedicated `/opt/notebook-agent` release layout with isolated
   configuration, data, logs, service identities, and systemd unit names.
 - Bind the combined application, Redis, and MinIO to loopback or a private
-  container network. Expose only the selected HTTPS origin through Caddy.
+  container network. Bind Gateway to `127.0.0.1:8765` and patched LangBot to
+  `127.0.0.1:5300`. Expose only the selected HTTPS origin through Caddy.
 - Add a separately validated `notebookai.deequoique.tech` Caddy site, back up
   the configuration before editing, and reload Caddy only after validation
   succeeds.
@@ -100,6 +106,11 @@ service, and data set on the host.
       bounded ingestion request without exposing a fixed global user.
 - [ ] Celery inspection reports a worker listening to both `ingest` and
       `maintenance`, and exactly one Beat process exists.
+- [ ] Gateway health succeeds on loopback, LangBot loads the patched package,
+      the required bridge plugin reaches `initialized` before adapters start,
+      and only a configured Telegram adapter is enabled.
+- [ ] LangBot WebUI/API is unreachable on the public interface and usable only
+      through an SSH tunnel to `127.0.0.1:5300`.
 - [ ] A post-deployment snapshot confirms unrelated listening ports, services,
       processes, and Caddy routes were preserved.
 - [ ] Rollback restores the previous Notebook Agent release and any touched
@@ -115,7 +126,7 @@ service, and data set on the host.
 
 - Migrating, upgrading, reorganizing, or managing unrelated server content.
 - Replacing Caddy with Nginx.
-- LangBot, Channel Gateway, Telegram, and WeChat deployment.
+- WeChat/OpenClaw and other non-Telegram channel adapters.
 - Public Redis or MinIO access.
 - Changing unrelated applications, proxy settings, or firewall configuration
   except after separate approval if an unavoidable conflict is discovered.

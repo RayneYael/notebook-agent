@@ -39,6 +39,49 @@ def test_combined_runtime_and_background_units_are_isolated():
         assert "ReadWritePaths=" in unit
 
 
+def test_private_gateway_and_langbot_units_are_isolated_and_telegram_only():
+    gateway = _text("deploy/systemd/notebook-agent-gateway.service")
+    langbot = _text("deploy/systemd/notebook-agent-langbot.service")
+    bootstrap = _text("deploy/scripts/bootstrap-production-langbot")
+    wait = _text("deploy/scripts/notebook-agent-wait-gateway")
+    patch = _text("integrations/langbot-4.10.6-redact-monitoring.patch")
+    caddy = _text("deploy/caddy/notebook-agent.caddy")
+
+    assert "Environment=CHANNEL_GATEWAY_HOST=127.0.0.1" in gateway
+    assert "Environment=CHANNEL_GATEWAY_PORT=8765" in gateway
+    assert "python -m app.cli gateway-server" in gateway
+    assert "EnvironmentFile=/etc/notebook-agent/notebook-agent.env" in gateway
+    assert "MIGRATION_DATABASE_URL" not in gateway
+
+    assert "User=notebook-langbot" in langbot
+    assert "Group=notebook-langbot" in langbot
+    assert "EnvironmentFile=" not in langbot
+    assert "LANGBOT_DATA_ROOT=/var/lib/notebook-agent/langbot/data" in langbot
+    assert "PYTHONPATH=/opt/notebook-agent/shared/langbot/patched_site" in langbot
+    assert "notebook-agent-wait-gateway" in langbot
+    assert "ReadWritePaths=/var/lib/notebook-agent/langbot" in langbot
+    assert "MIGRATION_DATABASE_URL" not in langbot
+
+    assert "http://127.0.0.1:8765/health" in wait
+    assert "sleep 1" in wait
+    assert "sleep 5" not in wait
+    assert "+                    host='127.0.0.1'," in patch
+    assert "host='0.0.0.0'" in patch
+
+    assert "required_plugins_ready_timeout_seconds" in bootstrap
+    assert 'KB_BOT_CHANNELS={}\\n' in bootstrap
+    assert '"telegram"' not in bootstrap
+    assert '"wechat"' not in bootstrap
+    assert "enable_marketplace\"] = False" in bootstrap
+    assert "disable_telemetry\"] = True" in bootstrap
+    assert "box\"][\"enabled\"] = False" in bootstrap
+    assert "langbot-4.10.6-redact-monitoring.patch" in bootstrap
+    assert "ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff" in bootstrap
+
+    assert "5300" not in caddy
+    assert "8765" not in caddy
+
+
 def test_dependency_admission_requires_the_owned_minio_bucket():
     dependencies = _text("deploy/systemd/notebook-agent-dependencies.service")
 
@@ -114,6 +157,18 @@ def test_deploy_dispatcher_accepts_only_an_exact_sha_and_keeps_data():
     assert '/usr/bin/env --chdir="$release_dir/web"' in script
     assert "dependency admission failed; previous release restored" in script
     assert "application startup failed; previous release restored" in script
+    assert "http://127.0.0.1:8765/health" in script
+    assert "http://127.0.0.1:5300/healthz" in script
+    assert "Required plugins initialized; message adapters may start." in script
+
+    stop_langbot = script.index(
+        "systemctl stop notebook-agent-langbot.service notebook-agent-gateway.service"
+    )
+    switch_release = script.index('mv -Tf /opt/notebook-agent/current.next "$current"')
+    start_core = script.index("systemctl restart notebook-agent-worker.service")
+    start_gateway = script.index("systemctl restart notebook-agent-gateway.service")
+    start_langbot = script.index("systemctl restart notebook-agent-langbot.service")
+    assert stop_langbot < switch_release < start_core < start_gateway < start_langbot
 
 
 def test_ssh_dispatcher_validates_before_crossing_the_sudo_boundary():

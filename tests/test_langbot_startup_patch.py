@@ -201,6 +201,13 @@ def test_startup_patch_contains_readiness_and_fail_closed_contract() -> None:
     assert "'message_preview': str(message_chain)[:200]" in patch_text
     assert "user_id='redacted'" in patch_text
 
+    # LangBot's management HTTP surface is private in production. Upstream
+    # binds every interface, so the versioned package patch must force the
+    # listener itself onto loopback instead of relying only on a firewall.
+    assert "--- a/langbot/pkg/api/http/controller/main.py" in patch_text
+    assert "+                    host='127.0.0.1'," in patch_text
+    assert "-                    host='0.0.0.0'," in patch_text
+
 
 def test_openclaw_tls_and_poll_readiness_contract_is_versioned() -> None:
     patch_text = PATCH.read_text(encoding="utf-8")
@@ -558,6 +565,7 @@ def test_startup_patch_applies_to_pinned_langbot_wheel_when_supplied(tmp_path: P
 
     changed_files = [
         "langbot/libs/openclaw_weixin_api/client.py",
+        "langbot/pkg/api/http/controller/main.py",
         "langbot/pkg/plugin/connector.py",
         "langbot/pkg/pipeline/pipelinemgr.py",
         "langbot/pkg/platform/botmgr.py",
