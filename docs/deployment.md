@@ -301,7 +301,7 @@ Web 登录与 Streamable HTTP MCP 共用 `mcp-server --transport streamable-http
 或完整 MCP capability URL。
 
 上线时由指定操作者使用 direct Neon URL 执行 `alembic upgrade head`，再检查
-`alembic current`；不要通过 pooled runtime URL、Vercel build 或请求处理执行 migration。
+`alembic current`；不要通过 pooled runtime URL、应用 build 或请求处理执行 migration。
 
 ### 6.1 readiness 与 Celery worker
 
@@ -431,7 +431,7 @@ stop only its Beat entry and preserve PostgreSQL event/ledger rows; do not drain
 ### 6.3 同源 Web 视频资料库
 
 `web/` 是一个可独立构建和部署的私有前端应用包，不是 npm 组件库。详细的 bundled、
-split-service、Vercel 和回滚契约见[前端独立部署说明](frontend-deployment.md)。
+split-service 和回滚契约见[前端独立部署说明](frontend-deployment.md)。
 
 Bundled 模式下，Web 前端必须先完成 production build，并与 FastAPI 从同一个 browser origin 提供：
 

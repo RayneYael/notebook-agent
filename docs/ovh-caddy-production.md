@@ -23,6 +23,10 @@ Do not start `app.cli web-server` beside the combined runtime. With
 already dispatches browser and MCP traffic while keeping their credentials
 isolated.
 
+The MCP SDK keeps DNS-rebinding protection enabled. In combined mode the
+validated `WEB_PUBLIC_ORIGIN` host is admitted automatically; do not disable
+transport security or rewrite Caddy's upstream `Host` header to loopback.
+
 ## One-time server configuration
 
 Create a dedicated service account and release layout. Do not reuse an

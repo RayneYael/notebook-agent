@@ -17,7 +17,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Callable, Mapping
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
@@ -60,6 +60,7 @@ FULL_TOOL_NAMES: frozenset[str] = frozenset(MCP_TOOL_NAMES)
 try:
     from mcp_types import ToolAnnotations
     from mcp.server.mcpserver import MCPServer as OfficialMCPServer
+    from mcp.server.transport_security import TransportSecuritySettings
 
     _TOOL_ANNOTATIONS = {
         "ask_notebook_agent": ToolAnnotations(
@@ -1039,6 +1040,26 @@ def _new_sdk_server(name: str, settings: Settings | None = None):
     return OfficialMCPServer(name=name)
 
 
+def _mcp_transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Keep DNS-rebinding protection while admitting the validated Web origin."""
+
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    allowed_origins = [
+        "http://127.0.0.1:*",
+        "http://localhost:*",
+        "http://[::1]:*",
+    ]
+    if settings.web_auth_enabled and settings.web_public_origin:
+        public_origin = urlsplit(settings.web_public_origin)
+        allowed_hosts.append(public_origin.netloc)
+        allowed_origins.append(settings.web_public_origin)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
 def _register(server, fn: Callable[..., Any], *, description: str = "") -> None:
     name = fn.__name__
     annotations = _TOOL_ANNOTATIONS.get(name)
@@ -1305,6 +1326,7 @@ def create_streamable_http_app(
             json_response=True,
             stateless_http=True,
             host=settings.mcp_host,
+            transport_security=_mcp_transport_security(settings),
         )
     except AttributeError as exc:
         raise RuntimeError("mcp==2.0.0 is required for Streamable HTTP") from exc
@@ -1320,6 +1342,7 @@ def create_streamable_http_app(
             json_response=True,
             stateless_http=True,
             host=settings.mcp_host,
+            transport_security=_mcp_transport_security(settings),
         )
     except AttributeError:
         read_app = None

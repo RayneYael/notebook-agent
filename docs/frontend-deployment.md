@@ -99,9 +99,8 @@ a team-owned Linux host. The commands below are a Debian/Ubuntu reference and
 assume systemd plus the packaged Nginx `snippets` / `sites-available` layout.
 Rocky, Alma, RHEL, CentOS, 1Panel, or another control panel may use the same
 topology, but the operator must map the service user and Nginx files to that
-distribution's `nginx` group and `/etc/nginx/conf.d` conventions. It does not
-require Vercel: Nginx serves the built SPA, while the Python process exposes
-only the Web API on loopback.
+distribution's `nginx` group and `/etc/nginx/conf.d` conventions. Nginx serves
+the built SPA, while the Python process exposes only the Web API on loopback.
 
 ```text
 Browser -> https://kb.example.com
@@ -374,37 +373,6 @@ git -C /opt/notebook-agent/repository worktree remove \
 ```
 
 Never delete the active release or bulk-remove the releases directory.
-
-## Vercel frontend project
-
-Vercel supports selecting `web/` as the Root Directory of a project in a
-monorepo. Configure that project as a Vite application with:
-
-- install command: `corepack pnpm install --frozen-lockfile`;
-- build command: `corepack pnpm build`;
-- output directory: `dist`;
-- a SPA fallback to `/index.html` after the API rule;
-- an external rewrite from `/api/:path*` to the concrete backend HTTPS
-  origin, preserving the complete `/api/` path; unknown API paths must stay
-  backend JSON responses and must never fall through to `index.html`;
-- no caching for the proxied authenticated API.
-
-Configure equivalent security headers on the Vercel project as well. In split
-mode the Python middleware no longer serves the SPA response, so its CSP,
-anti-framing, MIME-sniffing, referrer, permissions, and HSTS headers do not
-automatically protect `index.html` or `/assets/*`.
-
-Do not commit a placeholder external destination. Add the rewrite only after
-the team has selected the actual backend origin, then validate it in a preview
-deployment before production. Vercel documents both the
-[monorepo Root Directory workflow](https://vercel.com/docs/monorepos),
-[Vite SPA fallback](https://vercel.com/docs/frameworks/frontend/vite), and
-[external-origin rewrites](https://vercel.com/docs/routing/rewrites).
-
-The repository-root Vercel project described in `docs/vercel-neon.md` is a
-separate competition health deployment. Pointing a new frontend project at
-`web/` must not replace or broaden the root project's strict health-only route
-allowlist.
 
 ## Verification
 

@@ -74,6 +74,9 @@ service, and data set on the host.
 - Use a dedicated SSH deploy credential and server-side allowlisted deploy
   command, serialize deployments, build a new release before switching the
   `current` symlink, and make the deployed SHA visible in the GitHub run.
+- Remove the retired repository-root Vercel health deployment, its serverless
+  entrypoint, configuration, tests, and current operator documentation. Keep
+  Neon as the external PostgreSQL provider for the OVHcloud runtime.
 
 ## Acceptance Criteria
 
@@ -104,6 +107,8 @@ service, and data set on the host.
 - [ ] GitHub Actions cannot deploy a failing CI revision, requires production
       approval, serializes deployments, and cannot administer unrelated server
       services or read application secrets.
+- [ ] The live repository contains no Vercel runtime/configuration and no
+      Vercel deployment is triggered by `main`.
 
 ## Out of scope
 

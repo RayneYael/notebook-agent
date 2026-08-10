@@ -35,6 +35,7 @@ from app.mcp_grants import (
 )
 from app.mcp_server import (
     McpToolFacade,
+    _mcp_transport_security,
     allowed_tool_names,
     create_mcp_server,
     create_streamable_http_app,
@@ -1049,6 +1050,60 @@ def test_streamable_http_auth_scope_path_mode_and_provider_safe_projection():
             )
             assert path_list.status_code == 200
             assert len(path_list.json()["result"]["tools"]) == 3
+    finally:
+        engine.dispose()
+
+
+def test_streamable_http_keeps_rebinding_protection_and_allows_validated_public_origin():
+    from starlette.testclient import TestClient
+
+    engine, factory = _sqlite_grants()
+    try:
+        grants = McpGrantService(factory)
+        grant = grants.issue(1, scope="full")
+        settings = Settings(
+            notebook_agent_env="development",
+            web_auth_enabled=True,
+            web_public_origin="https://notebookai.deequoique.tech",
+            web_auth_secret="x" * 32,
+            mcp_host="127.0.0.1",
+            mcp_port=8000,
+            mcp_path="/mcp",
+        )
+        app = create_streamable_http_app(
+            server=create_mcp_server(
+                scope="full",
+                facade=McpToolFacade(
+                    grant_service=grants,
+                    channel_service=_FakeChannelService(),
+                    settings=settings,
+                    mutation_ready=True,
+                ),
+            ),
+            grant_service=grants,
+            settings=settings,
+        )
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        }
+        headers = {"Authorization": f"Bearer {grant.raw_token}"}
+        transport_security = _mcp_transport_security(settings)
+        assert transport_security.enable_dns_rebinding_protection is True
+        assert "notebookai.deequoique.tech" in transport_security.allowed_hosts
+        assert "https://notebookai.deequoique.tech" in transport_security.allowed_origins
+        assert "attacker.example" not in transport_security.allowed_hosts
+
+        with TestClient(
+            app, base_url="https://notebookai.deequoique.tech"
+        ) as client:
+            assert client.post("/mcp", json=initialize, headers=headers).status_code == 200
     finally:
         engine.dispose()
 

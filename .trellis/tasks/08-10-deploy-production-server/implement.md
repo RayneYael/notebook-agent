@@ -90,7 +90,7 @@
 
 ```bash
 python -m pytest -q tests/test_deployment_cli.py \
-  tests/test_deployment_health.py tests/test_mcp_server.py \
+  tests/test_production_caddy_deployment.py tests/test_mcp_server.py \
   tests/test_web_api_runtime.py tests/test_tasks.py \
   tests/test_ingest_notifications.py
 python -m alembic heads

@@ -84,7 +84,7 @@ Changes to the lifecycle must run at least:
 
 ```bash
 python -m pytest -q tests/test_deployment_cli.py \
-  tests/test_deployment_health.py tests/test_mcp_server.py \
+  tests/test_production_caddy_deployment.py tests/test_mcp_server.py \
   tests/test_tasks.py tests/test_ingest_notifications.py
 sh -n scripts/notebook-agent
 git diff --check
@@ -139,6 +139,8 @@ provider credentials or mutate external services.
   `WEB_PUBLIC_ORIGIN=https://notebookai.deequoique.tech`,
   `WEB_COOKIE_SECURE=true`, `MCP_PATH=/mcp`, `MCP_URL_TOKEN_MODE=false`, and a
   writable `NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent`.
+- The combined MCP transport must retain SDK DNS-rebinding protection while
+  admitting the exact validated `WEB_PUBLIC_ORIGIN` host through Caddy.
 - `DATABASE_URL` is the pooled external PostgreSQL runtime URL.
   `MIGRATION_DATABASE_URL` is the matching direct URL and is exposed only to
   the one-shot migration unit.
