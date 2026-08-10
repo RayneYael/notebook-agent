@@ -60,31 +60,34 @@ else
 fi
 
 ln -sfn "$release_dir" /opt/notebook-agent/current.next
-systemctl stop notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service
+systemctl stop notebook-agent-langbot.service notebook-agent-gateway.service \
+  notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service
 mv -Tf /opt/notebook-agent/current.next "$current"
 
 rollback_release() {
-  if ! systemctl stop notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service; then
+  if ! systemctl stop notebook-agent-langbot.service notebook-agent-gateway.service \
+    notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service; then
     echo "warning: failed to stop candidate Notebook Agent services" >&2
   fi
   if [[ -n $previous_release && -d $previous_release ]]; then
     ln -sfn "$previous_release" /opt/notebook-agent/current.next
     mv -Tf /opt/notebook-agent/current.next "$current"
-    if ! systemctl start notebook-agent-worker.service notebook-agent-beat.service notebook-agent.service; then
+    if ! systemctl start notebook-agent-worker.service notebook-agent-beat.service \
+      notebook-agent.service notebook-agent-gateway.service notebook-agent-langbot.service; then
       echo "warning: failed to restart previous Notebook Agent release" >&2
     fi
   fi
 }
 
-if ! systemctl start notebook-agent-migrate.service; then
-  rollback_release
-  echo "migration admission failed; previous release restored" >&2
-  exit 70
-fi
-
 if ! systemctl restart notebook-agent-dependencies.service; then
   rollback_release
   echo "dependency admission failed; previous release restored" >&2
+  exit 70
+fi
+
+if ! systemctl start notebook-agent-migrate.service; then
+  rollback_release
+  echo "migration admission failed; previous release restored" >&2
   exit 70
 fi
 
@@ -96,14 +99,64 @@ if ! systemctl restart notebook-agent-worker.service \
   exit 70
 fi
 
+runtime_ready=false
 for attempt in {1..30}; do
   if curl --fail --silent --show-error http://127.0.0.1:8800/api/v1/health >/dev/null; then
-    printf 'deployed %s\n' "$release_sha"
-    exit 0
+    runtime_ready=true
+    break
   fi
   sleep 2
 done
+if [[ $runtime_ready != true ]]; then
+  rollback_release
+  echo "combined runtime health check failed; previous release restored" >&2
+  exit 70
+fi
 
-rollback_release
-echo "combined runtime health check failed; previous release restored" >&2
-exit 70
+if ! systemctl restart notebook-agent-gateway.service; then
+  rollback_release
+  echo "channel gateway startup failed; previous release restored" >&2
+  exit 70
+fi
+
+gateway_ready=false
+for attempt in {1..30}; do
+  if curl --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:8765/health >/dev/null; then
+    gateway_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ $gateway_ready != true ]]; then
+  rollback_release
+  echo "channel gateway health check failed; previous release restored" >&2
+  exit 70
+fi
+
+langbot_started_at=$(date --iso-8601=seconds)
+if ! systemctl restart notebook-agent-langbot.service; then
+  rollback_release
+  echo "LangBot startup failed; previous release restored" >&2
+  exit 70
+fi
+
+langbot_ready=false
+for attempt in {1..60}; do
+  if curl --fail --silent --show-error --max-time 2 \
+    http://127.0.0.1:5300/healthz >/dev/null \
+    && journalctl -u notebook-agent-langbot.service --since "$langbot_started_at" \
+      --no-pager -o cat \
+      | grep -F 'Required plugins initialized; message adapters may start.' >/dev/null; then
+    langbot_ready=true
+    break
+  fi
+  sleep 1
+done
+if [[ $langbot_ready != true ]]; then
+  rollback_release
+  echo "LangBot required bridge readiness failed; previous release restored" >&2
+  exit 70
+fi
+
+printf 'deployed %s\n' "$release_sha"

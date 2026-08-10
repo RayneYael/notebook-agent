@@ -1,0 +1,193 @@
+#!/bin/bash
+set -euo pipefail
+
+readonly expected_wheel_sha=ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff
+readonly wheel_path=${1:-}
+readonly release_root=${2:-/opt/notebook-agent/current}
+readonly install_root=/opt/notebook-agent/shared/langbot
+readonly data_root=/var/lib/notebook-agent/langbot/data
+readonly plugin_root=$data_root/plugins/notebook-agent__notebook-knowledge-agent
+readonly app_env=/etc/notebook-agent/notebook-agent.env
+
+if [[ ! -f $wheel_path ]]; then
+  echo "usage: bootstrap-production-langbot /path/to/langbot-4.10.6.whl [release-root]" >&2
+  exit 64
+fi
+if [[ ! -f $release_root/integrations/langbot-4.10.6-redact-monitoring.patch ]]; then
+  echo "release does not contain the pinned LangBot patch" >&2
+  exit 66
+fi
+if [[ ! -f $release_root/integrations/langbot_kb_plugin/manifest.yaml ]]; then
+  echo "release does not contain the required bridge plugin" >&2
+  exit 66
+fi
+if ! id notebook-langbot >/dev/null 2>&1; then
+  echo "dedicated notebook-langbot service identity is missing" >&2
+  exit 67
+fi
+if [[ ! -f $app_env ]]; then
+  echo "Notebook Agent runtime environment is missing" >&2
+  exit 66
+fi
+
+exec 9>/run/lock/notebook-agent-langbot-bootstrap.lock
+if ! flock -n 9; then
+  echo "another LangBot bootstrap is active" >&2
+  exit 75
+fi
+
+actual_wheel_sha=$(sha256sum "$wheel_path" | awk '{print $1}')
+if [[ $actual_wheel_sha != "$expected_wheel_sha" ]]; then
+  echo "LangBot wheel SHA-256 verification failed" >&2
+  exit 65
+fi
+
+install -d -m 0755 "$install_root"
+if [[ ! -x $install_root/.venv/bin/python ]]; then
+  python3 -m venv "$install_root/.venv"
+fi
+"$install_root/.venv/bin/python" -m pip install --quiet --upgrade pip
+"$install_root/.venv/bin/python" -m pip install --quiet "$wheel_path" langbot-plugin==0.4.13
+
+staging=$(mktemp -d "$install_root/patched_site.XXXXXX")
+cleanup() {
+  if [[ -d $staging ]]; then
+    rm -r -- "$staging"
+  fi
+}
+trap cleanup EXIT
+
+"$install_root/.venv/bin/python" -m zipfile -e "$wheel_path" "$staging"
+patch --batch --dry-run -p1 -d "$staging" \
+  -i "$release_root/integrations/langbot-4.10.6-redact-monitoring.patch" >/dev/null
+patch --batch -p1 -d "$staging" \
+  -i "$release_root/integrations/langbot-4.10.6-redact-monitoring.patch" >/dev/null
+
+changed_files=(
+  langbot/libs/openclaw_weixin_api/client.py
+  langbot/pkg/api/http/controller/main.py
+  langbot/pkg/plugin/connector.py
+  langbot/pkg/pipeline/pipelinemgr.py
+  langbot/pkg/platform/botmgr.py
+  langbot/pkg/platform/sources/openclaw_weixin.py
+  langbot/pkg/api/http/controller/groups/platform/adapters.py
+  langbot/pkg/pipeline/process/process.py
+  langbot/pkg/pipeline/plugin_diagnostics.py
+  langbot/pkg/pipeline/monitoring_helper.py
+)
+compile_paths=()
+for changed_file in "${changed_files[@]}"; do
+  compile_paths+=("$staging/$changed_file")
+done
+"$install_root/.venv/bin/python" -m py_compile "${compile_paths[@]}"
+
+if [[ -d $install_root/patched_site ]]; then
+  previous_suffix=$(date -u +%Y%m%dT%H%M%SZ).$$
+  mv "$install_root/patched_site" "$install_root/patched_site.previous.$previous_suffix"
+fi
+mv "$staging" "$install_root/patched_site"
+staging=
+printf '%s\n' "$expected_wheel_sha" >"$install_root/.wheel-sha256-verified"
+chmod 0644 "$install_root/.wheel-sha256-verified"
+
+install -d -o notebook-langbot -g notebook-langbot -m 0700 "$data_root" "$data_root/plugins" "$plugin_root"
+cp -R "$release_root/integrations/langbot_kb_plugin/." "$plugin_root/"
+chown -R notebook-langbot:notebook-langbot "$plugin_root"
+find "$plugin_root" -type d -exec chmod 0700 {} +
+find "$plugin_root" -type f -exec chmod 0600 {} +
+
+# Create the shared channel secret once. It is independent of Web, MCP, SMTP,
+# Redis, MinIO, and LangBot login credentials, and is never printed.
+gateway_secret=$(
+  "$install_root/.venv/bin/python" - "$app_env" <<'PY'
+import secrets
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+lines = path.read_text(encoding="utf-8").splitlines()
+prefix = "CHANNEL_GATEWAY_SECRET="
+values = [line[len(prefix):] for line in lines if line.startswith(prefix)]
+if len(values) > 1 or (values and len(values[0]) < 32):
+    raise SystemExit("invalid CHANNEL_GATEWAY_SECRET configuration")
+if values:
+    value = values[0]
+else:
+    value = secrets.token_urlsafe(48)
+    with path.open("a", encoding="utf-8") as stream:
+        if lines and lines[-1]:
+            stream.write("\n")
+        stream.write(prefix + value + "\n")
+print(value)
+PY
+)
+chmod 0600 "$app_env"
+
+plugin_env=$plugin_root/.env
+if [[ ! -f $plugin_env ]]; then
+  umask 077
+  {
+    printf 'CHANNEL_GATEWAY_SECRET=%s\n' "$gateway_secret"
+    printf 'CHANNEL_GATEWAY_URL=http://127.0.0.1:8765/v1/messages\n'
+    printf 'KB_BOT_CHANNELS={}\n'
+  } >"$plugin_env"
+else
+  plugin_secret=$(
+    "$install_root/.venv/bin/python" - "$plugin_env" <<'PY'
+import sys
+from pathlib import Path
+
+prefix = "CHANNEL_GATEWAY_SECRET="
+values = [
+    line[len(prefix):]
+    for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
+    if line.startswith(prefix)
+]
+if len(values) != 1:
+    raise SystemExit("invalid plugin CHANNEL_GATEWAY_SECRET configuration")
+print(values[0])
+PY
+  )
+  if [[ $plugin_secret != "$gateway_secret" ]]; then
+    echo "plugin and Gateway secrets do not match" >&2
+    exit 65
+  fi
+  unset plugin_secret
+fi
+chown notebook-langbot:notebook-langbot "$plugin_env"
+chmod 0600 "$plugin_env"
+unset gateway_secret
+
+config_path=$data_root/config.yaml
+if [[ ! -f $config_path ]]; then
+  cp "$install_root/patched_site/langbot/templates/config.yaml" "$config_path"
+fi
+"$install_root/.venv/bin/python" - "$config_path" <<'PY'
+import secrets
+import sys
+from pathlib import Path
+
+import yaml
+
+path = Path(sys.argv[1])
+data = yaml.safe_load(path.read_text(encoding="utf-8"))
+data["api"]["port"] = 5300
+data["api"]["webhook_prefix"] = "http://127.0.0.1:5300"
+data["api"]["global_api_key"] = ""
+if not data["system"].get("recovery_key"):
+    data["system"]["recovery_key"] = secrets.token_urlsafe(48)
+if not data["system"]["jwt"].get("secret"):
+    data["system"]["jwt"]["secret"] = secrets.token_urlsafe(48)
+data["plugin"]["enable"] = True
+data["plugin"]["enable_marketplace"] = False
+data["plugin"]["required_plugins"] = ["notebook-agent/notebook-knowledge-agent"]
+data["plugin"]["required_plugins_ready_timeout_seconds"] = 30
+data["box"]["enabled"] = False
+data["space"]["disable_models_service"] = True
+data["space"]["disable_telemetry"] = True
+path.write_text(yaml.safe_dump(data, allow_unicode=True, sort_keys=False), encoding="utf-8")
+PY
+chown notebook-langbot:notebook-langbot "$config_path"
+chmod 0600 "$config_path"
+
+echo "LangBot 4.10.6 and the required bridge are installed; Telegram remains unconfigured"

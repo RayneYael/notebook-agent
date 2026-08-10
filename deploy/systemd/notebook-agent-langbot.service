@@ -1,0 +1,45 @@
+[Unit]
+Description=Notebook Agent private LangBot Telegram runtime
+After=network-online.target notebook-agent-gateway.service
+Wants=network-online.target
+Requires=notebook-agent-gateway.service
+StartLimitIntervalSec=120
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=notebook-langbot
+Group=notebook-langbot
+WorkingDirectory=/var/lib/notebook-agent/langbot
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=LANGBOT_DATA_ROOT=/var/lib/notebook-agent/langbot/data
+Environment=PYTHONPATH=/opt/notebook-agent/shared/langbot/patched_site
+ExecStartPre=/usr/local/libexec/notebook-agent-wait-gateway
+ExecStartPre=/usr/bin/grep -Fxq ee950fd6a687cb8c7cfe646d2b9a92cfbf09b3ddfbaf8f43ea0613905d3ffbff /opt/notebook-agent/shared/langbot/.wheel-sha256-verified
+ExecStartPre=/usr/bin/test -f /var/lib/notebook-agent/langbot/data/config.yaml
+ExecStartPre=/usr/bin/test -f /var/lib/notebook-agent/langbot/data/plugins/notebook-agent__notebook-knowledge-agent/.env
+ExecStart=/opt/notebook-agent/shared/langbot/.venv/bin/langbot
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=75
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/notebook-agent/langbot
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
