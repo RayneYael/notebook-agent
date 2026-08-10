@@ -521,12 +521,8 @@ class Settings:
             )
         if self.mcp_path != "/" and self.mcp_path.endswith("/"):
             raise ValueError("MCP_PATH must not have a trailing slash")
-        if not self.web_api_prefix.startswith("/") or self.web_api_prefix == "/":
-            raise ValueError("WEB_API_PREFIX must be a non-root absolute path")
-        if self.web_api_prefix.endswith("/"):
-            raise ValueError("WEB_API_PREFIX must not have a trailing slash")
-        if self.web_api_prefix == self.mcp_path or self.web_api_prefix.startswith(self.mcp_path + "/") or self.mcp_path.startswith(self.web_api_prefix + "/"):
-            raise ValueError("WEB_API_PREFIX and MCP_PATH must not overlap")
+        if self.web_api_prefix != "/api/v1":
+            raise ValueError("WEB_API_PREFIX is fixed at /api/v1")
         positive_web_values = (
             self.web_session_ttl_seconds,
             self.web_auth_code_ttl_seconds,

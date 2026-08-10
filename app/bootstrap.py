@@ -83,9 +83,10 @@ def build_channel_service(
     settings: Settings | None = None,
     *,
     web_auth: WebAuthService | None = None,
+    session_factory=None,
 ) -> ChannelService:
     settings = settings or get_settings()
-    factory = get_session_factory()
+    factory = session_factory or get_session_factory()
     agent = build_knowledge_agent(settings, session_factory=factory)
     if web_auth is None and settings.web_auth_secret:
         settings.validate_web_auth()

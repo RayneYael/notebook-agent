@@ -1,6 +1,6 @@
 # Web API：邮箱登录、对话与跨渠道绑定
 
-> 以下示例使用默认 `WEB_API_PREFIX=/api/v1`。若部署修改了该配置，请替换路径前缀。
+> Web API 的路径前缀固定为 `/api/v1`；`WEB_API_PREFIX` 不支持改成其他值。
 
 ```bash
 export BASE='https://app.example.com'
@@ -8,31 +8,32 @@ export ORIGIN='https://app.example.com' # 必须与 .env 的 WEB_PUBLIC_ORIGIN �
 export COOKIE_JAR='./web-cookies.txt'
 ```
 
-除 `GET /session` 外，每个状态变更请求都必须带精确匹配的
+除 `GET /api/v1/auth/session` 外，每个状态变更请求都必须带精确匹配的
 `Origin: $ORIGIN`。每个 `POST` 还必须带 `Content-Type: application/json`；
-`DELETE /session` 不需要 JSON body。缺少或不匹配的 Origin 返回
-`403 {"detail":"origin_forbidden"}`，POST 缺少 JSON content type 返回
-`415 {"detail":"json_required"}`。API 不提供 CORS。
+`DELETE /api/v1/auth/session` 不需要 JSON body。所有公开错误均为固定的
+`{"code":"...","message":"..."}`，不会返回 provider、邮箱存在性、验证码、token
+或内部 ID。API 不提供 CORS。
 
-成功登录后，服务端设置 `__Host-notebook-agent-session` Cookie：`Secure`、
+成功登录后，服务端设置 `__Host-kb_session` 和 `__Host-kb_csrf` Cookie：`Secure`、
 `HttpOnly`、`SameSite=Lax`、`Path=/`，没有 `Domain` 属性，`Max-Age` 为
-`WEB_SESSION_TTL_SECONDS`（默认 30 天）。下面用 curl 的 cookie jar 保存和发送它。
+`WEB_SESSION_TTL_SECONDS`（默认 30 天）。只有 session Cookie 为 `HttpOnly`；CSRF
+Cookie 由浏览器读取并通过 `X-CSRF-Token` double-submit。下面用 curl 的 cookie jar
+保存和发送它。
 
 ## 接口总览
 
 | 方法与路径 | Cookie | 成功响应 |
 | --- | --- | --- |
-| `POST /auth/challenges` | 否 | `200 {"status":"accepted"}` |
-| `POST /auth/verify` | 否 | `200`、设置 session Cookie、返回 session |
-| `GET /session` | 是 | `200`、返回 session |
-| `DELETE /session` | 是 | `204`、清除当前 Cookie |
-| `POST /conversations/{conversation_id}/messages` | 是 | `200`、返回 `AgentAnswer` |
-| `POST /conversations/{conversation_id}/reset` | 是 | `200`、返回 `AgentAnswer` |
-| `POST /link-tokens` | 是 | `200 {"token":"..."}` |
-| `POST /link-tokens/consume` | 是 | `200 {"linked":true}`、清除 Cookie |
+| `POST /api/v1/auth/challenges` | 否 | `200 {"status":"accepted"}` |
+| `POST /api/v1/auth/verify` | 否 | `200`、设置 session Cookie、返回 session |
+| `GET /api/v1/auth/session` | 是 | `200`、返回 session |
+| `DELETE /api/v1/auth/session` | 是 + CSRF | `204`、清除当前 Cookie |
+| `POST /api/v1/conversations/{conversation_id}/messages` | 是 + CSRF | `200`、返回 `AgentAnswer` |
+| `POST /api/v1/conversations/{conversation_id}/reset` | 是 + CSRF | `200`、返回 `AgentAnswer` |
+| `POST /api/v1/link-tokens` | 是 + CSRF | `200 {"token":"..."}` |
+| `POST /api/v1/link-tokens/consume` | 是 + CSRF | `200 {"linked":true}`、清除 Cookie |
 
-路径表省略的前缀均为 `/api/v1`。客户端不能提交 tenant、channel、account 或
-external user id；它们只从 session 中解析。
+客户端不能提交 tenant、channel、account 或 external user id；它们只从 session 中解析。
 
 ## 1. 邮箱登录
 
@@ -46,8 +47,8 @@ curl -i -X POST "$BASE/api/v1/auth/challenges" \
 ```
 
 成功是 `200 {"status":"accepted"}`。邮箱会被 trim 并按大小写无关方式处理；
-不符合邮箱格式时返回 `422 {"detail":"invalid_email"}`。邮件投递不可用时返回
-`503 {"detail":"email_delivery_unavailable"}`。
+不符合邮箱格式时返回 `422 {"code":"invalid_email","message":"..."}`。邮件投递
+不可用时返回 `503 {"code":"email_delivery_unavailable","message":"..."}`。
 
 同邮箱重新申请会使此前尚未消费的验证码失效。发送限流时仍返回同一个
 `{"status":"accepted"}`，不会透露邮箱或限流状态。验证码默认有效 10 分钟，单个
@@ -69,29 +70,29 @@ curl -i -c "$COOKIE_JAR" -X POST "$BASE/api/v1/auth/verify" \
 ```json
 {
   "authenticated": true,
-  "session_id": 42,
-  "expires_at": "2026-09-08T12:00:00+00:00",
-  "tenant": {"id": 7}
+  "login_channel": "email",
+  "expires_at": "2026-09-08T12:00:00+00:00"
 }
 ```
 
 验证码、邮箱或 challenge 无效、过期、已消费、已失效或尝试次数耗尽时，均返回
-`401 {"detail":"verification_failed"}`。字段缺失、长度不符合请求模型等请求格式错误由
-FastAPI 返回 `422` 验证错误。
+`401 {"code":"verification_failed","message":"..."}`。字段缺失、长度不符合请求模型等
+请求格式错误返回固定的 `422 {"code":"validation_error","message":"..."}`。
 
 ## 2. 查询和退出当前 session
 
 ```bash
-curl -i -b "$COOKIE_JAR" "$BASE/api/v1/session"
+curl -i -b "$COOKIE_JAR" "$BASE/api/v1/auth/session"
 ```
 
 响应与登录成功时相同。没有、过期、撤销、已禁用或不匹配的 session 返回
-`401 {"detail":"authentication_required"}`。
+`401 {"code":"session_invalid","message":"..."}`。
 
 ```bash
 curl -i -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
-  -X DELETE "$BASE/api/v1/session" \
-  -H "Origin: $ORIGIN"
+  -X DELETE "$BASE/api/v1/auth/session" \
+  -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>"
 ```
 
 成功返回 `204`（无响应 body），撤销当前 session 并返回清除该 Cookie 的
@@ -107,6 +108,7 @@ curl -i -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 curl -sS -b "$COOKIE_JAR" -X POST \
   "$BASE/api/v1/conversations/browser-chat-001/messages" \
   -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>" \
   -H 'Content-Type: application/json' \
   --data '{"message_id":"msg-001","text":"请总结我保存的视频。"}'
 ```
@@ -125,8 +127,8 @@ curl -sS -b "$COOKIE_JAR" -X POST \
 ```
 
 `status` 为 `ok`、`not_found` 或 `failed`。`conversation_id` 无效时为
-`422 {"detail":"invalid_conversation_id"}`；Agent 超过
-`AGENT_TIMEOUT_SECONDS` 时为 `504 {"detail":"agent_timeout"}`。未登录时为 401。
+`422 {"code":"validation_error","message":"..."}`；Agent 超过
+`AGENT_TIMEOUT_SECONDS` 时为 `504 {"code":"request_failed","message":"..."}`。未登录时为 401。
 
 ### 系统命令不是 HTTP endpoint
 
@@ -137,6 +139,7 @@ curl -sS -b "$COOKIE_JAR" -X POST \
 curl -sS -b "$COOKIE_JAR" -X POST \
   "$BASE/api/v1/conversations/browser-chat-001/messages" \
   -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>" \
   -H 'Content-Type: application/json' \
   --data '{"message_id":"msg-002","text":"/whoami"}'
 ```
@@ -159,6 +162,7 @@ curl -sS -b "$COOKIE_JAR" -X POST \
 curl -sS -b "$COOKIE_JAR" -X POST \
   "$BASE/api/v1/conversations/browser-chat-001/reset" \
   -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>" \
   -H 'Content-Type: application/json' \
   --data '{}'
 ```
@@ -180,13 +184,14 @@ Web 只可创建目标为 `telegram` 或 `wechat` 的码：
 ```bash
 curl -sS -b "$COOKIE_JAR" -X POST "$BASE/api/v1/link-tokens" \
   -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>" \
   -H 'Content-Type: application/json' \
   --data '{"target_channel":"telegram"}'
 ```
 
 成功为 `{"token":"<raw-token>"}`。将该码发送到目标 Telegram/WeChat 对话：
 `/link <raw-token>`。`target_channel` 不是 `telegram` 或 `wechat` 时返回
-`422 {"detail":"link_channel_unsupported"}`。
+`422 {"code":"validation_error","message":"..."}`。
 
 ### Web 作为目标：消费为 Web 生成的码
 
@@ -196,6 +201,7 @@ curl -sS -b "$COOKIE_JAR" -X POST "$BASE/api/v1/link-tokens" \
 curl -i -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
   -X POST "$BASE/api/v1/link-tokens/consume" \
   -H "Origin: $ORIGIN" \
+  -H "X-CSRF-Token: <value from __Host-kb_csrf>" \
   -H 'Content-Type: application/json' \
   --data '{"token":"<raw-token>"}'
 ```
@@ -203,7 +209,7 @@ curl -i -b "$COOKIE_JAR" -c "$COOKIE_JAR" \
 成功为 `200 {"linked":true}`。请求所在的 Web tenant 被归并到创建该码的来源 tenant，
 响应会清除浏览器 Cookie；重新通过邮箱验证后再调用受保护接口。
 
-这两个 HTTP endpoint 在绑定失败时均返回 `409`，`detail` 为以下稳定错误码之一：
+这两个 HTTP endpoint 在绑定失败时均返回 `409`，`code` 为以下稳定错误码之一：
 `link_token_used`、`link_token_expired`、`link_channel_mismatch`、
 `link_merge_busy`、`link_account_disabled`、`link_source_unbound`、
 `link_merge_conflict` 或 `link_token_invalid`。`link_merge_busy` 表示目标内容仍在处理；

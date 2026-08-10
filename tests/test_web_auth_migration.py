@@ -28,11 +28,8 @@ def test_web_and_ingest_completion_branches_converge_on_one_merge_head():
     )
     assert script.get_revision("e5f6a7b8c9d0").down_revision == "d4e5f6a7b8c9"
     assert script.get_revision("f6a7b8c9d0e1").down_revision == "e5f6a7b8c9d0"
-    assert script.get_heads() == ["a7b8c9d0e1f2"]
-    assert script.get_revision("a7b8c9d0e1f2").down_revision == (
-        "d3f4a5b6c7d8",
-        "f6a7b8c9d0e1",
-    )
+    assert script.get_heads() == ["f1a2b3c4d5e6"]
+    assert script.get_revision("f1a2b3c4d5e6").down_revision == "b2c3d4e5f6a7"
 
 
 def test_web_auth_migration_backfills_and_roundtrips_in_isolated_database():

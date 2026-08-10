@@ -1,16 +1,19 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 
 import {
   createLoginChallenge,
   exchangeChallenge,
   getCapabilities,
   getChallengeStatus,
+  requestEmailChallenge,
+  verifyEmailChallenge,
 } from "../api/client";
 import type {
   Capabilities,
   ChallengeStatus,
+  LegacyLoginChannel,
   LoginChallenge,
   LoginChannel,
   SessionInfo,
@@ -19,6 +22,7 @@ import { BrandLogo } from "../app/BrandLogo";
 import { useRouteNavigate } from "../app/RouteTransition";
 
 type ChannelAvailability = "checking" | "available" | "disabled" | "unavailable";
+type EmailStep = "email" | "code";
 
 interface LoginMethodOptionProps {
   ariaLabel: string;
@@ -33,9 +37,11 @@ interface LoginMethodOptionProps {
 
 interface LoginPageProps {
   loadCapabilities?: () => Promise<Capabilities>;
-  createChallenge?: (channel: LoginChannel) => Promise<LoginChallenge>;
+  createChallenge?: (channel: LegacyLoginChannel) => Promise<LoginChallenge>;
   getStatus?: (publicId: string, browserSecret: string) => Promise<ChallengeStatus>;
   exchangeSession?: (publicId: string, browserSecret: string) => Promise<SessionInfo>;
+  requestEmailChallenge?: (email: string) => Promise<{ status: "accepted" }>;
+  verifyEmailChallenge?: (email: string, code: string) => Promise<SessionInfo>;
   onAuthenticated?: (session: SessionInfo) => void;
 }
 
@@ -44,10 +50,16 @@ export function LoginPage({
   createChallenge = createLoginChallenge,
   getStatus = getChallengeStatus,
   exchangeSession = exchangeChallenge,
+  requestEmailChallenge: sendEmailChallenge = requestEmailChallenge,
+  verifyEmailChallenge: confirmEmailChallenge = verifyEmailChallenge,
   onAuthenticated,
 }: LoginPageProps) {
   const navigate = useRouteNavigate();
   const [challenge, setChallenge] = useState<LoginChallenge | null>(null);
+  const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [emailStep, setEmailStep] = useState<EmailStep>("email");
+  const [emailError, setEmailError] = useState<string | null>(null);
   const capabilities = useQuery({
     queryKey: ["capabilities"],
     queryFn: loadCapabilities,
@@ -55,7 +67,7 @@ export function LoginPage({
     staleTime: 5 * 60_000,
   });
   const mutation = useMutation({
-    mutationFn: (channel: LoginChannel) => createChallenge(channel),
+    mutationFn: (channel: LegacyLoginChannel) => createChallenge(channel),
     onSuccess: setChallenge,
   });
   const status = useQuery({
@@ -67,24 +79,42 @@ export function LoginPage({
   });
   const exchange = useMutation({
     mutationFn: () => exchangeSession(challenge!.public_id, challenge!.browser_secret),
-    onSuccess: (session) => {
-      if (onAuthenticated) onAuthenticated(session);
-      else navigate("/library", { replace: true });
+    onSuccess: activate,
+  });
+  const emailChallenge = useMutation({
+    mutationFn: (value: string) => sendEmailChallenge(value),
+    onSuccess: () => {
+      setEmailStep("code");
+      setCode("");
+      setEmailError(null);
     },
   });
+  const emailVerify = useMutation({
+    mutationFn: ({ address, value }: { address: string; value: string }) =>
+      confirmEmailChallenge(address, value),
+    onSuccess: activate,
+  });
+
+  function activate(session: SessionInfo) {
+    if (onAuthenticated) onAuthenticated(session);
+    else navigate("/library", { replace: true });
+  }
 
   useEffect(() => {
     if (status.data?.status === "approved" && exchange.isIdle) exchange.mutate();
   }, [status.data?.status, exchange]);
 
+  const emailEnabled = Boolean(
+    capabilities.data?.web_login_channels.includes("email"),
+  );
   const loginFailed = mutation.isError || status.isError || exchange.isError;
   const telegramAvailability = channelAvailability(capabilities, "telegram");
   const wechatAvailability = channelAvailability(capabilities, "wechat");
 
-  function startChannelLogin(channel: LoginChannel) {
+  function startChannelLogin(channel: LegacyLoginChannel) {
     if (
-      channelAvailability(capabilities, channel) !== "available"
-      || mutation.isPending
+      channelAvailability(capabilities, channel) !== "available" ||
+      mutation.isPending
     ) return;
     mutation.mutate(channel);
   }
@@ -95,10 +125,45 @@ export function LoginPage({
     exchange.reset();
   }
 
+  function resetEmailLogin() {
+    setEmailStep("email");
+    setCode("");
+    setEmailError(null);
+    emailChallenge.reset();
+    emailVerify.reset();
+  }
+
+  function submitEmail(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = email.trim();
+    if (value.length < 3 || !value.includes("@")) {
+      setEmailError("请输入有效的邮箱地址。");
+      return;
+    }
+    setEmailError(null);
+    if (!emailChallenge.isPending) emailChallenge.mutate(value);
+  }
+
+  function submitCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const value = code.trim();
+    if (!/^\d{6}$/.test(value)) {
+      setEmailError("请输入 6 位数字验证码。");
+      return;
+    }
+    setEmailError(null);
+    if (!emailVerify.isPending) {
+      emailVerify.mutate({ address: email.trim(), value });
+    }
+  }
+
+  const emailFailure = emailError ||
+    (emailChallenge.isError || emailVerify.isError
+      ? "登录暂时没有完成，请检查输入后重试。"
+      : null);
+
   return (
-    <main
-      className="login-page"
-    >
+    <main className="login-page">
       <div className="paper-glow" aria-hidden="true" />
       <section className="login-card" aria-labelledby="login-title">
         <a className="wordmark" href="/" aria-label="Notebook Agent 首页">
@@ -108,12 +173,34 @@ export function LoginPage({
         <p className="eyebrow">你的私人视频资料库</p>
         <h1 id="login-title">登录你的视频资料库</h1>
 
-        {challenge ? (
+        {emailEnabled ? (
+          <EmailLoginFlow
+            email={email}
+            code={code}
+            step={emailStep}
+            pendingEmail={emailChallenge.isPending}
+            pendingCode={emailVerify.isPending}
+            error={emailFailure}
+            onEmailChange={(value) => {
+              setEmail(value);
+              if (emailError) setEmailError(null);
+            }}
+            onCodeChange={(value) => {
+              setCode(value.replace(/\D/g, "").slice(0, 6));
+              if (emailError) setEmailError(null);
+            }}
+            onSubmitEmail={submitEmail}
+            onSubmitCode={submitCode}
+            onChangeEmail={resetEmailLogin}
+          />
+        ) : challenge ? (
           <div className="login-flow">
             <div className="challenge-card" aria-live="polite">
               <span className="step-number">01</span>
               <div>
-                <p>请在 {challenge.target_channel === "telegram" ? "Telegram" : "微信"} 中发送这条登录指令：</p>
+                <p>
+                  请在 {challenge.target_channel === "telegram" ? "Telegram" : "微信"} 中发送这条登录指令：
+                </p>
                 <code>{challenge.command}</code>
                 <p className="muted">
                   {exchange.isSuccess
@@ -172,7 +259,7 @@ export function LoginPage({
             ) : null}
           </div>
         )}
-        {loginFailed ? (
+        {!emailEnabled && loginFailed ? (
           <div>
             <p className="inline-error" role="alert">
               {challenge ? "登录没有完成，请重新获取登录指令。" : "暂时无法开始登录，请重试。"}
@@ -187,6 +274,97 @@ export function LoginPage({
         <p className="privacy-note">登录后只会显示你自己的资料库。</p>
       </section>
     </main>
+  );
+}
+
+interface EmailLoginFlowProps {
+  email: string;
+  code: string;
+  step: EmailStep;
+  pendingEmail: boolean;
+  pendingCode: boolean;
+  error: string | null;
+  onEmailChange: (value: string) => void;
+  onCodeChange: (value: string) => void;
+  onSubmitEmail: (event: FormEvent<HTMLFormElement>) => void;
+  onSubmitCode: (event: FormEvent<HTMLFormElement>) => void;
+  onChangeEmail: () => void;
+}
+
+function EmailLoginFlow({
+  email,
+  code,
+  step,
+  pendingEmail,
+  pendingCode,
+  error,
+  onEmailChange,
+  onCodeChange,
+  onSubmitEmail,
+  onSubmitCode,
+  onChangeEmail,
+}: EmailLoginFlowProps) {
+  return (
+    <div className="email-login-flow">
+      {step === "email" ? (
+        <form className="email-login-form" onSubmit={onSubmitEmail} noValidate>
+          <div className="field">
+            <label htmlFor="login-email">邮箱地址</label>
+            <input
+              id="login-email"
+              name="email"
+              type="email"
+              autoComplete="email"
+              inputMode="email"
+              required
+              value={email}
+              onChange={(event) => onEmailChange(event.target.value)}
+              aria-describedby="login-email-help"
+            />
+            <p className="field-help" id="login-email-help">
+              输入邮箱后，我们会发送一次性验证码。
+            </p>
+          </div>
+          <button className="button button--primary button--wide" type="submit" disabled={pendingEmail}>
+            {pendingEmail ? "正在发送…" : "获取验证码"}
+          </button>
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          {pendingEmail ? <p className="login-capability-note" aria-live="polite">正在准备登录…</p> : null}
+        </form>
+      ) : (
+        <form className="email-login-form" onSubmit={onSubmitCode} noValidate>
+          <p className="email-login-confirmation" aria-live="polite">
+            如果该邮箱已绑定，验证码已发送，请查收邮件。
+          </p>
+          <div className="field">
+            <label htmlFor="login-code">6 位验证码</label>
+            <input
+              id="login-code"
+              name="code"
+              type="text"
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              pattern="[0-9]{6}"
+              maxLength={6}
+              required
+              value={code}
+              onChange={(event) => onCodeChange(event.target.value)}
+              aria-describedby="login-code-help"
+            />
+            <p className="field-help" id="login-code-help">
+              验证码为 6 位数字，仅在本页内使用。
+            </p>
+          </div>
+          <button className="button button--primary button--wide" type="submit" disabled={pendingCode}>
+            {pendingCode ? "正在验证…" : "确认登录"}
+          </button>
+          {error ? <p className="inline-error" role="alert">{error}</p> : null}
+          <button className="login-back-button" type="button" onClick={onChangeEmail}>
+            ← 更换邮箱
+          </button>
+        </form>
+      )}
+    </div>
   );
 }
 
@@ -222,7 +400,7 @@ function LoginMethodOption({
 function WechatBrandIcon() {
   return (
     <svg data-testid="wechat-brand-icon" viewBox="0 0 32 32" focusable="false">
-      <path d="M13.5 5.4C7.3 5.4 2.3 9.6 2.3 14.8c0 2.9 1.6 5.5 4.1 7.2l-1 3.6 4-2c1.3.4 2.7.7 4.1.7h.7a8.8 8.8 0 0 1-.5-2.9c0-5.1 4.7-9.2 10.5-9.4-1.5-3.8-5.7-6.6-10.7-6.6Zm-3.8 7.1a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Zm7.5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z" />
+      <path d="M13.5 5.4C7.3 5.4 2.3 9.6 2.3 14.8c0 2.9 1.6 5.5 4.1 7.2l-1 3.6 4-2c1.3.4 2.7.7 4.1.7h.7a8.8 8.8 0 0 1-.5-2.9c0-5.1 4.7-9.2 10.5-9.4-1.5-3.8-5.7-6.6-10.7-6.6Zm-3.8 7.1a1.5 1.5 1 1 1 0-3 1.5 1.5 0 0 1 0 3Zm7.5 0a1.5 1.5 0 1 1 0-3 1.5 1.5 0 0 1 0 3Z" />
       <path d="M29.7 21.4c0-4.2-4-7.6-8.8-7.6S12 17.2 12 21.4s4 7.6 8.9 7.6c1.2 0 2.3-.2 3.3-.6l3.2 1.7-.8-2.9a7.3 7.3 0 0 0 3.1-5.8Zm-11.8-1.2a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Zm6 0a1.2 1.2 0 1 1 0-2.4 1.2 1.2 0 0 1 0 2.4Z" />
     </svg>
   );

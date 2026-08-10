@@ -61,7 +61,7 @@ describe("private cache boundary", () => {
     oldClient.setQueryData(["library"], { private: "previous-user" });
     const session = {
       authenticated: true as const,
-      login_channel: "wechat" as const,
+      login_channel: "email" as const,
       expires_at: "2026-09-06T10:00:00Z",
     };
 

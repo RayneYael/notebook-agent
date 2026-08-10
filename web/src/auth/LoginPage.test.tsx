@@ -230,4 +230,131 @@ describe("login page", () => {
       },
     })).toBe(false);
   });
+
+  it("renders an enabled email flow when email is the only advertised capability", async () => {
+    const emailCapabilities: Capabilities = {
+      ...capabilities,
+      web_login_channels: ["email"],
+    };
+    const requestEmailChallenge = vi.fn().mockResolvedValue({ status: "accepted" as const });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage
+            loadCapabilities={vi.fn().mockResolvedValue(emailCapabilities)}
+            requestEmailChallenge={requestEmailChallenge}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    const email = await screen.findByRole("textbox", { name: "邮箱地址" });
+    expect(screen.getByRole("button", { name: "获取验证码" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "使用微信登录" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "使用 Telegram 登录" })).not.toBeInTheDocument();
+
+    await user.type(email, "person@example.test");
+    await user.click(screen.getByRole("button", { name: "获取验证码" }));
+
+    expect(requestEmailChallenge).toHaveBeenCalledWith("person@example.test");
+    expect(await screen.findByRole("textbox", { name: "6 位验证码" })).toBeInTheDocument();
+    expect(screen.getByText("如果该邮箱已绑定，验证码已发送，请查收邮件。"))
+      .toBeInTheDocument();
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it("validates six digits, keeps errors retryable, and completes verification", async () => {
+    const onAuthenticated = vi.fn();
+    const requestEmailChallenge = vi.fn().mockResolvedValue({ status: "accepted" as const });
+    const verifyEmailChallenge = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("safe server failure"))
+      .mockResolvedValue({
+        authenticated: true,
+        login_channel: "email",
+        expires_at: "2026-09-07T12:00:00Z",
+      });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage
+            loadCapabilities={vi.fn().mockResolvedValue({
+              ...capabilities,
+              web_login_channels: ["email"],
+            })}
+            requestEmailChallenge={requestEmailChallenge}
+            verifyEmailChallenge={verifyEmailChallenge}
+            onAuthenticated={onAuthenticated}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.type(await screen.findByRole("textbox", { name: "邮箱地址" }), "person@example.test");
+    await user.click(screen.getByRole("button", { name: "获取验证码" }));
+    const code = await screen.findByRole("textbox", { name: "6 位验证码" });
+
+    await user.type(code, "12");
+    await user.click(screen.getByRole("button", { name: "确认登录" }));
+    expect(screen.getByRole("alert")).toHaveTextContent("请输入 6 位数字验证码");
+    expect(verifyEmailChallenge).not.toHaveBeenCalled();
+
+    await user.clear(code);
+    await user.type(code, "123456");
+    await user.click(screen.getByRole("button", { name: "确认登录" }));
+    expect(verifyEmailChallenge).toHaveBeenCalledWith("person@example.test", "123456");
+    expect(await screen.findByRole("alert")).toHaveTextContent("登录暂时没有完成");
+    expect(onAuthenticated).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole("button", { name: "确认登录" }));
+    await waitFor(() => expect(onAuthenticated).toHaveBeenCalledOnce());
+    expect(window.localStorage).toHaveLength(0);
+    expect(window.sessionStorage).toHaveLength(0);
+  });
+
+  it("prevents duplicate challenge submits and lets users change email", async () => {
+    let resolveRequest: (value: { status: "accepted" }) => void = () => undefined;
+    const requestEmailChallenge = vi.fn().mockImplementation(
+      () => new Promise<{ status: "accepted" }>((resolve) => {
+        resolveRequest = resolve;
+      }),
+    );
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const user = userEvent.setup();
+
+    render(
+      <QueryClientProvider client={client}>
+        <MemoryRouter>
+          <LoginPage
+            loadCapabilities={vi.fn().mockResolvedValue({
+              ...capabilities,
+              web_login_channels: ["email"],
+            })}
+            requestEmailChallenge={requestEmailChallenge}
+          />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+
+    await user.type(await screen.findByRole("textbox", { name: "邮箱地址" }), "first@example.test");
+    const send = screen.getByRole("button", { name: "获取验证码" });
+    await user.click(send);
+    await user.click(send);
+    expect(requestEmailChallenge).toHaveBeenCalledTimes(1);
+    expect(send).toBeDisabled();
+
+    resolveRequest({ status: "accepted" });
+    expect(await screen.findByRole("textbox", { name: "6 位验证码" })).toBeInTheDocument();
+    await user.type(screen.getByRole("textbox", { name: "6 位验证码" }), "123");
+    await user.click(screen.getByRole("button", { name: /更换邮箱/ }));
+    expect(screen.getByRole("textbox", { name: "邮箱地址" })).toHaveValue("first@example.test");
+    expect(screen.queryByRole("textbox", { name: "6 位验证码" })).not.toBeInTheDocument();
+  });
 });

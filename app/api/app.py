@@ -6,7 +6,7 @@ import hmac
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal
 from uuid import uuid4
 
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -18,6 +18,7 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from app.api.auth_routes import build_auth_router
+from app.api.conversation_routes import build_conversation_router
 from app.api.email_auth_routes import build_email_auth_router
 from app.api.library_routes import build_library_router
 from app.api.library_schemas import ErrorResponse
@@ -28,6 +29,7 @@ from app.web.auth import (
     SESSION_COOKIE_NAME,
     WebAuthError,
 )
+from app.web_auth import InvalidSession
 
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,14 @@ _SAFE_HTTP_CODES = frozenset(
         "session_invalid",
         "csrf_invalid",
         "request_too_large",
+        "link_token_used",
+        "link_token_expired",
+        "link_channel_mismatch",
+        "link_merge_busy",
+        "link_account_disabled",
+        "link_source_unbound",
+        "link_merge_conflict",
+        "link_token_invalid",
     }
 )
 
@@ -90,6 +100,18 @@ class WebApiServices:
     transcript: Any
     email_auth: Any | None = None
     trusted_proxy_hosts: str = ""
+    # Retained conversation/link routes are mounted by this canonical app.
+    # Optional values keep the OpenAPI exporter inert while allowing runtime
+    # callers to inject their existing channel service and session factory.
+    channel_service: Any | None = None
+    session_resolver: Callable[[str], Any] | None = None
+    # Converts either the canonical email session or the migration-era
+    # channel session into a browser-safe external identity for compatibility
+    # conversation/link routes.
+    session_identity_resolver: Callable[[Any], Any] | None = None
+    session_factory: Callable | None = None
+    settings: Any | None = None
+    include_conversation_routes: bool = True
 
 
 _SAFE_MESSAGES = {
@@ -113,6 +135,14 @@ _SAFE_MESSAGES = {
     "csrf_invalid": "请求验证失败，请刷新后重试",
     "request_too_large": "请求内容过大",
     "request_failed": "请求无法完成",
+    "link_token_used": "该绑定码已使用，请重新生成",
+    "link_token_expired": "该绑定码已过期，请重新生成",
+    "link_channel_mismatch": "请在绑定码指定的目标渠道中使用",
+    "link_merge_busy": "目标账户仍有内容正在处理，请稍后重试",
+    "link_account_disabled": "账户不可用，无法绑定",
+    "link_source_unbound": "请先在当前来源渠道完成注册",
+    "link_merge_conflict": "账户状态发生变化，请稍后重试",
+    "link_token_invalid": "绑定码无效，请重新生成",
 }
 
 
@@ -320,7 +350,37 @@ def create_app(
                 )
             )
 
+        def authenticated_session(request: Request):
+            resolver = services.session_resolver
+            if resolver is None:
+                raise HTTPException(status_code=503, detail="request_failed")
+            raw_token = request.cookies.get(SESSION_COOKIE_NAME, "")
+            if not raw_token:
+                raise HTTPException(
+                    status_code=401,
+                    detail="session_invalid",
+                    headers={"WWW-Authenticate": "Session"},
+                )
+            try:
+                return resolver(raw_token)
+            except (WebAuthError, InvalidSession) as exc:
+                raise HTTPException(
+                    status_code=401,
+                    detail="session_invalid",
+                    headers={"WWW-Authenticate": "Session"},
+                ) from exc
+            except Exception:
+                # Unrelated provider/database errors reach the app-level safe
+                # 500 handler rather than being mistaken for an expired login.
+                raise
+
         def authenticated_scope(request: Request) -> UserScope:
+            if services.session_resolver is not None:
+                session = authenticated_session(request)
+                tenant = getattr(session, "tenant", None)
+                app_user_id = getattr(tenant, "app_user_id", None)
+                if app_user_id is not None:
+                    return UserScope(app_user_id)
             raw_token = request.cookies.get(SESSION_COOKIE_NAME, "")
             try:
                 session = services.web_auth.resolve_session(raw_token)
@@ -343,6 +403,17 @@ def create_app(
             )
         )
 
+        if services.include_conversation_routes:
+            app.include_router(
+                build_conversation_router(
+                    channel_service=services.channel_service,
+                    session_dependency=authenticated_session,
+                    session_factory=services.session_factory,
+                    settings=services.settings,
+                    session_identity_resolver=services.session_identity_resolver,
+                )
+            )
+
     if static_dir is not None:
         _mount_spa(app, Path(static_dir))
 
@@ -356,7 +427,6 @@ def _validate_protected_mutation(
 ) -> JSONResponse | None:
     if (
         request.headers.get("origin") != expected_origin
-        or request.headers.get("sec-fetch-site") != "same-origin"
     ):
         return _error_response("csrf_invalid", 403)
     session_token = request.cookies.get(SESSION_COOKIE_NAME, "")

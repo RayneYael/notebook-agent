@@ -18,7 +18,12 @@ def create_combined_asgi_app(*, settings: Settings | None = None, session_factor
     # The Web product has one FastAPI app.  It owns the email-login cookies
     # and upstream library routes; MCP remains an independently authenticated
     # ASGI target below.
-    web_app = build_web_app(settings=settings, session_factory=session_factory)
+    web_app = build_web_app(
+        settings=settings,
+        session_factory=session_factory,
+        email_auth=auth_service,
+        channel_service=channel_service,
+    )
 
     async def app(scope, receive, send):
         if scope["type"] == "lifespan":

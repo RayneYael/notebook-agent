@@ -7,6 +7,11 @@ import json
 from pathlib import Path
 
 from app.api.app import WebApiServices, create_app
+from app.api.auth_schemas import (
+    ChallengeCreateRequest,
+    ChallengeCreateResponse,
+    ChallengeStatusResponse,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -14,6 +19,9 @@ OUTPUT = ROOT / "web" / "src" / "api" / "openapi.json"
 
 
 def rendered_schema() -> str:
+    # OpenAPI generation must use the production email composition while
+    # remaining completely inert: no database/session factory, broker,
+    # object-store, email provider, or network is touched during export.
     placeholder = object()
     app = create_app(
         services=WebApiServices(
@@ -21,13 +29,30 @@ def rendered_schema() -> str:
             library=placeholder,
             submission=placeholder,
             transcript=placeholder,
+            email_auth=placeholder,
         ),
         expected_origin="https://contract.invalid",
         cookie_secure=True,
         publish_budget_seconds=1.0,
+        web_login_channels=("email",),
+    )
+    document = app.openapi()
+    # The legacy channel UI remains an explicitly non-production compatibility
+    # path for embedders that still advertise Telegram/WeChat.  Keep its
+    # generated request aliases available without mounting those routes in the
+    # canonical browser document.
+    document["components"]["schemas"].update(
+        {
+            model.__name__: model.model_json_schema()
+            for model in (
+                ChallengeCreateRequest,
+                ChallengeCreateResponse,
+                ChallengeStatusResponse,
+            )
+        }
     )
     return json.dumps(
-        app.openapi(),
+        document,
         ensure_ascii=False,
         indent=2,
         sort_keys=True,

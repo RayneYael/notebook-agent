@@ -34,4 +34,20 @@ describe("same-origin API client", () => {
     );
     expect(onUnauthorized).toHaveBeenCalledOnce();
   });
+
+  it("keeps recoverable email verification failures inside the login form", async () => {
+    const onUnauthorized = vi.fn();
+    setUnauthorizedHandler(onUnauthorized);
+    vi.spyOn(globalThis, "fetch").mockResolvedValue(
+      new Response(JSON.stringify({ code: "verification_failed", message: "验证码无效或已过期" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      }),
+    );
+
+    await expect(
+      requestJson("/api/v1/auth/verify", { method: "POST", body: "{}" }),
+    ).rejects.toEqual(expect.objectContaining({ status: 401, code: "verification_failed" }));
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
 });

@@ -1,10 +1,12 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app.api.runtime import build_web_app
+from app import web_runtime
 
 
 def settings(**overrides):
@@ -56,6 +58,34 @@ def test_runtime_composes_auth_library_submission_and_transcript_without_io():
     assert "/api/v1/library/items" in paths
     assert "/api/v1/library/items/{item_public_id}/transcript" in paths
     config.validate_web_auth.assert_called_once_with()
+
+
+def test_runtime_email_composition_is_canonical_and_mounts_compatibility_routes():
+    class EmailAuth:
+        def resolve_session(self, _token):
+            raise AssertionError("OpenAPI construction must not resolve sessions")
+
+    config = settings(
+        web_auth_enabled=True,
+        web_public_origin="https://kb.example.test",
+    )
+    app = build_web_app(
+        config,
+        session_factory=lambda: None,
+        publisher=lambda _dispatch_id: "task",
+        object_store=object(),
+        email_auth=EmailAuth(),
+        mount_static=False,
+    )
+
+    with TestClient(app, base_url="https://kb.example.test") as client:
+        capabilities = client.get("/api/v1/capabilities")
+
+    paths = app.openapi()["paths"]
+    assert capabilities.json()["web_login_channels"] == ["email"]
+    assert "/api/v1/auth/verify" in paths
+    assert "/api/v1/conversations/{conversation_id}/messages" in paths
+    assert "/api/v1/link-tokens/consume" in paths
 
 
 def test_runtime_exposes_only_the_enabled_login_channels():
@@ -127,3 +157,85 @@ def test_runtime_rejects_an_origin_or_cookie_mode_that_breaks_host_cookie_securi
             object_store=object(),
             mount_static=False,
         )
+
+
+@pytest.mark.asyncio
+async def test_production_combined_dispatcher_keeps_cookie_and_bearer_boundaries(
+    monkeypatch,
+):
+    class RecordingApp:
+        def __init__(self, label):
+            self.label = label
+            self.requests = []
+
+        async def __call__(self, scope, receive, send):
+            if scope["type"] != "http":
+                return
+            headers = {
+                key.decode("latin1"): value.decode("latin1")
+                for key, value in scope.get("headers", ())
+            }
+            self.requests.append((scope["path"], headers))
+            body = self.label.encode("ascii")
+            await send(
+                {
+                    "type": "http.response.start",
+                    "status": 200,
+                    "headers": [
+                        (b"content-type", b"text/plain"),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                    ],
+                }
+            )
+            await send({"type": "http.response.body", "body": body})
+
+    web_app = RecordingApp("web")
+    mcp_app = RecordingApp("mcp")
+    captured = {}
+
+    def fake_build_web_app(*, channel_service=None, **kwargs):
+        captured["channel_service"] = channel_service
+        captured["build_kwargs"] = kwargs
+        return web_app
+
+    monkeypatch.setattr(web_runtime, "build_web_app", fake_build_web_app)
+    monkeypatch.setattr(
+        web_runtime,
+        "create_streamable_http_app",
+        lambda **_kwargs: mcp_app,
+    )
+    channel_service = object()
+    combined = web_runtime.create_combined_asgi_app(
+        settings=SimpleNamespace(mcp_path="/mcp"),
+        session_factory=lambda: None,
+        channel_service=channel_service,
+        auth_service=object(),
+        mcp_server=object(),
+        grant_service=object(),
+    )
+
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=combined),
+        base_url="https://app.example.test",
+    ) as client:
+        cookie_only = await client.get(
+            "/mcp",
+            headers={"Cookie": "__Host-kb_session=browser-cookie"},
+        )
+        bearer_only = await client.get(
+            "/api/v1/capabilities",
+            headers={"Authorization": "Bearer mcp-token"},
+        )
+
+    assert captured["channel_service"] is channel_service
+    assert cookie_only.status_code == bearer_only.status_code == 200
+    assert cookie_only.text == "mcp"
+    assert bearer_only.text == "web"
+    assert len(mcp_app.requests) == 1
+    assert len(web_app.requests) == 1
+    assert mcp_app.requests[0][0] == "/mcp"
+    assert mcp_app.requests[0][1]["cookie"] == "__Host-kb_session=browser-cookie"
+    assert "authorization" not in mcp_app.requests[0][1]
+    assert web_app.requests[0][0] == "/api/v1/capabilities"
+    assert web_app.requests[0][1]["authorization"] == "Bearer mcp-token"
+    assert "cookie" not in web_app.requests[0][1]
