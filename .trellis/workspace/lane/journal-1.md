@@ -410,3 +410,25 @@ Unified browser email authentication, canonical FastAPI composition, generated A
 ### Next Steps
 
 - Merge codex/web-email-auth-contract-fix into main and run real dev database ingestion end to end.
+
+
+## Session 15: Fix YouTube worker trusted CA initialization
+
+**Date**: 2026-08-10
+**Task**: Fix YouTube worker trusted CA initialization
+**Branch**: `codex/youtube-subtitle-ca-fix`
+
+### Summary
+
+Initialized and exported the verified CA bundle before worker-owned YouTube metadata and subtitle subprocesses, added ordering/fail-closed/inheritance tests, updated backend contracts, and verified a real dev ingest reached ready with valid transcript segments and embeddings.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `544b809` | (see git log) |
+| `2be7c71` | (see git log) |
+
+### Status
+
+[OK] **Completed**
