@@ -1,7 +1,12 @@
+import json
 import inspect
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
+import certifi
 from kombu import Connection
 import pytest
 
@@ -17,6 +22,7 @@ from app.ingest.tasks import (
     IngestTask,
     _claim_dispatch,
     _complete_dispatch,
+    _connector,
     _mark_dispatch_failed,
     _release_dispatch_for_retry,
     build_worker_embedder,
@@ -27,13 +33,121 @@ from app.ingest.tasks import (
     run_isolated_batch,
 )
 from app.models import AppUser, ContentItem, IngestDispatch
-from app.tls import TrustedCA
+from app.tls import TLSConfigurationError, TrustedCA
 
 
 def test_celery_task_declares_exponential_item_retry():
     assert fetch_text_task.max_retries == 5
     assert fetch_text_task.retry_backoff == 8
     assert fetch_text_task.retry_backoff_max == 600
+
+
+def test_worker_connector_resolves_trusted_ca_before_construction(monkeypatch):
+    settings = replace(Settings(), tls_ca_bundle="/operator/ca.pem")
+    calls = []
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.ingest.tasks.configure_trusted_ca",
+        lambda bundle: calls.append(("ca", bundle)),
+    )
+
+    class Connector:
+        def __init__(self, **kwargs):
+            calls.append(("constructor", kwargs))
+
+        def match(self, _url):
+            return "dQw4w9WgXcQ"
+
+    monkeypatch.setattr("app.ingest.tasks.YouTubeConnector", Connector)
+
+    connector = _connector("https://youtu.be/dQw4w9WgXcQ")
+
+    assert isinstance(connector, Connector)
+    assert calls[0] == ("ca", "/operator/ca.pem")
+    assert calls[1][0] == "constructor"
+
+
+def test_worker_connector_fails_closed_before_constructor_for_invalid_ca(
+    monkeypatch, tmp_path
+):
+    settings = replace(
+        Settings(), tls_ca_bundle=str(tmp_path / "missing-ca.pem")
+    )
+    constructed = []
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+
+    class Connector:
+        def __init__(self, **_kwargs):
+            constructed.append(True)
+
+    monkeypatch.setattr("app.ingest.tasks.YouTubeConnector", Connector)
+
+    with pytest.raises(TLSConfigurationError, match="readable file"):
+        _connector("https://youtu.be/dQw4w9WgXcQ")
+
+    assert constructed == []
+
+
+def test_worker_ca_environment_reaches_bounded_subtitle_child(monkeypatch):
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    settings = replace(Settings(), tls_ca_bundle=certifi.where())
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+
+    connector = _connector("https://youtu.be/dQw4w9WgXcQ")
+    observed = []
+    body = json.dumps(
+        {
+            "events": [
+                {
+                    "tStartMs": 0,
+                    "dDurationMs": 1000,
+                    "segs": [{"utf8": "hello"}],
+                }
+            ]
+        }
+    ).encode()
+
+    def subtitle_runner(_args, **kwargs):
+        assert kwargs.get("env") is None
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json, os, sys; "
+                    "sys.stdout.write(json.dumps({"
+                    "'ssl': os.environ.get('SSL_CERT_FILE'), "
+                    "'requests': os.environ.get('REQUESTS_CA_BUNDLE')}))"
+                ),
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        observed.append(json.loads(child.stdout))
+        return SimpleNamespace(returncode=0, stdout=body, stderr=b"")
+
+    connector._subtitle_runner = subtitle_runner
+    connector._meta["dQw4w9WgXcQ"] = {
+        "language": "en",
+        "subtitles": {
+            "en": [
+                {
+                    "ext": "json3",
+                    "url": "https://www.youtube.com/api/timedtext",
+                }
+            ]
+        },
+        "automatic_captions": {},
+    }
+
+    result = connector.fetch_text("dQw4w9WgXcQ")
+
+    assert result.cues[0].text == "hello"
+    assert observed == [
+        {"ssl": certifi.where(), "requests": certifi.where()}
+    ]
 
 
 def test_one_429_does_not_interrupt_fifteen_item_batch():

@@ -181,6 +181,11 @@ def _bounded_publish_options(
 
 def _connector(url: str) -> YouTubeConnector:
     settings = get_settings()
+    # Resolve and export the verified CA before constructing the real
+    # connector.  yt-dlp metadata and the isolated bounded subtitle child both
+    # inherit this process environment; the later embedding composition keeps
+    # its explicit SSLContext independently.
+    configure_trusted_ca(settings.tls_ca_bundle)
     connector = YouTubeConnector(
         max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
         fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
