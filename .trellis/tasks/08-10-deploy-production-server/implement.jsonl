@@ -1,0 +1,6 @@
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Required lifecycle, ownership, readiness, migration, secret, Beat, and rollback boundaries."}
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Required full-grant, HTTP bearer, readiness, and raw-token safety contract."}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Required combined ASGI, email auth, cookie, tenant, and MCP isolation contract."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Required pooled Neon runtime and direct migration URL contract."}
+{"file":".trellis/spec/frontend/component-guidelines.md","reason":"Required accessible component and shared stylesheet conventions for the ICP link."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Required frontend security and release validation gates."}

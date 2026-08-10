@@ -67,3 +67,41 @@ jobs:
       - name: Production build
         run: pnpm build
         working-directory: web
+
+  deploy-production:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: deterministic-web-gates
+    runs-on: ubuntu-latest
+    environment:
+      name: Production
+      url: https://notebookai.deequoique.tech
+    concurrency:
+      group: notebook-agent-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+    steps:
+      - name: Configure restricted SSH identity
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.PRODUCTION_SSH_PRIVATE_KEY }}
+          SSH_KNOWN_HOSTS: ${{ secrets.PRODUCTION_SSH_KNOWN_HOSTS }}
+        run: |
+          set -eu
+          umask 077
+          install -d "$HOME/.ssh"
+          printf '%s\n' "$SSH_PRIVATE_KEY" > "$HOME/.ssh/notebook-agent-production"
+          printf '%s\n' "$SSH_KNOWN_HOSTS" > "$HOME/.ssh/known_hosts"
+
+      - name: Deploy approved main revision
+        env:
+          DEPLOY_HOST: ${{ secrets.PRODUCTION_SSH_HOST }}
+          DEPLOY_USER: ${{ secrets.PRODUCTION_SSH_USER }}
+        run: |
+          set -eu
+          ssh \
+            -i "$HOME/.ssh/notebook-agent-production" \
+            -o BatchMode=yes \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            "$DEPLOY_USER@$DEPLOY_HOST" \
+            "deploy $GITHUB_SHA"

@@ -577,7 +577,12 @@ export function ShowcasePage() {
           <BrandLogo className="showcase-brand__mark" />
           <span>NOTEBOOK / AGENT</span>
         </RouteLink>
-        <p>Built for EAZO Global Hackathon</p>
+        <p>
+          <span>Built for EAZO Global Hackathon</span>
+          <a href="https://beian.miit.gov.cn/" target="_blank" rel="noreferrer">
+            粤ICP备2026101890号-1
+          </a>
+        </p>
         <a href="#showcase-main">回到顶部 ↑</a>
       </footer>
     </div>

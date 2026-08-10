@@ -14,6 +14,19 @@ function renderShowcase() {
 }
 
 describe("ShowcasePage", () => {
+  it("shows the production ICP filing link", () => {
+    render(
+      <MemoryRouter>
+        <ShowcasePage />
+      </MemoryRouter>,
+    );
+
+    expect(screen.getByRole("link", { name: "粤ICP备2026101890号-1" })).toHaveAttribute(
+      "href",
+      "https://beian.miit.gov.cn/",
+    );
+  });
+
   it("explains the project, audience, workflow, and honest preset-demo boundary", () => {
     const { container } = renderShowcase();
 

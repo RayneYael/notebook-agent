@@ -323,6 +323,10 @@ KB_BOT_CHANNELS={"telegram-bot-uuid":"telegram","wechat-bot-uuid":"wechat"}
 
 ## E. Same-origin Web library
 
+The OVHcloud/Caddy production shape, combined Web/MCP unit,
+restricted GitHub approval flow, and rollback boundaries are documented in
+[`ovh-caddy-production.md`](ovh-caddy-production.md).
+
 这是浏览器端视频资料库的运行入口。`web/` 已经是一个独立的私有 React 应用包，
 不是需要发布到 npm 的组件库。它可以由 Python `web-server` 直接提供，也可以由独立
 静态服务提供；两种模式都必须让浏览器只看到一个 public origin，并把 `/api/v1/*`

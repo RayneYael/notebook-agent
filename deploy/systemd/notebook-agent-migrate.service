@@ -1,0 +1,31 @@
+[Unit]
+Description=Notebook Agent Neon schema migration admission
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=notebook-agent
+Group=notebook-agent
+WorkingDirectory=/opt/notebook-agent/current
+EnvironmentFile=/etc/notebook-agent/migrations.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=NOTEBOOK_AGENT_ENV=production
+Environment=NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
+ExecStart=/opt/notebook-agent/current/deploy/scripts/run-production-migrations
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+ReadWritePaths=/opt/notebook-agent/releases
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+UMask=0027

@@ -1,0 +1,107 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ -n "${SSH_ORIGINAL_COMMAND:-}" ]]; then
+  request=$SSH_ORIGINAL_COMMAND
+else
+  request="${1:-} ${2:-}"
+fi
+
+if [[ ! $request =~ ^deploy\ ([0-9a-f]{40})$ ]]; then
+  echo "refusing unsupported deploy request" >&2
+  exit 64
+fi
+
+release_sha=${BASH_REMATCH[1]}
+repository=/opt/notebook-agent/repository
+releases=/opt/notebook-agent/releases
+release_dir=$releases/$release_sha
+current=/opt/notebook-agent/current
+lock_file=/run/lock/notebook-agent-production.lock
+
+exec 9>"$lock_file"
+if ! flock -n 9; then
+  echo "another production deployment is active" >&2
+  exit 75
+fi
+
+if [[ ! -d $repository/.git ]]; then
+  echo "production repository is not initialized" >&2
+  exit 69
+fi
+
+runuser -u notebook-agent -- git -C "$repository" fetch --quiet origin main
+main_sha=$(runuser -u notebook-agent -- git -C "$repository" rev-parse origin/main)
+if [[ $main_sha != "$release_sha" ]]; then
+  echo "requested revision is not the current origin/main" >&2
+  exit 65
+fi
+
+if [[ ! -d $release_dir ]]; then
+  runuser -u notebook-agent -- git -C "$repository" worktree add --detach "$release_dir" "$release_sha"
+  runuser -u notebook-agent -- python3 -m venv "$release_dir/.venv"
+  runuser -u notebook-agent -- "$release_dir/.venv/bin/python" -m pip install --quiet --upgrade pip
+  runuser -u notebook-agent -- "$release_dir/.venv/bin/python" -m pip install --quiet -e "$release_dir"
+  runuser -u notebook-agent -- corepack pnpm --dir "$release_dir/web" install --frozen-lockfile
+  runuser -u notebook-agent -- corepack pnpm --dir "$release_dir/web" build
+  chmod 0755 "$release_dir/deploy/scripts/run-production-migrations"
+  runuser -u notebook-agent -- touch "$release_dir/.release-built"
+elif [[ ! -f $release_dir/.release-built ]]; then
+  echo "release directory exists without a completed build marker" >&2
+  exit 70
+fi
+
+if [[ -L $current ]]; then
+  previous_release=$(readlink -f "$current")
+else
+  previous_release=
+fi
+
+ln -sfn "$release_dir" /opt/notebook-agent/current.next
+systemctl stop notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service
+mv -Tf /opt/notebook-agent/current.next "$current"
+
+rollback_release() {
+  if ! systemctl stop notebook-agent.service notebook-agent-worker.service notebook-agent-beat.service; then
+    echo "warning: failed to stop candidate Notebook Agent services" >&2
+  fi
+  if [[ -n $previous_release && -d $previous_release ]]; then
+    ln -sfn "$previous_release" /opt/notebook-agent/current.next
+    mv -Tf /opt/notebook-agent/current.next "$current"
+    if ! systemctl start notebook-agent-worker.service notebook-agent-beat.service notebook-agent.service; then
+      echo "warning: failed to restart previous Notebook Agent release" >&2
+    fi
+  fi
+}
+
+if ! systemctl start notebook-agent-migrate.service; then
+  rollback_release
+  echo "migration admission failed; previous release restored" >&2
+  exit 70
+fi
+
+if ! systemctl restart notebook-agent-dependencies.service; then
+  rollback_release
+  echo "dependency admission failed; previous release restored" >&2
+  exit 70
+fi
+
+if ! systemctl restart notebook-agent-worker.service \
+  || ! systemctl restart notebook-agent-beat.service \
+  || ! systemctl restart notebook-agent.service; then
+  rollback_release
+  echo "application startup failed; previous release restored" >&2
+  exit 70
+fi
+
+for attempt in {1..30}; do
+  if curl --fail --silent --show-error http://127.0.0.1:8800/api/v1/health >/dev/null; then
+    printf 'deployed %s\n' "$release_sha"
+    exit 0
+  fi
+  sleep 2
+done
+
+rollback_release
+echo "combined runtime health check failed; previous release restored" >&2
+exit 70

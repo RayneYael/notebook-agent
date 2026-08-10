@@ -1233,7 +1233,9 @@ h2 { line-height: 1.1; }
   color: #fff;
 }
 .showcase-brand--footer { justify-self: start; }
-.showcase-footer p { color: rgba(255, 255, 255, 0.44); font-size: 0.64rem; letter-spacing: 0.08em; }
+.showcase-footer p { display: grid; justify-items: center; gap: 0.35rem; color: rgba(255, 255, 255, 0.44); font-size: 0.64rem; letter-spacing: 0.08em; }
+.showcase-footer p a { color: inherit; text-decoration: none; }
+.showcase-footer p a:hover { color: rgba(255, 255, 255, 0.72); text-decoration: underline; text-underline-offset: 0.2rem; }
 .showcase-footer > a:last-child { justify-self: end; color: rgba(255, 255, 255, 0.72); font-size: 0.69rem; font-weight: 700; text-decoration: none; }
 
 @media (hover: hover) and (pointer: fine) {
@@ -1397,5 +1399,5 @@ h2 { line-height: 1.1; }
   .showcase-cta h2 { font-size: clamp(2.75rem, 12vw, 5rem); }
   .showcase-cta__note { max-width: 32rem; line-height: 1.65; }
   .showcase-footer { grid-template-columns: 1fr auto; padding: 1.5rem 1rem calc(1.5rem + env(safe-area-inset-bottom)); }
-  .showcase-footer p { grid-column: 1 / -1; grid-row: 2; }
+  .showcase-footer p { grid-column: 1 / -1; grid-row: 2; justify-items: start; }
 }
