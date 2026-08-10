@@ -95,7 +95,7 @@ WEB_TRUSTED_PROXY_HOSTS=notebookai.deequoique.tech
 MCP_HOST=127.0.0.1
 MCP_PORT=8800
 MCP_PATH=/mcp
-MCP_URL_TOKEN_MODE=false
+MCP_URL_TOKEN_MODE=true
 AGENT_SAVE_ENABLED=false
 AGENT_ITEM_MANAGEMENT_ENABLED=false
 ```
@@ -174,9 +174,11 @@ handoff channel.
   --created-by production-bootstrap
 ```
 
-Use `Authorization: Bearer <token>` with
-`https://notebookai.deequoique.tech/mcp`. Do not enable query tokens. Rotate,
-disable, or revoke the grant after evaluation or suspected disclosure.
+Use either `Authorization: Bearer <token>` with
+`https://notebookai.deequoique.tech/mcp`, or the URL-only evaluator capability
+`https://notebookai.deequoique.tech/mcp/c/<token>`. Path-token mode requires
+HTTPS and the Caddy site discards access logs; `?token=` remains forbidden.
+Rotate, disable, or revoke the grant after evaluation or suspected disclosure.
 
 ## GitHub approval and restricted deployment
 

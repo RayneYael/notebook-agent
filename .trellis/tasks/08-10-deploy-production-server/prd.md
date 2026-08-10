@@ -47,8 +47,9 @@ service, and data set on the host.
   valid address that receives and verifies its code gets a new isolated
   AppUser/tenant on first login. Do not add a production allowlist in phase one.
 - Create a dedicated evaluator AppUser/tenant and a labeled `full` MCP grant
-  expiring after 30 days. Use HTTPS Bearer authentication; keep URL token mode
-  disabled unless a later evaluator requirement explicitly needs it.
+  expiring after 30 days. Support the evaluator's URL-only input through the
+  HTTPS path capability `/mcp/c/<token>`; keep query-token authentication
+  disabled and discard the dedicated Caddy site's access logs.
 - Reuse the current remote Neon database credentials without logging their
   values. Run migrations only through the direct URL; runtime traffic uses the
   pooled URL.

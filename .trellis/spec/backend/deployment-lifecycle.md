@@ -137,8 +137,10 @@ provider credentials or mutate external services.
 
 - Runtime environment requires `WEB_AUTH_ENABLED=true`,
   `WEB_PUBLIC_ORIGIN=https://notebookai.deequoique.tech`,
-  `WEB_COOKIE_SECURE=true`, `MCP_PATH=/mcp`, `MCP_URL_TOKEN_MODE=false`, and a
-  writable `NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent`.
+  `WEB_COOKIE_SECURE=true`, `MCP_PATH=/mcp`, `MCP_URL_TOKEN_MODE=true`, and a
+  writable `NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent`. This deployment's
+  URL-only evaluator uses the HTTPS `/mcp/c/<token>` capability path; query
+  tokens remain rejected and the dedicated Caddy site discards access logs.
 - The combined MCP transport must retain SDK DNS-rebinding protection while
   admitting the exact validated `WEB_PUBLIC_ORIGIN` host through Caddy.
 - `DATABASE_URL` is the pooled external PostgreSQL runtime URL.

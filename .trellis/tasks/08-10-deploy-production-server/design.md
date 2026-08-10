@@ -75,10 +75,11 @@ release pointer. Database data is never deleted during rollback.
   trusted proxy configuration restricted to loopback Caddy. Phase one keeps
   the implemented open verified-email signup behavior; each newly verified
   address receives an isolated AppUser/tenant.
-- MCP: `MCP_PATH=/mcp`, URL-token mode off, per-request Bearer grant. A
-  dedicated evaluator AppUser receives a labeled `full` grant with a 30-day
+- MCP: `MCP_PATH=/mcp`, per-request Bearer grants, and HTTPS path-token mode
+  for the URL-only evaluator at `/mcp/c/<token>`. Query tokens remain rejected.
+  A dedicated evaluator AppUser receives a labeled `full` grant with a 30-day
   expiry. Raw token output is captured once into a private handoff and never
-  written to config or logs.
+  written to config or logs; the dedicated Caddy site discards access logs.
 - Redis/MinIO: independent random production credentials generated on the
   server. Values are redacted from command and health output.
 
