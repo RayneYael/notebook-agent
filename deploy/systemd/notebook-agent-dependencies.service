@@ -1,0 +1,24 @@
+[Unit]
+Description=Notebook Agent isolated Redis and MinIO dependencies
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=true
+WorkingDirectory=/opt/notebook-agent/current
+EnvironmentFile=/etc/notebook-agent/dependencies.env
+ExecStart=/usr/bin/docker compose --env-file /etc/notebook-agent/dependencies.env -f /opt/notebook-agent/current/deploy/compose/production-dependencies.yml up -d --wait redis minio
+ExecStart=/usr/bin/docker compose --env-file /etc/notebook-agent/dependencies.env -f /opt/notebook-agent/current/deploy/compose/production-dependencies.yml run --rm minio-init
+ExecStop=/usr/bin/docker compose --env-file /etc/notebook-agent/dependencies.env -f /opt/notebook-agent/current/deploy/compose/production-dependencies.yml stop
+TimeoutStartSec=180
+TimeoutStopSec=60
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

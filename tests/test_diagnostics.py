@@ -28,6 +28,15 @@ def test_diagnostics_emit_only_stable_fields(caplog):
     assert private_message not in json.dumps(payload)
 
 
+def test_diagnostics_preserve_safe_quota_error_code(caplog):
+    diagnostics = RequestDiagnostics.start("a" * 32, 7)
+
+    with caplog.at_level(logging.INFO, logger="notebook_agent.runtime"):
+        diagnostics.event("agent_failed", error_code="quota_exceeded")
+
+    assert caplog.records[-1].diagnostic_payload["error_code"] == "quota_exceeded"
+
+
 def test_diagnostics_allow_phase_and_skipped_tool_without_content(caplog):
     diagnostics = RequestDiagnostics.start("a" * 32, 7)
 

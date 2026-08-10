@@ -140,6 +140,16 @@ def test_force_reprofile_preserves_generated_database_secret(
     )
     monkeypatch.setattr(deployment, "MANAGED_ENV", managed)
     monkeypatch.setattr(deployment, "OPERATOR_ENV", tmp_path / ".env")
+    # This test exercises generated local MinIO credentials. Other tests may
+    # have loaded the operator .env into the process environment already.
+    for name in (
+        "MINIO_ROOT_USER",
+        "MINIO_ROOT_PASSWORD",
+        "MINIO_ENDPOINT_URL",
+        "MINIO_API_PORT",
+        "CHANNEL_GATEWAY_SECRET",
+    ):
+        monkeypatch.delenv(name, raising=False)
     deployment.initialize("full", force=True)
     values = deployment.load_environment(
         {}, managed_path=managed, operator_path=tmp_path / ".env"

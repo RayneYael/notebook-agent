@@ -8,7 +8,7 @@
 
 <!-- @@@auto:current-status -->
 - **Active File**: `journal-1.md`
-- **Total Sessions**: 13
+- **Total Sessions**: 15
 - **Last Active**: 2026-08-10
 <!-- @@@/auto:current-status -->
 
@@ -19,7 +19,7 @@
 <!-- @@@auto:active-documents -->
 | File | Lines | Status |
 |------|-------|--------|
-| `journal-1.md` | ~373 | Active |
+| `journal-1.md` | ~434 | Active |
 <!-- @@@/auto:active-documents -->
 
 ---
@@ -29,6 +29,8 @@
 <!-- @@@auto:session-history -->
 | # | Date | Title | Commits | Branch |
 |---|------|-------|---------|--------|
+| 15 | 2026-08-10 | Fix YouTube worker trusted CA initialization | `544b809`, `2be7c71` | `codex/youtube-subtitle-ca-fix` |
+| 14 | 2026-08-10 | Web email auth contract and full-browser readiness | `b883b27`, `1ae3d9f`, `424e7f5` | `codex/web-email-auth-contract-fix` |
 | 13 | 2026-08-10 | Include LangBot gateway in full profile | `4ccfae8c57c741ba76ffdfe124e1a02c62ed38db`, `677f6cf` | `codex/full-includes-langbot` |
 | 12 | 2026-08-09 | Simplify deployment lifecycle | `872c7b7`, `c0dd2d2` | `dev` |
 | 11 | 2026-08-09 | Real-model natural language evaluation | `877459b`, `8e526b7` | `dev` |

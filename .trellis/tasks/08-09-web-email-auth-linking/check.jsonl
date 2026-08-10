@@ -1,0 +1,5 @@
+{"_example": "Fill with {\"file\": \"<path>\", \"reason\": \"<why>\"}. Put spec/research files only — no code paths. Run `python3 .trellis/scripts/get_context.py --mode packages` to list available specs. Delete this line once real entries are added."}
+{"file": ".trellis/spec/backend/channel-identity-linking.md", "reason": "Review Web link target validation, merge locks, token retries, and revocation behavior."}
+{"file": ".trellis/spec/backend/mcp-channel-runtime.md", "reason": "Review that Web auth changes do not weaken or change MCP bearer transport."}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Review migration head, schema, and deployment revision safety."}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review HTTP-to-service-to-database contracts and tenant propagation."}

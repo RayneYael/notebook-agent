@@ -3,10 +3,10 @@ __pycache__/
 *.py[cod]
 *.egg-info/
 .venv/
-.vercel/
 build/
 venv/
 .pytest_cache/
+coverage/
 
 # Env / secrets
 .env
@@ -24,3 +24,13 @@ data/
 # Editors
 .vscode/
 .idea/
+
+# Web build and package manager
+web/node_modules/
+web/dist/
+web/coverage/
+output/playwright/
+
+# Local Codex/OMX runtime state
+.omx/
+.gstack/

@@ -6,6 +6,18 @@
 
 ## Overview
 
+### FastAPI response construction
+
+Route decorators such as `status_code=204` only supply a status when FastAPI
+constructs the response. A handler that returns a concrete `Response` must
+construct it with an explicit valid integer status code; the injected response
+object can have `status_code=None` and must not be returned directly.
+
+For state-changing session routes, create the explicit response first, attach
+the cookie mutation to that same response, then return it. Cover the complete
+ASGI contract in tests: authenticated request, legal HTTP status, cookie
+mutation, and the authorization state observed by the next request.
+
 <!--
 Document your project's error handling conventions here.
 

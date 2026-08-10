@@ -156,6 +156,48 @@ MCP_TOKEN='<raw-token>' \
 重试。`tools/list` 只证明 MCP 连通，评测还应调用自然语言的
 `ask_notebook_agent` 以验证真实模型路径。
 
+### Web 邮箱登录 API
+
+Web API 与 Streamable HTTP MCP 共用同一条启动命令，但认证边界彼此独立：浏览器通过
+`/api/v1/*` 的服务端 session Cookie 认证，`/mcp` 仍只接受 MCP bearer grant。
+
+浏览器 Chat 的 `conversation_id`、服务端 `thread_id`、消息幂等与 reset 契约见
+[Web 对话接口契约](docs/web-conversation-api.md)。
+
+启用前，在项目根目录私有 `.env` 中设置以下值。不要提交邮件服务商凭据或 Web auth
+secret；`WEB_PUBLIC_ORIGIN` 必须与浏览器实际访问的 HTTPS origin 完全一致，且末尾不能有
+`/`。
+
+```dotenv
+WEB_AUTH_ENABLED=true
+WEB_PUBLIC_ORIGIN=https://localhost:8443 //localhost 仅供本地测试，正式部署时切换为真实公网 IP
+WEB_AUTH_SECRET=<用python生成一个至少32个字符的私有随机值>
+EMAIL_PROVIDER=smtp
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_STARTTLS=true
+SMTP_USERNAME=<本地测试 Gmail 地址>
+SMTP_PASSWORD=<本地 Gmail App Password>
+SMTP_FROM_EMAIL=<本地测试 Gmail 地址>
+```
+
+先执行数据库迁移，再启动同一个长驻 HTTP 进程：
+
+```bash
+.venv/bin/alembic upgrade head
+.venv/bin/python -m app.cli mcp-server --transport streamable-http
+```
+
+该进程必须放在 HTTPS 反向代理后。代理需原样转发 Cookie 和 `Origin` header，不得对
+`/api/v1` 启用 CORS，并将 upstream read timeout 设为至少 60 秒。生产登录还依赖 Redis；
+所选邮件服务商或 Redis 不可用时登录会 fail closed。当前本地开发使用上列 Gmail SMTP，
+另加 `SMTP_TIMEOUT_SECONDS`（默认 `10`）；Gmail App Password 和测试地址只能保存在私有
+本地 `.env`，绝不能提交。仍可通过 `EMAIL_PROVIDER=resend` 加上 `RESEND_API_KEY` 与
+`RESEND_FROM_EMAIL` 使用 Resend，但当前环境不依赖它，也不以 DNS/发件域名验证为前置条件。
+生产环境必须显式选择并完整配置 provider，最终生产 provider 尚未决定。开发/测试未配置
+provider 时使用内存 Fake Sender，验证码不会写入日志或向 Postman 暴露，应使用自动化 Web
+测试验证该路径。
+
 ### 4. 启动后台任务与 Gateway
 
 一键启动的 `full` profile 会在同一个 supervisor 下启动 MCP、私有 gateway、worker 与唯一

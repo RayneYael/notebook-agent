@@ -45,6 +45,7 @@ from app.channels.types import ChannelEnvelope
 from app.config import Settings
 from app.diagnostics import RequestDiagnostics
 from app.models import ConversationThread, ConversationTurn
+from app.web.auth import WebAuthError, WebAuthService
 
 
 class ChannelService:
@@ -55,10 +56,13 @@ class ChannelService:
         session_factory: Callable[[], Session],
         agent: KnowledgeAgent,
         settings: Settings,
+        *,
+        web_auth: WebAuthService | None = None,
     ) -> None:
         self._session_factory = session_factory
         self._agent = agent
         self._settings = settings
+        self._web_auth = web_auth
         self._locks: dict[tuple[str, str, str, str], asyncio.Lock] = {}
         # The context projection is part of the opt-in bounded-autonomy path.
         # Keep the legacy flag-off request hot path free of its extra DB read.
@@ -101,14 +105,53 @@ class ChannelService:
         if command == "link":
             return self._handle_link(envelope, argument)
 
+        if command == "web-login" and not argument:
+            return AgentAnswer(
+                status="failed",
+                text="用法：发送 /web-login 登录码。",
+                error_code="web_login_usage",
+            )
+
         with self._session_factory() as db:
             tenant = resolve_or_register(db, envelope)
             diagnostics = RequestDiagnostics.start(
-                envelope.request_id, tenant.app_user_id, envelope.trace_id,
+                envelope.request_id,
+                tenant.app_user_id,
+                envelope.trace_id,
                 allow_retrieval_content=self._settings.notebook_agent_log_retrieval_content,
                 environment=self._settings.notebook_agent_env,
             )
             diagnostics.event("accepted")
+            if command == "web-login":
+                diagnostics.event("route", route="command")
+                db.commit()
+                if self._web_auth is None:
+                    return self._response_ready(
+                        diagnostics,
+                        AgentAnswer(
+                            status="failed",
+                            text="网页登录当前不可用，请稍后重试。",
+                            error_code="web_login_unavailable",
+                        ),
+                    )
+                try:
+                    self._web_auth.approve(argument, tenant)
+                except WebAuthError as exc:
+                    return self._response_ready(
+                        diagnostics,
+                        AgentAnswer(
+                            status="failed",
+                            text=str(exc),
+                            error_code=exc.code,
+                        ),
+                    )
+                return self._response_ready(
+                    diagnostics,
+                    AgentAnswer(
+                        status="ok",
+                        text="网页登录已批准，请返回浏览器继续。",
+                    ),
+                )
             if command == "start":
                 diagnostics.event("route", route="command")
                 db.commit()
@@ -253,7 +296,7 @@ class ChannelService:
         if not argument:
             return AgentAnswer(
                 status="failed",
-                text="用法：发送 /link telegram、/link wechat 或 /link <绑定码>。",
+                text="用法：发送 /link telegram、/link wechat、/link web 或 /link <绑定码>。",
                 error_code="link_usage",
             )
         try:
@@ -261,7 +304,7 @@ class ChannelService:
         except IdentityConflict:
             return AgentAnswer(
                 status="failed",
-                text="目前只支持 Telegram 与微信之间绑定。",
+                text="目前只支持 Telegram、微信与 Web 之间绑定。",
                 error_code="link_channel_unsupported",
             )
         except InvalidLinkToken:
@@ -305,8 +348,8 @@ class ChannelService:
                 status="ok",
                 text=(
                     f"绑定码：{token}\n"
-                    f"请在 {value} 中发送 /link {token}。"
-                    f"该绑定码约 {ttl_minutes} 分钟内有效且只能使用一次。"
+                    + ("请在已登录的 Web 页面中使用该绑定码。" if value == "web" else f"请在 {value} 中发送 /link {token}。")
+                    + f"该绑定码约 {ttl_minutes} 分钟内有效且只能使用一次。"
                 ),
             )
 
@@ -336,7 +379,7 @@ def _command(text: str) -> tuple[str | None, str | None]:
     if not parts or not parts[0].startswith("/"):
         return None, None
     command = parts[0].split("@", 1)[0].lower().removeprefix("/")
-    if command not in {"start", "new", "link", "whoami"}:
+    if command not in {"start", "new", "link", "whoami", "web-login"}:
         return None, None
     return command, parts[1].strip() if len(parts) == 2 else None
 

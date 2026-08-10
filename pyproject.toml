@@ -19,6 +19,9 @@ dependencies = [
     "prometheus-client>=0.22,<1",
     "pydantic-ai-slim[openai]==2.15.0",
     "mcp==2.0.0",
+    "fastapi==0.141.1",
+    "uvicorn==0.52.1",
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]

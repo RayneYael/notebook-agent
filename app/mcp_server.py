@@ -17,7 +17,7 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Annotated, Any, Callable, Mapping
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlsplit
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr, field_validator
@@ -38,6 +38,7 @@ from app.mcp_readiness import (
     assess_mcp_mutation_readiness,
     probe_mcp_worker,
 )
+from app.limits import MAX_WHY_SAVED_CHARS
 
 
 MCP_TOOL_NAMES: tuple[str, ...] = (
@@ -59,6 +60,7 @@ FULL_TOOL_NAMES: frozenset[str] = frozenset(MCP_TOOL_NAMES)
 try:
     from mcp_types import ToolAnnotations
     from mcp.server.mcpserver import MCPServer as OfficialMCPServer
+    from mcp.server.transport_security import TransportSecuritySettings
 
     _TOOL_ANNOTATIONS = {
         "ask_notebook_agent": ToolAnnotations(
@@ -98,7 +100,7 @@ _CONVERSATION_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}\Z")
 _MCP_PATH_TOKEN_RE = re.compile(r"^/mcp/c/([^/?#]+)\Z")
 _MAX_URL_BATCH = 10
 _MAX_URL_CHARS = 4096
-_MAX_WHY_SAVED_CHARS = 500
+_MAX_WHY_SAVED_CHARS = MAX_WHY_SAVED_CHARS
 _SAFE_ERROR_RE = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 _AUTH_CONTEXT: contextvars.ContextVar[ResolvedMcpGrant | None] = contextvars.ContextVar(
     "mcp_resolved_grant", default=None
@@ -528,16 +530,17 @@ class McpToolFacade:
         if self.management is None or self.submission is None or self.pending is None:
             from app.agent.management import KnowledgeItemManagementService
             from app.channels.pending_actions import PendingConfirmationService
-            from app.ingest.submission import IngestSubmissionService
+            from app.ingest.submission import build_ingest_submission_service
             from app.ingest.tasks import publish_ingest_dispatch
 
             self.management = self.management or KnowledgeItemManagementService(
                 self.session_factory, retention_days=settings.trash_retention_days
             )
             self.pending = self.pending or PendingConfirmationService(self.session_factory)
-            self.submission = self.submission or IngestSubmissionService(
-                self.session_factory, self.publisher or publish_ingest_dispatch,
-                retention_days=settings.trash_retention_days,
+            self.submission = self.submission or build_ingest_submission_service(
+                self.session_factory,
+                self.publisher or publish_ingest_dispatch,
+                settings,
             )
         if self.grant_service is None:
             self.grant_service = McpGrantService(self.session_factory)
@@ -1037,6 +1040,26 @@ def _new_sdk_server(name: str, settings: Settings | None = None):
     return OfficialMCPServer(name=name)
 
 
+def _mcp_transport_security(settings: Settings) -> TransportSecuritySettings:
+    """Keep DNS-rebinding protection while admitting the validated Web origin."""
+
+    allowed_hosts = ["127.0.0.1:*", "localhost:*", "[::1]:*"]
+    allowed_origins = [
+        "http://127.0.0.1:*",
+        "http://localhost:*",
+        "http://[::1]:*",
+    ]
+    if settings.web_auth_enabled and settings.web_public_origin:
+        public_origin = urlsplit(settings.web_public_origin)
+        allowed_hosts.append(public_origin.netloc)
+        allowed_origins.append(settings.web_public_origin)
+    return TransportSecuritySettings(
+        enable_dns_rebinding_protection=True,
+        allowed_hosts=allowed_hosts,
+        allowed_origins=allowed_origins,
+    )
+
+
 def _register(server, fn: Callable[..., Any], *, description: str = "") -> None:
     name = fn.__name__
     annotations = _TOOL_ANNOTATIONS.get(name)
@@ -1303,6 +1326,7 @@ def create_streamable_http_app(
             json_response=True,
             stateless_http=True,
             host=settings.mcp_host,
+            transport_security=_mcp_transport_security(settings),
         )
     except AttributeError as exc:
         raise RuntimeError("mcp==2.0.0 is required for Streamable HTTP") from exc
@@ -1318,6 +1342,7 @@ def create_streamable_http_app(
             json_response=True,
             stateless_http=True,
             host=settings.mcp_host,
+            transport_security=_mcp_transport_security(settings),
         )
     except AttributeError:
         read_app = None
@@ -1429,9 +1454,19 @@ def run_streamable_http(server=None, *, settings: Settings | None = None, grant_
                     mutation_error_code=readiness.error_code,
                 ),
             )
-    app = create_streamable_http_app(
-        server=server, grant_service=grant_service, settings=settings
-    )
+    if settings.web_auth_enabled:
+        # The dispatcher routes MCP before FastAPI so bearer authorization is
+        # never interpreted as a browser cookie/session.
+        from app.web_runtime import create_combined_asgi_app
+        app = create_combined_asgi_app(
+            settings=settings,
+            mcp_server=server,
+            grant_service=grant_service,
+        )
+    else:
+        app = create_streamable_http_app(
+            server=server, grant_service=grant_service, settings=settings
+        )
     import uvicorn
 
     config = uvicorn.Config(

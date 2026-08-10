@@ -268,6 +268,7 @@ class KnowledgeServices:
                     .where(
                         ContentItem.user_id == self._tenant.app_user_id,
                         ContentItem.deleted_at.is_(None),
+                        ContentItem.archived_at.is_(None),
                         ContentItem.state == "ready",
                         Segment.id.in_(segment_ids),
                         *([Segment.item_id == item_id] if item_id is not None else []),
@@ -345,6 +346,7 @@ class KnowledgeServices:
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                     ContentItem.state == "ready",
                     *self._reference_predicates(),
                 )
@@ -357,9 +359,10 @@ class KnowledgeServices:
                 .join(ContentItem, Segment.item_id == ContentItem.id)
                 .where(
                     Segment.item_id == item.id,
-                    Segment.seq.between(segment.seq - radius, segment.seq + radius),
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
+                    Segment.seq.between(segment.seq - radius, segment.seq + radius),
                     ContentItem.state == "ready",
                     *self._reference_predicates(),
                 )
@@ -376,6 +379,7 @@ class KnowledgeServices:
                     ContentItem.id == item_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                     *self._reference_predicates(),
                 )
             )
@@ -408,6 +412,7 @@ class KnowledgeServices:
                     Segment.id == segment_id,
                     ContentItem.user_id == self._tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                     ContentItem.state == "ready",
                     *self._reference_predicates(),
                 )

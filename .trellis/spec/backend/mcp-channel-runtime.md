@@ -111,6 +111,11 @@ retry_item_ingestion
   `MCP_URL_TOKEN_MODE=true`. Query tokens are rejected, HTTPS is required for
   path tokens, and `MCP_PATH` must be a non-root absolute path without a query,
   fragment, or trailing slash.
+- Streamable HTTP keeps the official SDK DNS-rebinding protection enabled.
+  Loopback hosts remain admitted; when the combined authenticated Web runtime
+  is enabled, its already validated exact `WEB_PUBLIC_ORIGIN` host and origin
+  are added to the MCP transport allowlist. Never disable host validation or
+  trust an arbitrary forwarded host to make a reverse proxy work.
 - URL capability paths are still secrets: MiXer, proxies, and infrastructure
   can see the full URL. Redact or omit the original URI before application,
   error, access, or analytics logging, and rotate after suspected disclosure.
@@ -141,6 +146,7 @@ MCP_TOKEN=<stdio-only raw bearer, process environment>
 | `?token=...` or percent-encoded query token | Reject; never normalize it into accepted auth |
 | URL token mode disabled, non-HTTPS request, or path mismatch | Reject without echoing the request URI or token |
 | `MCP_PATH` is `/`, relative, has query/fragment, or trails with `/` | Configuration error before serving |
+| Host/Origin is outside loopback and the validated public Web origin | Reject with HTTP 421 before protocol handling |
 | Raw token is empty or longer than the accepted bound | `invalid_grant` |
 | Grant scope, expiry, label, creator, limit, or offset invalid | Stable bounded operator error; no raw SQL/provider detail |
 | Delete marker cannot be persisted | Cancel best-effort, return `management_unavailable`, and return no confirmation code |
@@ -173,7 +179,8 @@ MCP_TOKEN=<stdio-only raw bearer, process environment>
   cancellation propagates while run-owned grant revocation is still attempted.
 - Exercise the Streamable HTTP ASGI app for missing/malformed/read/full/revoked
   credentials, Bearer/path parity, HTTPS enforcement, query rejection, custom
-  paths, session initialization, discovery, calls, and secret-free failures.
+  paths, session initialization, discovery, calls, exact public-host admission,
+  unknown-host rejection, and secret-free failures.
 - Cover grant hashing, one-time token output, no-expiry persistence,
   multi-user/multi-grant scope mapping, rotation, revocation, disablement,
   expiry, disabled identity/user, pagination bounds, and restart

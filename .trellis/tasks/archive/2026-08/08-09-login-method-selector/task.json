@@ -1,0 +1,35 @@
+{
+  "id": "login-method-selector",
+  "name": "login-method-selector",
+  "title": "登录方式选择与账号密码前端预留",
+  "description": "重构 Web 登录页：微信和 Telegram 作为真实主登录方式始终可见，账号密码只做明确的前端预留，并补齐加载、不可用、challenge、表单校验和错误状态。",
+  "status": "completed",
+  "dev_type": "feature",
+  "scope": "web/frontend",
+  "package": "web",
+  "priority": "P1",
+  "creator": "codex",
+  "assignee": "codex",
+  "createdAt": "2026-08-09",
+  "completedAt": "2026-08-09",
+  "branch": "codex/web-video-library-mvp",
+  "base_branch": "main",
+  "worktree_path": null,
+  "commit": "36d37d4c7ccf8d9d743070c5e798e2c84a578c21",
+  "pr_url": null,
+  "subtasks": [],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    "web/src/auth/LoginPage.tsx",
+    "web/src/auth/LoginPage.test.tsx",
+    "web/src/styles.css"
+  ],
+  "notes": "Account/password is an honest front-end reservation only. WeChat and Telegram remain the real challenge-based authentication paths. No push, PR, merge, or main update was performed for this closeout.",
+  "meta": {
+    "targeted_tests": "3 files, 18 tests passed",
+    "full_frontend": "12 files, 42 tests; typecheck, lint, build, check:api passed",
+    "browser_evidence": "desktop 1724x1375 and mobile 390x844; no horizontal overflow; screenshots retained as thread-local visualization artifacts",
+    "environment_gap": "Vite-only login smoke records expected /api/v1/capabilities 502; UI degrades explicitly"
+  }
+}

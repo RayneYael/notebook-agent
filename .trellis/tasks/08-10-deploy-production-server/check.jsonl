@@ -1,0 +1,5 @@
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Verify deployment ownership, exactly-one Beat, bounded readiness, secret handling, and rollback safety."}
+{"file":".trellis/spec/backend/mcp-channel-runtime.md","reason":"Verify full grant scope, Bearer isolation, readiness, expiry, and no token disclosure."}
+{"file":".trellis/spec/backend/web-browser-runtime.md","reason":"Verify combined Web/MCP authentication isolation and production email auth."}
+{"file":".trellis/spec/backend/database-guidelines.md","reason":"Verify safe Neon runtime/migration separation and single Alembic head."}
+{"file":".trellis/spec/frontend/quality-guidelines.md","reason":"Verify frontend security, accessibility, tests, typecheck, lint, build, and API contract."}

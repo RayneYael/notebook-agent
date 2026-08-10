@@ -15,9 +15,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import uuid4
 
-import boto3
-from botocore.exceptions import ClientError
-from botocore.config import Config as BotoConfig
 from celery import Celery, Task
 from kombu import Producer, Queue
 from sqlalchemy import and_, delete, func, inspect, or_, select, text
@@ -28,7 +25,7 @@ from app.connectors.youtube import YouTubeConnector
 from app.db import get_session_factory
 from app.ingest.chunker import chunk
 from app.ingest.embed import EmbeddingProvider, ZhipuEmbedder
-from app.ingest.validate import guard_transcript
+from app.ingest.validate import IngestLimitExceeded, guard_ingest_limits, guard_transcript
 from app.models import (
     AppUser,
     ContentItem,
@@ -36,7 +33,9 @@ from app.models import (
     IngestDispatch,
     Segment,
 )
+from app.limits import normalize_why_saved
 from app.agent.management import RecycleBinPurgeService
+from app.object_store import RawObjectStore
 from app.ingest.notifications import IngestNotificationPoller
 from app.tls import configure_trusted_ca
 
@@ -95,6 +94,7 @@ def _completion_diagnostic(
     safe_error_codes = {
         "ingestion_failed",
         "transient_fetch_failed",
+        "ingest_too_large",
         "item_deleted",
         "completion_publish_failed",
         "broker_unavailable",
@@ -179,105 +179,24 @@ def _bounded_publish_options(
     }
 
 
-class RawObjectStore:
-    def __init__(self) -> None:
-        settings = get_settings()
-        self.bucket = settings.minio_bucket
-        timeout = max(1.0, float(settings.trash_purge_object_timeout_seconds))
-        self._client_kwargs = {
-            "endpoint_url": settings.minio_endpoint_url,
-            "aws_access_key_id": settings.minio_access_key,
-            "aws_secret_access_key": settings.minio_secret_key,
-        }
-        self._base_config = BotoConfig(
-            connect_timeout=timeout,
-            read_timeout=timeout,
-            retries={"total_max_attempts": 1, "mode": "standard"},
-        )
-        self.client = boto3.client("s3", config=self._base_config, **self._client_kwargs)
-
-    def put(self, key: str, body: bytes, content_type: str) -> None:
-        try:
-            self.client.head_bucket(Bucket=self.bucket)
-        except ClientError:
-            self.client.create_bucket(Bucket=self.bucket)
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=body, ContentType=content_type)
-
-    def _client_for_timeout(self, timeout_seconds: float | None):
-        if timeout_seconds is None:
-            return self.client, False
-        try:
-            timeout = float(timeout_seconds)
-        except (TypeError, ValueError):
-            raise TimeoutError("object_delete_timeout") from None
-        if not math.isfinite(timeout) or timeout <= 0:
-            raise TimeoutError("object_delete_timeout")
-        # Reserve a fraction for client construction, TLS teardown and the
-        # caller's post-delete claim transaction. Botocore exposes separate
-        # connect/read budgets rather than one total operation deadline, so
-        # their sum is deliberately below the remaining sweep budget.
-        overhead_reserve = min(0.05, timeout * 0.1)
-        available = timeout - overhead_reserve
-        minimum_stage = 0.001
-        if available < minimum_stage * 2:
-            raise TimeoutError("object_delete_timeout")
-        connect_timeout = max(minimum_stage, available * 0.25)
-        read_timeout = available - connect_timeout
-        if read_timeout < minimum_stage:
-            read_timeout = minimum_stage
-            connect_timeout = available - read_timeout
-        if connect_timeout <= 0 or read_timeout <= 0:
-            raise TimeoutError("object_delete_timeout")
-        # Botocore has no per-request timeout argument for S3 operations. A
-        # short-lived client with a merged Config is the provider-supported
-        # way to enforce the purge sweep's remaining wall-clock budget.
-        config = self._base_config.merge(
-            BotoConfig(
-                connect_timeout=connect_timeout,
-                read_timeout=read_timeout,
-            )
-        )
-        return boto3.client("s3", config=config, **self._client_kwargs), True
-
-    def delete_object(
-        self, key: str, *, timeout_seconds: float | None = None
-    ) -> None:
-        """Idempotently delete one raw object.
-
-        S3 delete is itself idempotent.  A missing object and a missing bucket
-        are treated as already-cleaned; other failures are propagated so the
-        purge row remains retryable.  The key is never included in an error.
-        """
-
-        client, temporary = self._client_for_timeout(timeout_seconds)
-        try:
-            try:
-                client.delete_object(Bucket=self.bucket, Key=key)
-            except ClientError as exc:
-                code = str((exc.response or {}).get("Error", {}).get("Code", ""))
-                if code in {"NoSuchKey", "NoSuchBucket", "404", "NotFound"}:
-                    return
-                raise RuntimeError("object_delete_failed") from None
-        finally:
-            if temporary:
-                close = getattr(client, "close", None)
-                if callable(close):
-                    close()
-
-    # Keep the adapter compatible with purge fakes/older callers that use a
-    # generic ``delete`` method while preserving the per-call timeout contract.
-    def delete(self, key: str, *, timeout_seconds: float | None = None) -> None:
-        self.delete_object(key, timeout_seconds=timeout_seconds)
-
-
 def _connector(url: str) -> YouTubeConnector:
-    connector = YouTubeConnector()
+    settings = get_settings()
+    # Resolve and export the verified CA before constructing the real
+    # connector.  yt-dlp metadata and the isolated bounded subtitle child both
+    # inherit this process environment; the later embedding composition keeps
+    # its explicit SSLContext independently.
+    configure_trusted_ca(settings.tls_ca_bundle)
+    connector = YouTubeConnector(
+        max_transcript_bytes=settings.ingest_max_raw_transcript_bytes,
+        fetch_timeout_seconds=settings.youtube_fetch_timeout_seconds,
+    )
     if connector.match(url):
         return connector
     raise ValueError(f"unsupported URL: {url}")
 
 
 def create_item(url: str, *, user_id: int, why_saved: str | None = None, connector: Any | None = None, session_factory=None) -> int:
+    why_saved = normalize_why_saved(why_saved)
     connector = connector or _connector(url)
     platform_id = connector.match(url)
     if not platform_id:
@@ -298,11 +217,13 @@ def create_item(url: str, *, user_id: int, why_saved: str | None = None, connect
                 existing.purge_claimed_at = None
                 existing.purge_attempts = 0
                 existing.purge_error_code = None
+                existing.archived_at = None
                 if why_saved is not None:
-                    existing.why_saved = " ".join(why_saved.split())[:500] or None
+                    existing.why_saved = why_saved
                 db.commit()
             return existing.id
         item = ContentItem(
+            public_id=uuid4().hex,
             user_id=user_id,
             platform=connector.platform,
             platform_id=platform_id,
@@ -354,6 +275,21 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
         if not isinstance(result, TextResult):
             raise TypeError(f"connector returned unsupported text result: {type(result)!r}")
         guard_transcript(result.raw_body, result.cues, platform=item.platform)
+        settings = get_settings()
+        guard_ingest_limits(
+            result.raw_body,
+            result.cues,
+            max_raw_bytes=settings.ingest_max_raw_transcript_bytes,
+            max_cues=settings.ingest_max_cues_per_item,
+            max_text_chars=settings.ingest_max_text_chars_per_item,
+        )
+        preflight_chunks = chunk(
+            result.cues,
+            lang=result.lang,
+            chapters=item.chapters,
+        )
+        if len(preflight_chunks) > settings.ingest_max_segments_per_item:
+            raise IngestLimitExceeded()
         key = f"{item.user_id}/{item.platform}/{item.platform_id}/{hashlib.sha256(result.raw_body).hexdigest()}.json3"
         db.refresh(item)
         if getattr(item, "deleted_at", None) is not None or getattr(item, "purge_claimed_at", None) is not None:
@@ -382,9 +318,20 @@ def process_item(item_id: int, *, connector: Any | None = None, embedder: Embedd
             return "deleted"
         if embedder is None:
             embedder = build_worker_embedder()
-        semantic = lambda texts: embedder.embed(texts)
+        remaining_embedding_chars = settings.ingest_max_embedding_chars_per_item
+
+        def semantic(texts):
+            nonlocal remaining_embedding_chars
+            requested = sum(len(text) for text in texts)
+            if requested > remaining_embedding_chars:
+                raise IngestLimitExceeded()
+            remaining_embedding_chars -= requested
+            return embedder.embed(texts)
+
         chunks = chunk(result.cues, lang=result.lang, chapters=item.chapters, semantic_embedder=semantic)
-        vectors = embedder.embed([part.text for part in chunks])
+        if len(chunks) > settings.ingest_max_segments_per_item:
+            raise IngestLimitExceeded()
+        vectors = semantic([part.text for part in chunks])
         if len(vectors) != len(chunks):
             raise ValueError(
                 f"embedding count mismatch: expected {len(chunks)}, got {len(vectors)}"
@@ -448,11 +395,18 @@ def fetch_text_task(self, dispatch_id: int) -> str:
     )
 
 
-def publish_ingest_dispatch(dispatch_id: int) -> str:
+def publish_ingest_dispatch(
+    dispatch_id: int,
+    *,
+    remaining_budget_seconds: float | None = None,
+) -> str:
     """Publish only the durable internal dispatch identifier."""
 
     settings = get_settings()
-    options = _bounded_publish_options(settings)
+    options = _bounded_publish_options(
+        settings,
+        budget_seconds=remaining_budget_seconds,
+    )
     # These are read by Celery when it acquires the producer connection.  Keep
     # transport options scoped to the broker publish path; worker task retry /
     # backoff settings above remain unchanged.
@@ -862,6 +816,11 @@ def process_dispatch(
         # Celery may log task exceptions; preserve retry type but never copy
         # connector/provider details into the task failure surface.
         raise TransientFetchError("transient_fetch_failed") from None
+    except IngestLimitExceeded as exc:
+        _mark_dispatch_failed(
+            dispatch_id, exc, task_id=task_id, session_factory=factory
+        )
+        raise RuntimeError("ingest_too_large") from None
     except Exception as exc:
         _mark_dispatch_failed(
             dispatch_id, exc, task_id=task_id, session_factory=factory
@@ -1411,8 +1370,8 @@ def _mark_dispatch_failed(
 ) -> int | None:
     factory = session_factory or get_session_factory()
     error_code = (
-        "transient_fetch_failed"
-        if isinstance(exc, TransientFetchError)
+        "transient_fetch_failed" if isinstance(exc, TransientFetchError)
+        else "ingest_too_large" if isinstance(exc, IngestLimitExceeded)
         else "ingestion_failed"
     )
     event_id: int | None = None
@@ -1531,8 +1490,8 @@ def _mark_failed(item_id: int, exc: BaseException, *, session_factory=None) -> N
         if item is not None:
             item.state = "failed"
             item.fail_reason = (
-                "transient_fetch_failed"
-                if isinstance(exc, TransientFetchError)
+                "transient_fetch_failed" if isinstance(exc, TransientFetchError)
+                else "ingest_too_large" if isinstance(exc, IngestLimitExceeded)
                 else "ingestion_failed"
             )
             db.commit()

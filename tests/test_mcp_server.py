@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 import json
-import select as select_module
+import queue
 import subprocess
 import sys
+import threading
 import time
 from datetime import UTC, datetime, timedelta
 
@@ -34,6 +35,7 @@ from app.mcp_grants import (
 )
 from app.mcp_server import (
     McpToolFacade,
+    _mcp_transport_security,
     allowed_tool_names,
     create_mcp_server,
     create_streamable_http_app,
@@ -53,6 +55,37 @@ from app.models import (
     McpAccessGrant,
     PendingChannelAction,
 )
+
+
+def test_mcp_lazy_submission_uses_every_configured_ingest_quota(monkeypatch):
+    settings = Settings(
+        ingest_max_active_per_user=2,
+        ingest_daily_new_item_limit=3,
+        ingest_max_items_per_user=4,
+        ingest_max_active_global=5,
+        ingest_daily_new_item_limit_global=6,
+        ingest_daily_dispatch_limit_per_user=7,
+        ingest_daily_dispatch_limit_global=8,
+    )
+    monkeypatch.setattr("app.bootstrap.build_channel_service", lambda _settings: object())
+    facade = McpToolFacade(
+        settings=settings,
+        session_factory=lambda: None,
+        management=object(),
+        pending=object(),
+        publisher=lambda _dispatch_id: "task",
+    )
+
+    facade._ensure_services()
+
+    policy = facade.submission.quota_policy
+    assert policy.max_active_per_tenant == 2
+    assert policy.daily_new_item_limit == 3
+    assert policy.max_items_per_tenant == 4
+    assert policy.max_active_global == 5
+    assert policy.daily_new_item_limit_global == 6
+    assert policy.daily_dispatch_limit_per_tenant == 7
+    assert policy.daily_dispatch_limit_global == 8
 
 
 def _sqlite_grants():
@@ -1021,6 +1054,60 @@ def test_streamable_http_auth_scope_path_mode_and_provider_safe_projection():
         engine.dispose()
 
 
+def test_streamable_http_keeps_rebinding_protection_and_allows_validated_public_origin():
+    from starlette.testclient import TestClient
+
+    engine, factory = _sqlite_grants()
+    try:
+        grants = McpGrantService(factory)
+        grant = grants.issue(1, scope="full")
+        settings = Settings(
+            notebook_agent_env="development",
+            web_auth_enabled=True,
+            web_public_origin="https://notebookai.deequoique.tech",
+            web_auth_secret="x" * 32,
+            mcp_host="127.0.0.1",
+            mcp_port=8000,
+            mcp_path="/mcp",
+        )
+        app = create_streamable_http_app(
+            server=create_mcp_server(
+                scope="full",
+                facade=McpToolFacade(
+                    grant_service=grants,
+                    channel_service=_FakeChannelService(),
+                    settings=settings,
+                    mutation_ready=True,
+                ),
+            ),
+            grant_service=grants,
+            settings=settings,
+        )
+        initialize = {
+            "jsonrpc": "2.0",
+            "id": 1,
+            "method": "initialize",
+            "params": {
+                "protocolVersion": "2025-11-25",
+                "capabilities": {},
+                "clientInfo": {"name": "test", "version": "1"},
+            },
+        }
+        headers = {"Authorization": f"Bearer {grant.raw_token}"}
+        transport_security = _mcp_transport_security(settings)
+        assert transport_security.enable_dns_rebinding_protection is True
+        assert "notebookai.deequoique.tech" in transport_security.allowed_hosts
+        assert "https://notebookai.deequoique.tech" in transport_security.allowed_origins
+        assert "attacker.example" not in transport_security.allowed_hosts
+
+        with TestClient(
+            app, base_url="https://notebookai.deequoique.tech"
+        ) as client:
+            assert client.post("/mcp", json=initialize, headers=headers).status_code == 200
+    finally:
+        engine.dispose()
+
+
 def test_stdio_subprocess_keeps_stdout_protocol_clean_and_serves_tools():
     source = r'''
 from app.channels.types import TenantContext
@@ -1063,6 +1150,7 @@ run_stdio(
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
+        encoding="utf-8",
     )
 
     def send(value):
@@ -1072,9 +1160,15 @@ run_stdio(
 
     def receive():
         assert process.stdout is not None
-        ready, _, _ = select_module.select([process.stdout], [], [], 5)
-        assert ready, "stdio MCP server did not return a response"
-        line = process.stdout.readline()
+        lines: queue.Queue[str] = queue.Queue(maxsize=1)
+        threading.Thread(
+            target=lambda: lines.put(process.stdout.readline()),
+            daemon=True,
+        ).start()
+        try:
+            line = lines.get(timeout=5)
+        except queue.Empty:
+            pytest.fail("stdio MCP server did not return a response")
         assert line
         return json.loads(line)
 

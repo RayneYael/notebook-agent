@@ -1,13 +1,20 @@
+import json
 import inspect
+import subprocess
+import sys
 from dataclasses import replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 
+import certifi
 from kombu import Connection
 import pytest
 
 from app.connectors.base import (
+    Cue,
     ItemMeta,
     NeedsASR,
+    TextResult,
     TransientFetchError,
 )
 from app.config import Settings
@@ -15,22 +22,132 @@ from app.ingest.tasks import (
     IngestTask,
     _claim_dispatch,
     _complete_dispatch,
+    _connector,
     _mark_dispatch_failed,
     _release_dispatch_for_retry,
     build_worker_embedder,
+    create_item,
     fetch_text_task,
     process_item,
     publish_ingest_dispatch,
     run_isolated_batch,
 )
 from app.models import AppUser, ContentItem, IngestDispatch
-from app.tls import TrustedCA
+from app.tls import TLSConfigurationError, TrustedCA
 
 
 def test_celery_task_declares_exponential_item_retry():
     assert fetch_text_task.max_retries == 5
     assert fetch_text_task.retry_backoff == 8
     assert fetch_text_task.retry_backoff_max == 600
+
+
+def test_worker_connector_resolves_trusted_ca_before_construction(monkeypatch):
+    settings = replace(Settings(), tls_ca_bundle="/operator/ca.pem")
+    calls = []
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+    monkeypatch.setattr(
+        "app.ingest.tasks.configure_trusted_ca",
+        lambda bundle: calls.append(("ca", bundle)),
+    )
+
+    class Connector:
+        def __init__(self, **kwargs):
+            calls.append(("constructor", kwargs))
+
+        def match(self, _url):
+            return "dQw4w9WgXcQ"
+
+    monkeypatch.setattr("app.ingest.tasks.YouTubeConnector", Connector)
+
+    connector = _connector("https://youtu.be/dQw4w9WgXcQ")
+
+    assert isinstance(connector, Connector)
+    assert calls[0] == ("ca", "/operator/ca.pem")
+    assert calls[1][0] == "constructor"
+
+
+def test_worker_connector_fails_closed_before_constructor_for_invalid_ca(
+    monkeypatch, tmp_path
+):
+    settings = replace(
+        Settings(), tls_ca_bundle=str(tmp_path / "missing-ca.pem")
+    )
+    constructed = []
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+
+    class Connector:
+        def __init__(self, **_kwargs):
+            constructed.append(True)
+
+    monkeypatch.setattr("app.ingest.tasks.YouTubeConnector", Connector)
+
+    with pytest.raises(TLSConfigurationError, match="readable file"):
+        _connector("https://youtu.be/dQw4w9WgXcQ")
+
+    assert constructed == []
+
+
+def test_worker_ca_environment_reaches_bounded_subtitle_child(monkeypatch):
+    monkeypatch.delenv("SSL_CERT_FILE", raising=False)
+    monkeypatch.delenv("REQUESTS_CA_BUNDLE", raising=False)
+    settings = replace(Settings(), tls_ca_bundle=certifi.where())
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: settings)
+
+    connector = _connector("https://youtu.be/dQw4w9WgXcQ")
+    observed = []
+    body = json.dumps(
+        {
+            "events": [
+                {
+                    "tStartMs": 0,
+                    "dDurationMs": 1000,
+                    "segs": [{"utf8": "hello"}],
+                }
+            ]
+        }
+    ).encode()
+
+    def subtitle_runner(_args, **kwargs):
+        assert kwargs.get("env") is None
+        child = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                (
+                    "import json, os, sys; "
+                    "sys.stdout.write(json.dumps({"
+                    "'ssl': os.environ.get('SSL_CERT_FILE'), "
+                    "'requests': os.environ.get('REQUESTS_CA_BUNDLE')}))"
+                ),
+            ],
+            capture_output=True,
+            check=True,
+            text=True,
+        )
+        observed.append(json.loads(child.stdout))
+        return SimpleNamespace(returncode=0, stdout=body, stderr=b"")
+
+    connector._subtitle_runner = subtitle_runner
+    connector._meta["dQw4w9WgXcQ"] = {
+        "language": "en",
+        "subtitles": {
+            "en": [
+                {
+                    "ext": "json3",
+                    "url": "https://www.youtube.com/api/timedtext",
+                }
+            ]
+        },
+        "automatic_captions": {},
+    }
+
+    result = connector.fetch_text("dQw4w9WgXcQ")
+
+    assert result.cues[0].text == "hello"
+    assert observed == [
+        {"ssl": certifi.where(), "requests": certifi.where()}
+    ]
 
 
 def test_one_429_does_not_interrupt_fifteen_item_batch():
@@ -161,6 +278,62 @@ def test_worker_fetches_and_persists_metadata_before_text():
     assert item.state == "needs_asr"
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        TextResult(b"x" * 11, [Cue(0, 1, "ok")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "a"), Cue(1, 2, "b")], "official_cc", "en"),
+        TextResult(b"{}", [Cue(0, 1, "toolong")], "official_cc", "en"),
+    ],
+)
+def test_worker_rejects_oversized_transcript_before_storage_or_embedding(monkeypatch, result):
+    class Item:
+        id = 41
+        user_id = 57
+        platform = "youtube"
+        platform_id = "dQw4w9WgXcQ"
+        url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        chapters = None
+        state = "pending"
+
+    item = Item()
+
+    class DB:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def get(self, _model, _item_id): return item
+        def commit(self): return None
+
+    class Connector:
+        def fetch_meta(self, _platform_id): return None
+        def fetch_text(self, _platform_id): return result
+
+    class Store:
+        def put(self, *_args): pytest.fail("oversized content must not reach object storage")
+
+    class Embedder:
+        def embed(self, _texts): pytest.fail("oversized content must not reach the provider")
+
+    limits = replace(
+        Settings(),
+        ingest_max_raw_transcript_bytes=10,
+        ingest_max_cues_per_item=1,
+        ingest_max_text_chars_per_item=5,
+        ingest_max_segments_per_item=2,
+        ingest_max_embedding_chars_per_item=10,
+    )
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: limits)
+
+    with pytest.raises(ValueError, match="ingest_too_large"):
+        process_item(
+            item.id,
+            connector=Connector(),
+            embedder=Embedder(),
+            object_store=Store(),
+            session_factory=lambda: DB(),
+        )
+
+
 def test_cli_ingestion_fetches_metadata_exactly_once():
     class Store:
         item = None
@@ -235,6 +408,66 @@ def test_cli_ingestion_fetches_metadata_exactly_once():
         ("text", "dQw4w9WgXcQ"),
     ]
     assert store.item.title == "one fetch"
+    assert store.item.public_id
+
+
+def test_cli_resave_from_trash_clears_the_web_archive_marker(monkeypatch):
+    deleted_at = datetime(2026, 8, 7, tzinfo=UTC)
+    item = ContentItem(
+        id=41,
+        public_id="restored-public",
+        user_id=57,
+        platform="youtube",
+        platform_id="dQw4w9WgXcQ",
+        kind="video",
+        url="https://www.youtube.com/watch?v=dQw4w9WgXcQ",
+        state="ready",
+        archived_at=datetime(2026, 8, 6, tzinfo=UTC),
+        deleted_at=deleted_at,
+    )
+    scalar_results = [item, datetime(2026, 8, 8, tzinfo=UTC)]
+
+    class DB:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def get(self, model, object_id):
+            if model is AppUser and object_id == 57:
+                return object()
+            return None
+
+        def scalar(self, _statement):
+            return scalar_results.pop(0)
+
+        def commit(self):
+            return None
+
+    class Connector:
+        platform = "youtube"
+
+        def match(self, _url):
+            return "dQw4w9WgXcQ"
+
+    class SettingsProbe:
+        trash_retention_days = 30
+
+    monkeypatch.setattr("app.ingest.tasks.get_settings", lambda: SettingsProbe())
+
+    restored_id = create_item(
+        item.url,
+        user_id=item.user_id,
+        why_saved="restored",
+        connector=Connector(),
+        session_factory=lambda: DB(),
+    )
+
+    assert restored_id == item.id
+    assert item.deleted_at is None
+    assert item.archived_at is None
+    assert item.why_saved == "restored"
 
 
 def test_celery_task_passes_only_dispatch_and_current_task_id(monkeypatch):

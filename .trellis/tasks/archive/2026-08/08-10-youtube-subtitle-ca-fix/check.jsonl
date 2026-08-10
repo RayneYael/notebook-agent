@@ -1,0 +1,7 @@
+{"file":".trellis/spec/backend/index.md","reason":"Backend quality-check routing and documentation requirements."}
+{"file":".trellis/spec/backend/youtube-connector.md","reason":"Review connector behavior, required tests, and live-ingest invariants."}
+{"file":".trellis/spec/backend/provider-tls-diagnostics.md","reason":"Review fail-closed TLS verification and production redaction boundaries."}
+{"file":".trellis/spec/backend/error-handling.md","reason":"Review stable outward error behavior while internal TLS failures remain sanitized."}
+{"file":".trellis/spec/backend/quality-guidelines.md","reason":"Backend full-scope quality review entry."}
+{"file":".trellis/spec/backend/deployment-lifecycle.md","reason":"Review managed/direct runtime compatibility and configuration precedence."}
+{"file":".trellis/tasks/08-10-youtube-subtitle-ca-fix/research/subtitle-ca-root-cause.md","reason":"Check the implementation against the exact reproduced failure and controlled success."}

@@ -1,0 +1,12 @@
+{"file": ".trellis/tasks/08-07-web-video-library-mvp/research/product-reference-and-code-audit.md", "reason": "Preserve the complete linked-chat product loop, visual direction, existing code audit, and adopted official guidance"}
+{"file": ".trellis/spec/backend/langbot-channel-runtime.md", "reason": "Keep the signed loopback channel bridge private and fail closed while adding deterministic Web login approval"}
+{"file": ".trellis/spec/backend/provider-tls-diagnostics.md", "reason": "Preserve verified TLS and redacted diagnostics across the new Web boundary"}
+{"file": ".trellis/spec/backend/youtube-connector.md", "reason": "Reuse the existing asynchronous metadata and original-language JSON3 ingestion contract"}
+{"file": ".trellis/spec/backend/database-guidelines.md", "reason": "Keep Web sessions, content, dispatches, and transcripts tenant scoped and transaction safe"}
+{"file": ".trellis/spec/backend/error-handling.md", "reason": "Expose only stable auth, lifecycle, ingestion, and transcript error codes"}
+{"file": ".trellis/spec/backend/logging-guidelines.md", "reason": "Exclude login codes, tokens, CSRF values, URLs, identities, transcripts, and provider payloads from diagnostics"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Drive authentication, tenant, lifecycle, transcript, migration, and regression work with failing tests first"}
+{"file": ".trellis/spec/frontend/index.md", "reason": "Establish and later update the complete React frontend convention set in English"}
+{"file": ".trellis/spec/guides/cross-layer-thinking-guide.md", "reason": "Review channel approval, Web session, API, ingestion worker, object storage, and responsive UI as one lifecycle"}
+{"file": ".trellis/spec/backend/knowledge-item-management.md", "reason": "Preserve distinct Web archive and recycle-bin deletion semantics, tenant gates, restore convergence, and the merged migration head"}
+{"file": ".trellis/tasks/08-04-video-text-kb/design.md", "reason": "Preserve the parent content schema, asynchronous ingestion, and raw subtitle source-of-truth decisions"}

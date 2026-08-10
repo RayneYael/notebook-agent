@@ -28,11 +28,11 @@ from sqlalchemy.orm import Session
 from app.channels.types import TenantContext
 from app.config import Settings, get_settings
 from app.models import ContentItem, IngestDispatch
+from app.limits import normalize_why_saved
 
 
 MAX_ITEM_LIMIT = 50
 MAX_BATCH_SIZE = 10
-MAX_WHY_SAVED_CHARS = 500
 CURSOR_VERSION = 1
 _LOCATION = ("library", "trash")
 _PURGE_LOGGER = logging.getLogger("notebook_agent.runtime")
@@ -290,7 +290,10 @@ class KnowledgeItemManagementService:
             now = _as_utc(now or db.scalar(select(func.now())) or datetime.now(UTC))
             stmt = select(ContentItem).where(ContentItem.user_id == tenant.app_user_id)
             if location == "library":
-                stmt = stmt.where(ContentItem.deleted_at.is_(None))
+                stmt = stmt.where(
+                    ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
+                )
                 if marker:
                     timestamp, item_id = marker
                     stmt = stmt.where(
@@ -345,6 +348,7 @@ class KnowledgeItemManagementService:
                     ContentItem.id == item_id,
                     ContentItem.user_id == tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
             )
             if item is None:
@@ -375,6 +379,7 @@ class KnowledgeItemManagementService:
                     ContentItem.id == item_id,
                     ContentItem.user_id == tenant.app_user_id,
                     ContentItem.deleted_at.is_(None),
+                    ContentItem.archived_at.is_(None),
                 )
                 .with_for_update()
             )
@@ -400,6 +405,7 @@ class KnowledgeItemManagementService:
                         ContentItem.id.in_(ids),
                         ContentItem.user_id == tenant.app_user_id,
                         ContentItem.deleted_at.is_(None),
+                        ContentItem.archived_at.is_(None),
                     )
                     .with_for_update()
                 )
@@ -511,6 +517,7 @@ class KnowledgeItemManagementService:
                     # able from a missing item to callers.
                     raise ItemNotFound()
                 item.deleted_at = None
+                item.archived_at = None
                 item.delete_claim_token = uuid4().hex
                 item.purge_claimed_at = None
                 item.purge_attempts = 0
@@ -526,14 +533,10 @@ class KnowledgeItemManagementService:
 
     @staticmethod
     def _normalize_why_saved(value: str | None) -> str | None:
-        if value is None:
-            return None
-        if not isinstance(value, str):
+        try:
+            return normalize_why_saved(value)
+        except ValueError:
             raise InvalidWhySaved()
-        normalized = " ".join(value.split())
-        if len(normalized) > MAX_WHY_SAVED_CHARS:
-            raise InvalidWhySaved()
-        return normalized or None
 
     @staticmethod
     def _filters(
@@ -575,7 +578,10 @@ class KnowledgeItemManagementService:
             url=item.url,
             duration_sec=item.duration_sec,
             saved_at=item.saved_at,
-            why_saved=item.why_saved[:MAX_WHY_SAVED_CHARS] if item.why_saved else None,
+            # Preserve previously stored notes exactly. The shared 500-character
+            # contract applies to every new write, but silently truncating a
+            # legacy row on read would misrepresent the user's saved data.
+            why_saved=item.why_saved,
             ingestion_state=item.state,
             safe_error_code=_safe_error_code(item),
             deleted_at=deleted,

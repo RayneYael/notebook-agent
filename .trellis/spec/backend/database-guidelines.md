@@ -6,28 +6,27 @@
 
 ## Overview
 
-Notebook Agent uses SQLAlchemy and Alembic with PostgreSQL. Hosted competition
-runtime traffic uses a pooled Neon URL, while schema migrations use a direct
-Neon URL outside the application build and request lifecycle.
+Notebook Agent uses SQLAlchemy and Alembic with PostgreSQL. Production runtime
+traffic uses a pooled Neon URL, while schema migrations use the matching direct
+Neon URL in a bounded one-shot unit outside application build and request
+lifecycles.
 
-## Scenario: Keep the hosted schema revision synchronized with Alembic
+## Scenario: Keep the production Neon schema synchronized with Alembic
 
 ### 1. Scope / Trigger
 
-Apply this contract whenever adding or merging an Alembic migration, changing
-`vercel.json`, migrating the shared Neon development database, or deploying the
-competition health endpoint. It prevents a migration from reaching `main`
-while the health probe still expects the previous database revision.
+Apply this contract whenever adding or merging an Alembic migration, migrating
+the production Neon database, or deploying a production release. It prevents a
+release from starting against an incompatible or partially migrated schema.
 
 ### 2. Signatures
 
 ```dotenv
-# Vercel request runtime; must be a pooled Neon URL.
+# Long-running application processes; must be a pooled Neon URL.
 DATABASE_URL=postgresql://ROLE:PASSWORD@HOST-pooler.REGION.neon.tech/DB?sslmode=require
-EXPECTED_DATABASE_REVISION=<single Alembic head>
 
-# Operator-only migration process; must use the direct hostname.
-DATABASE_URL=postgresql+psycopg://ROLE:PASSWORD@HOST.REGION.neon.tech/DB?sslmode=require
+# One-shot migration unit only; must use the direct hostname.
+MIGRATION_DATABASE_URL=postgresql+psycopg://ROLE:PASSWORD@HOST.REGION.neon.tech/DB?sslmode=require
 ```
 
 ```bash
@@ -39,74 +38,72 @@ alembic current
 ### 3. Contracts
 
 - The repository must have exactly one Alembic head.
-- `vercel.json` `env.EXPECTED_DATABASE_REVISION` must equal that head in the
-  same commit that adds a migration.
-- `tests/test_deployment_health.py` derives the Alembic head and asserts this
-  equality; do not replace it with two copied constants.
-- Apply migrations with the direct Neon URL before promoting the corresponding
-  commit to the Git-connected `main` deployment. Never run migrations from a
-  Vercel build, import, or request handler.
-- Vercel stores only the pooled URL. Direct URLs remain in an operator's ignored
-  local environment or short-lived process environment.
+- Long-running Web/MCP, worker, and Beat units receive only `DATABASE_URL`.
+  They must never inherit `MIGRATION_DATABASE_URL`.
+- The one-shot migration unit maps `MIGRATION_DATABASE_URL` to `DATABASE_URL`,
+  then runs `alembic upgrade head`, `alembic current`, and `alembic check`
+  before any candidate application unit starts.
+- Never run migrations from an application build, import, or request handler.
+- Both URLs remain in separate root-owned mode-`0600` server environment files
+  and never enter GitHub Actions or repository files.
 - The shared development database has one designated migration operator at a
   time. Destructive tests use an isolated Neon branch or a local PostgreSQL
   database, not the shared `main` branch.
-- Responses and logs may expose only the expected/verified revision, never a
-  DSN, database password, provider exception message, or stack trace.
+- Responses and logs may expose only the verified revision, never a DSN,
+  database password, provider exception message, or stack trace.
 
 ### 4. Validation & Error Matrix
 
 | Condition | Required behavior |
 | --- | --- |
-| Vercel expected revision differs from Alembic head | deployment test fails before commit |
-| repository has multiple Alembic heads | validation fails; do not deploy or migrate |
-| database revision differs from Vercel expectation | health endpoint returns redacted HTTP 503 |
-| runtime URL is direct, non-Neon, non-TLS, or not pooled | health endpoint returns redacted HTTP 503 |
-| migration URL is pooled | operator stops and obtains the direct URL |
-| migration or connection fails | preserve the last committed expectation; report only a safe failure category |
+| Repository has multiple Alembic heads | Validation fails; do not deploy or migrate. |
+| Runtime URL is direct or migration URL is pooled | Stop admission and correct the isolated server files. |
+| Migration/current/check fails | Do not start the candidate; restore the previous release pointer. |
+| Long-running unit contains the migration URL | Static deployment test fails before commit. |
+| Migration or connection fails | Preserve production data and report only a safe failure category. |
 
 ### 5. Good / Base / Bad Cases
 
-- Good: a reviewed migration and the Vercel expected revision are committed
-  together, the designated operator upgrades Neon through the direct URL, and
-  the Git deployment returns the new revision with HTTP 200.
-- Base: a code-only deployment has no new migration, so the expected revision
-  and Neon schema remain unchanged.
-- Bad: merge a migration while leaving the old revision in `vercel.json`, share
-  the direct URL in chat, migrate through the pooler, or let every collaborator
-  run `alembic upgrade head` concurrently.
+- Good: a reviewed migration reaches `main`; the approved release uses the
+  direct URL in its one-shot admission, then starts long-running processes with
+  only the pooled URL.
+- Base: a code-only deployment runs idempotent migration admission and confirms
+  the existing single head before startup.
+- Bad: migrate through the pooler, expose the direct URL to long-running units,
+  print either DSN, or let every collaborator migrate production concurrently.
 
 ### 6. Tests Required
 
-- Load `vercel.json` and assert `EXPECTED_DATABASE_REVISION` equals
-  `ScriptDirectory.from_config(...).get_current_head()`.
-- Cover matching revision success and mismatched revision redacted 503 behavior.
-- Cover missing, direct, non-TLS, and non-pooler runtime URLs.
-- Before promotion, run `alembic heads`, migrate Neon, query
-  `alembic_version.version_num`, and verify required extensions without printing
-  the connection URL.
+- Assert `ScriptDirectory.from_config(...).get_current_head()` returns one head.
+- Static deployment tests must prove migration/runtime environment-file
+  separation and the `upgrade`/`current`/`check` sequence.
+- Before application startup, query `alembic_version.version_num` without
+  printing the connection URL and require it to equal the repository head.
+- Exercise migration failure rollback without deleting or downgrading data.
 
 ### 7. Wrong vs Correct
 
 #### Wrong
 
-```json
-{"env":{"EXPECTED_DATABASE_REVISION":"<previous revision copied by hand>"}}
+```ini
+EnvironmentFile=/etc/notebook-agent/notebook-agent.env
+# The same file contains DATABASE_URL and MIGRATION_DATABASE_URL.
 ```
 
-The migration can be on `main` while Vercel continues expecting the previous
-schema, making every health request fail.
+Every long-running process can now read the direct migration credential.
 
 #### Correct
 
-```python
-config = json.loads((root / "vercel.json").read_text())
-head = ScriptDirectory.from_config(Config(str(root / "alembic.ini"))).get_current_head()
-assert config["env"]["EXPECTED_DATABASE_REVISION"] == head
+```ini
+# Long-running unit
+EnvironmentFile=/etc/notebook-agent/notebook-agent.env
+
+# One-shot migration unit only
+EnvironmentFile=/etc/notebook-agent/migrations.env
+ExecStart=/opt/notebook-agent/current/deploy/scripts/run-production-migrations
 ```
 
-The committed configuration is checked against Alembic's actual graph instead
-of another duplicated revision constant.
+The direct credential exists only for bounded migration admission.
 
 ---
 

@@ -84,7 +84,7 @@ Changes to the lifecycle must run at least:
 
 ```bash
 python -m pytest -q tests/test_deployment_cli.py \
-  tests/test_deployment_health.py tests/test_mcp_server.py \
+  tests/test_production_caddy_deployment.py tests/test_mcp_server.py \
   tests/test_tasks.py tests/test_ingest_notifications.py
 sh -n scripts/notebook-agent
 git diff --check
@@ -101,3 +101,131 @@ provider credentials or mutate external services.
 - Copying all example variables into generated runtime configuration.
 - Creating buckets or stopping services that the launcher does not own.
 - Logging raw subprocess output without secret redaction.
+
+## Scenario: Shared-host production Web, API, MCP, and background runtime
+
+### 1. Scope / Trigger
+
+- Trigger: a production release serves the authenticated SPA, `/api/v1/*`, and
+  Streamable HTTP MCP on an existing host that already runs unrelated services.
+- This contract applies to `deploy/systemd/`, `deploy/compose/`,
+  `deploy/caddy/`, and the production deployment scripts. It does not replace
+  the profile-aware local launcher contract above.
+- The deployment owns only the `notebook-agent` systemd units, the
+  `notebook-agent` Compose project and volumes, `/opt/notebook-agent`,
+  `/etc/notebook-agent`, `/var/lib/notebook-agent`,
+  `/var/log/notebook-agent`, and the dedicated Caddy site block.
+
+### 2. Signatures
+
+- Combined public runtime:
+  `python -m app.cli mcp-server --transport streamable-http`, bound to
+  `127.0.0.1:8800`. Email-enabled production must not run a parallel
+  `python -m app.cli web-server`; the MCP command owns the SPA, API, and MCP
+  routes in one ASGI process.
+- Worker:
+  `python -m celery -A app.ingest.tasks.celery_app worker --queues=ingest,maintenance`.
+- Scheduler:
+  `python -m celery -A app.ingest.tasks.celery_app beat` with deployment-owned,
+  unique PID and schedule paths.
+- Restricted deploy command: `deploy <sha>`, where `<sha>` is exactly 40
+  lowercase hexadecimal characters and equals the current `origin/main`.
+- Caddy site: `notebookai.deequoique.tech` reverse proxies only to
+  `127.0.0.1:8800`.
+
+### 3. Contracts
+
+- Runtime environment requires `WEB_AUTH_ENABLED=true`,
+  `WEB_PUBLIC_ORIGIN=https://notebookai.deequoique.tech`,
+  `WEB_COOKIE_SECURE=true`, `MCP_PATH=/mcp`, `MCP_URL_TOKEN_MODE=false`, and a
+  writable `NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent`.
+- The combined MCP transport must retain SDK DNS-rebinding protection while
+  admitting the exact validated `WEB_PUBLIC_ORIGIN` host through Caddy.
+- `DATABASE_URL` is the pooled external PostgreSQL runtime URL.
+  `MIGRATION_DATABASE_URL` is the matching direct URL and is exposed only to
+  the one-shot migration unit.
+- Redis publishes only `127.0.0.1:16379`; MinIO publishes only
+  `127.0.0.1:19000` and `127.0.0.1:19001`. Neither service may bind a public
+  interface, and production Compose must not start PostgreSQL.
+- Dependency admission requires healthy Redis, healthy MinIO, and successful
+  creation or confirmation of the deployment-owned `MINIO_BUCKET` (default
+  `kb-raw`). A green MinIO liveness endpoint alone is not sufficient.
+- Shared-host Caddy integration is additive: preserve existing configuration,
+  validate the complete candidate configuration, install only the dedicated
+  hostname block, gracefully reload Caddy, and recheck existing routes.
+- Every systemd application unit that can emit file logs must set the writable
+  log directory and grant that directory through its sandbox. Secrets remain
+  in root-owned mode-`0600` environment files and must not appear in logs.
+
+### 4. Validation & Error Matrix
+
+| Condition | Required result |
+| --- | --- |
+| `8800`, `16379`, `19000`, or `19001` is already owned | Stop before mutation and report the conflict. |
+| Requested SHA is malformed or differs from `origin/main` | Reject the deploy without switching `current` or restarting units. |
+| Alembic has multiple heads or migration admission fails | Do not start the release; retain or restore the previous `current`. |
+| Redis or MinIO is unhealthy | Dependency unit fails; application units remain stopped. |
+| MinIO is live but bucket admission fails | Dependency unit fails; do not treat liveness as readiness. |
+| Complete Caddy candidate does not validate | Keep the original configuration and do not reload. |
+| New route fails after reload | Restore the backed-up Caddy configuration and gracefully reload it. |
+| An unrelated pre-existing route changes behavior | Roll back only the Notebook Agent site change and investigate. |
+| `NOTEBOOK_AGENT_LOG_DIR` is absent or unwritable | Unit startup fails; do not weaken the systemd filesystem sandbox. |
+| Post-switch health check fails | Restore the previous immutable release and restart only owned units. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: the external database is reachable, loopback ports are free, the
+  owned bucket exists, migrations pass, and HTTPS serves the SPA, API, and
+  `/mcp` through the combined process while existing host routes are unchanged.
+- Base: repeated deployment of the current clean `main` SHA is serialized and
+  idempotent; the owned Compose volumes and bucket remain intact.
+- Bad: starting both `web-server` and `mcp-server`, accepting MinIO health
+  without the bucket, binding Redis or MinIO to `0.0.0.0`, replacing the whole
+  Caddyfile without validation, or restarting/killing unrelated services.
+
+### 6. Tests Required
+
+- Static deployment tests assert the combined runtime contains `mcp-server`,
+  excludes `web-server`, binds MCP to loopback, enables Web auth, and disables
+  MCP URL tokens.
+- Compose tests assert there is no PostgreSQL service, every published
+  dependency port starts with `127.0.0.1`, Redis persistence/auth are enabled,
+  and `minio-init` admits the configured bucket.
+- Systemd tests assert worker queues, the unique Beat state paths, migration
+  gating, `NOTEBOOK_AGENT_LOG_DIR`, writable log paths, and separation of
+  runtime versus migration credentials.
+- Caddy tests assert only the Notebook Agent hostname and loopback upstream are
+  present. Operational validation must run `caddy validate` against the full
+  candidate configuration before a graceful reload and probe old routes after.
+- Deploy-script tests assert strict SHA parsing, `origin/main` equality,
+  serialization, targeted unit restarts, rollback to the previous release, and
+  absence of data-destructive commands such as `docker compose down`.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```ini
+ExecStart=/opt/notebook-agent/current/.venv/bin/python -m app.cli web-server
+# A second public MCP process is then started on another port.
+```
+
+```yaml
+ports:
+  - "6379:6379"
+```
+
+#### Correct
+
+```ini
+Environment=NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent
+Environment=MCP_HOST=127.0.0.1
+Environment=MCP_PORT=8800
+ExecStart=/opt/notebook-agent/current/.venv/bin/python -m app.cli mcp-server --transport streamable-http
+ReadWritePaths=/var/log/notebook-agent
+```
+
+```yaml
+ports:
+  - "127.0.0.1:16379:6379"
+```

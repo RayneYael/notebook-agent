@@ -17,6 +17,7 @@ from app.ingest.tasks import ingest_url
 from app.models import AppUser, ChannelIdentity
 from app.retrieval.search import bm25_search, vector_search
 from app.mcp_grants import McpGrantError, McpGrantService
+from app.web_auth import revoke_web_sessions
 
 
 def _print(name, hits):
@@ -75,6 +76,7 @@ def main() -> None:
     revoke.add_argument("grant_id")
     disable = grant_commands.add_parser("disable")
     disable.add_argument("grant_id")
+    commands.add_parser("web-server")
     args = parser.parse_args()
     if args.command == "users":
         _users(args)
@@ -89,6 +91,13 @@ def main() -> None:
         _mcp_grants(args)
         return
     settings = get_settings()
+    configure_runtime_logging(
+        log_dir=getattr(settings, "notebook_agent_log_dir", ".runtime/logs"),
+        max_bytes=getattr(
+            settings, "notebook_agent_log_max_bytes", 10 * 1024 * 1024
+        ),
+        backup_count=getattr(settings, "notebook_agent_log_backup_count", 5),
+    )
     if args.command == "mcp-server":
         from app.mcp_server import run_stdio, run_streamable_http
 
@@ -97,13 +106,22 @@ def main() -> None:
         else:
             run_streamable_http(settings=settings)
         return
-    configure_runtime_logging(
-        log_dir=settings.notebook_agent_log_dir,
-        max_bytes=settings.notebook_agent_log_max_bytes,
-        backup_count=settings.notebook_agent_log_backup_count,
-    )
     if args.command == "gateway-server":
         serve_channel_gateway(settings)
+        return
+    if args.command == "web-server":
+        import uvicorn
+
+        from app.api.runtime import build_web_app
+
+        uvicorn.run(
+            build_web_app(settings),
+            host=settings.web_host,
+            port=settings.web_port,
+            proxy_headers=True,
+            forwarded_allow_ips=settings.web_forwarded_allow_ips,
+            access_log=False,
+        )
         return
     if args.command == "ask":
         asyncio.run(_ask(args, settings))
@@ -145,6 +163,7 @@ def _users(args) -> None:
             raise SystemExit(f"app user {args.user_id} not found")
         if args.user_command == "disable":
             user.disabled_at = datetime.now(UTC)
+            revoke_web_sessions(db, user.id)
             db.commit()
         elif args.user_command == "enable":
             user.disabled_at = None

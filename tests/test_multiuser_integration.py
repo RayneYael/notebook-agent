@@ -13,6 +13,7 @@ import pytest
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
+    ModelMessagesTypeAdapter,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
@@ -970,9 +971,7 @@ def test_registered_tenants_merge_content_threads_tokens_and_duplicates(db_facto
         duplicate = merged_items[0]
         assert duplicate.id == target_item.id
         assert duplicate.saved_at == datetime(2026, 1, 2, tzinfo=UTC)
-        assert duplicate.why_saved == (
-            "[source]\nsource reason\n\n[target]\ntarget reason"
-        )
+        assert duplicate.why_saved == "[source] source reason [target] target reason"
         assert (duplicate.watch_state, duplicate.watch_pos_sec) == ("watched", 48)
         assert db.scalar(
             select(func.count(Segment.id)).where(Segment.item_id == duplicate.id)
@@ -1430,6 +1429,72 @@ def test_context_window_and_channels_do_not_mix(db_factory):
     assert len(history) == 4
     assert token_limited == []
     assert other == []
+
+
+def test_same_external_conversation_id_is_isolated_by_tenant_identity(db_factory):
+    """The same client conversation label must not join two Web tenants."""
+
+    conversation_id = f"shared-web-conversation-{uuid4().hex}"
+    message_a = envelope(
+        channel="web",
+        user=f"web-a-{uuid4().hex}",
+        message="message-a",
+        conversation=conversation_id,
+    )
+    message_b = envelope(
+        channel="web",
+        user=f"web-b-{uuid4().hex}",
+        message="message-b",
+        conversation=conversation_id,
+    )
+    with db_factory() as db:
+        tenant_a = resolve_or_register(db, message_a)
+        tenant_b = resolve_or_register(db, message_b)
+        thread_a = get_or_create_thread(db, tenant_a, message_a)
+        thread_b = get_or_create_thread(db, tenant_b, message_b)
+        save_completed_turn(
+            db,
+            thread=thread_a,
+            envelope=message_a,
+            assistant_text="answer-a",
+            sources=[],
+            model_messages=[
+                ModelRequest(parts=[UserPromptPart(content="message-a")]),
+                ModelResponse(parts=[TextPart(content="answer-a")]),
+            ],
+        )
+        save_completed_turn(
+            db,
+            thread=thread_b,
+            envelope=message_b,
+            assistant_text="answer-b",
+            sources=[],
+            model_messages=[
+                ModelRequest(parts=[UserPromptPart(content="message-b")]),
+                ModelResponse(parts=[TextPart(content="answer-b")]),
+            ],
+        )
+        db.commit()
+
+    assert tenant_a.app_user_id != tenant_b.app_user_id
+    assert tenant_a.channel_identity_id != tenant_b.channel_identity_id
+    assert thread_a.id != thread_b.id
+    assert thread_a.public_id != thread_b.public_id
+    assert thread_a.external_conversation_id == thread_b.external_conversation_id == conversation_id
+    assert thread_a.app_user_id == tenant_a.app_user_id
+    assert thread_b.app_user_id == tenant_b.app_user_id
+
+    with db_factory() as db:
+        history_a = load_message_history(
+            db, thread_a.id, max_turns=10, max_tokens=1_000
+        )
+        history_b = load_message_history(
+            db, thread_b.id, max_turns=10, max_tokens=1_000
+        )
+
+    assert ModelMessagesTypeAdapter.dump_python(
+        history_a, mode="json"
+    ) != ModelMessagesTypeAdapter.dump_python(history_b, mode="json")
 
 
 @pytest.mark.asyncio

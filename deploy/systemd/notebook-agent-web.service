@@ -1,0 +1,46 @@
+[Unit]
+Description=Notebook Agent private Web API
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=notebook-agent
+Group=notebook-agent
+WorkingDirectory=/opt/notebook-agent/current
+EnvironmentFile=/etc/notebook-agent/notebook-agent.env
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=NOTEBOOK_AGENT_LOG_DIR=/var/log/notebook-agent
+Environment=NOTEBOOK_AGENT_ENV=production
+Environment=NOTEBOOK_AGENT_LOG_RETRIEVAL_CONTENT=false
+Environment=WEB_SERVE_STATIC=false
+Environment=WEB_HOST=127.0.0.1
+Environment=WEB_PORT=8000
+Environment=WEB_COOKIE_SECURE=true
+Environment=WEB_FORWARDED_ALLOW_IPS=127.0.0.1
+ExecStartPre=/usr/bin/test -f /opt/notebook-agent/current/.migration-admitted
+ExecStart=/opt/notebook-agent/current/.venv/bin/python -m app.cli web-server
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+LogsDirectory=notebook-agent
+LogsDirectoryMode=0750
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target

@@ -8,7 +8,7 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, inspect, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -24,6 +24,7 @@ from app.channels.errors import (
     WrongChannelLinkToken,
 )
 from app.channels.types import ChannelEnvelope, TenantContext
+from app.limits import normalize_why_saved
 from app.models import (
     AppUser,
     ChannelIdentity,
@@ -31,10 +32,12 @@ from app.models import (
     ContentItem,
     ConversationThread,
     IngestDispatch,
+    McpAccessGrant,
     Segment,
+    WebSession,
 )
 
-LINKABLE_CHANNELS = frozenset({"telegram", "wechat"})
+LINKABLE_CHANNELS = frozenset({"telegram", "wechat", "web"})
 LINK_TOKEN_TTL = timedelta(minutes=10)
 _LINK_TOKEN_RE = re.compile(r"[A-Za-z0-9_-]{43}\Z")
 _CHANNEL_LIKE_RE = re.compile(r"[a-z][a-z0-9_-]{1,31}\Z")
@@ -334,6 +337,29 @@ def _merge_tenants(db: Session, source_user_id: int, target_user_id: int) -> Non
         .order_by(ChannelLinkToken.id)
         .with_for_update()
     ).all()
+    # Some legacy/unit fixtures intentionally create only the pre-Web schema.
+    # Production reaches this path only after the head migration, where both
+    # tables are present and therefore locked/revoked transactionally.
+    bind = db.get_bind()
+    has_web_sessions = inspect(bind).has_table("web_session")
+    has_mcp_grants = inspect(bind).has_table("mcp_access_grant")
+    # Credentials belonging to the tenant being absorbed must never become
+    # live source credentials.  Keep revoked rows as audit history under the
+    # surviving user before deleting the target root.
+    if has_web_sessions:
+        db.scalars(
+            select(WebSession)
+            .where(WebSession.app_user_id.in_([source_user_id, target_user_id]))
+            .order_by(WebSession.id)
+            .with_for_update()
+        ).all()
+    if has_mcp_grants:
+        db.scalars(
+            select(McpAccessGrant)
+            .where(McpAccessGrant.app_user_id.in_([source_user_id, target_user_id]))
+            .order_by(McpAccessGrant.id)
+            .with_for_update()
+        ).all()
     items = list(
         db.scalars(
             select(ContentItem)
@@ -420,6 +446,19 @@ def _merge_tenants(db: Session, source_user_id: int, target_user_id: int) -> Non
         .where(ChannelLinkToken.app_user_id == target_user_id)
         .values(app_user_id=source_user_id)
     )
+    current = datetime.now(UTC)
+    if has_web_sessions:
+        db.execute(
+            update(WebSession)
+            .where(WebSession.app_user_id == target_user_id)
+            .values(app_user_id=source_user_id, revoked_at=current)
+        )
+    if has_mcp_grants:
+        db.execute(
+            update(McpAccessGrant)
+            .where(McpAccessGrant.app_user_id == target_user_id)
+            .values(app_user_id=source_user_id, revoked_at=current, updated_at=current)
+        )
     db.flush()
     target_user = db.get(AppUser, target_user_id)
     if target_user is None:
@@ -500,8 +539,15 @@ def _merge_why_saved(
     source_value = values.get(source_user_id, "")
     target_value = values.get(target_user_id, "")
     if source_value and target_value and source_value != target_value:
-        return f"[source]\n{source_value}\n\n[target]\n{target_value}"
-    return source_value or target_value or None
+        merged = f"[source]\n{source_value}\n\n[target]\n{target_value}"
+    else:
+        merged = source_value or target_value or None
+    try:
+        return normalize_why_saved(merged)
+    except ValueError:
+        raise IdentityConflict(
+            "saved notes are too long to merge without data loss"
+        ) from None
 
 
 def _token_hash(raw_token: str) -> str:

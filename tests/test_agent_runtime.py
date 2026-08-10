@@ -841,12 +841,14 @@ async def test_composer_timeout_discards_draft_and_returns_evidence():
     )
 
     async def slow_composer(_messages, _info):
-        await asyncio.sleep(0.05)
+        # Leave retrieval enough headroom on slower CI/Windows hosts while
+        # keeping the answer phase deterministically beyond its own budget.
+        await asyncio.sleep(1.0)
         return ModelResponse(parts=[TextPart("unreachable draft")])
 
     result = await KnowledgeAgent(
         TestModel(call_tools=["search_segments"], custom_output_text="retrieval stop"),
-        replace(Settings(), agent_timeout_seconds=0.01),
+        replace(Settings(), agent_timeout_seconds=0.5),
         lambda _: FakeServices([citation]),
         composer_model=FunctionModel(slow_composer),
     ).run(request())
