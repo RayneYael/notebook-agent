@@ -69,7 +69,9 @@
 - [ ] Create a dedicated evaluator user and issue a labeled 30-day `full` grant.
       Privately hand off the one-time raw token.
 - [ ] Through the official MCP client, verify initialize, ten-tool discovery,
-      a read call, and one bounded submission. Confirm the worker processes it.
+      a read call, and one bounded submission. Verify both Bearer and HTTPS
+      `/mcp/c/<token>` authentication without logging the raw token. Confirm
+      the worker processes it.
 - [ ] Enable mutation flags only after all readiness gates pass, restart only
       Notebook Agent units, and repeat critical checks.
 

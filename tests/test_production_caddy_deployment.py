@@ -26,7 +26,7 @@ def test_combined_runtime_and_background_units_are_isolated():
     assert "mcp-server --transport streamable-http" in runtime
     assert "Environment=MCP_HOST=127.0.0.1" in runtime
     assert "Environment=MCP_PORT=8800" in runtime
-    assert "Environment=MCP_URL_TOKEN_MODE=false" in runtime
+    assert "Environment=MCP_URL_TOKEN_MODE=true" in runtime
     assert "Environment=WEB_AUTH_ENABLED=true" in runtime
     assert "web-server" not in runtime
     assert "--queues=ingest,maintenance" in worker

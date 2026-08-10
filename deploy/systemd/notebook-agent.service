@@ -23,7 +23,7 @@ Environment=WEB_FORWARDED_ALLOW_IPS=127.0.0.1
 Environment=MCP_HOST=127.0.0.1
 Environment=MCP_PORT=8800
 Environment=MCP_PATH=/mcp
-Environment=MCP_URL_TOKEN_MODE=false
+Environment=MCP_URL_TOKEN_MODE=true
 ExecStartPre=/usr/bin/test -f /opt/notebook-agent/current/.migration-admitted
 ExecStart=/opt/notebook-agent/current/.venv/bin/python -m app.cli mcp-server --transport streamable-http
 Restart=on-failure
