@@ -30,7 +30,8 @@ Frontend changes must preserve tenant privacy, honest asynchronous states, acces
 - Same-origin `fetch` with `credentials: "same-origin"`.
 - CSRF cookie copied to `X-CSRF-Token` for unsafe requests.
 - `Idempotency-Key` on add and retry.
-- 401 handler clears the full query cache.
+- A `session_invalid` 401 clears and replaces the full private query client;
+  recoverable operation-level 401s remain local to their form.
 - Server-provided `available_actions` controls management buttons.
 - Loading, error, filtered-empty, and true-first-empty are distinct states.
 - API typo routes remain JSON and must never fall through to the SPA shell.
@@ -50,7 +51,14 @@ pnpm build
 pnpm check:api
 ```
 
-Tests must cover lifecycle copy and polling, true-first-empty behavior, partial batch outcomes, login secret handling, challenge exchange, cache clearing, detail chapters/transcript, and server-derived actions. Use a real browser for native dialog behavior, mobile overflow, SPA refresh, and security headers.
+Tests must cover lifecycle copy and polling, true-first-empty behavior, partial
+batch outcomes, email challenge/verification, recoverable invalid codes,
+duplicate-submit protection, cache rotation, detail chapters/transcript, and
+server-derived actions. Use a real browser for native dialog behavior, mobile
+overflow, SPA refresh, security headers, and page-error/console cleanliness.
+When native View Transitions are used, consume only the expected skipped
+transition `AbortError`; do not leave its readiness promise unhandled or swallow
+genuine update/navigation failures.
 
 ---
 

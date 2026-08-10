@@ -13,7 +13,11 @@ interface AppShellProps {
 }
 
 export function AppShell({ children, loginChannel, onLogout, logoutPending = false, logoutError }: AppShellProps) {
-  const loginChannelLabel = loginChannel === "telegram" ? "Telegram" : "微信";
+  const loginChannelLabel = loginChannel === "telegram"
+    ? "Telegram"
+    : loginChannel === "email"
+      ? "邮箱"
+      : "微信";
   const accountMenuRef = useRef<HTMLDetailsElement>(null);
 
   useEffect(() => {

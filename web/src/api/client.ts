@@ -1,12 +1,15 @@
 import type {
   BatchSubmitInput,
   BatchSubmitResponse,
+  AcceptedResponse,
   Capabilities,
   ChallengeStatus,
+  EmailChallengeInput,
+  EmailVerifyInput,
   LibraryItem,
   LibraryPageResponse,
   LoginChallenge,
-  LoginChannel,
+  LegacyLoginChannel,
   SessionInfo,
   TranscriptPage,
 } from "./contracts";
@@ -61,14 +64,19 @@ export async function requestJson<T>(
       payload.code ?? fallback.code,
       payload.message ?? fallback.message,
     );
-    if (response.status === 401) unauthorizedHandler?.();
+    // Login verification failures are 401s too, but they are recoverable
+    // form errors.  Only an invalidated browser session tears down the
+    // private query client and redirects to the login route.
+    if (response.status === 401 && payload.code === "session_invalid") {
+      unauthorizedHandler?.();
+    }
     throw error;
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
 
-export function createLoginChallenge(channel: LoginChannel): Promise<LoginChallenge> {
+export function createLoginChallenge(channel: LegacyLoginChannel): Promise<LoginChallenge> {
   return requestJson("/api/v1/auth/challenges", {
     method: "POST",
     body: JSON.stringify({ target_channel: channel }),
@@ -98,6 +106,27 @@ export function exchangeChallenge(
     method: "POST",
     headers: browserAuthorization(browserSecret),
     body: JSON.stringify({ public_id: challengeId }),
+  });
+}
+
+export function requestEmailChallenge(
+  email: string,
+): Promise<AcceptedResponse> {
+  const input: EmailChallengeInput = { email };
+  return requestJson("/api/v1/auth/challenges", {
+    method: "POST",
+    body: JSON.stringify(input),
+  });
+}
+
+export function verifyEmailChallenge(
+  email: string,
+  code: string,
+): Promise<SessionInfo> {
+  const input: EmailVerifyInput = { email, code };
+  return requestJson("/api/v1/auth/verify", {
+    method: "POST",
+    body: JSON.stringify(input),
   });
 }
 

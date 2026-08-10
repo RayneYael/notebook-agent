@@ -22,12 +22,13 @@ Pure logic should remain a pure function. `shouldPollLibrary()` is a function, n
 
 - Use `useQuery` for session, list, and detail reads.
 - Use `useInfiniteQuery` for cursor-based transcript pages.
-- Use `useMutation` for add, archive, restore, retry, edit, exchange, and logout.
+- Use `useMutation` for add, archive, restore, retry, edit, email challenge,
+  email verification, and logout.
 - Query keys begin with the resource boundary: `session`, `library`, `library-item`, `transcript`, or `login-challenge`.
 - Invalidate `library` after any item mutation. Update the exact detail cache from the mutation response.
 - Poll only when a visible item is `queued` or `processing`. Terminal states stop polling.
-- Login challenge polling stops when approved or when the request errors.
-- API errors do not trigger unbounded retries. A 401 immediately clears the private cache.
+- API errors do not trigger unbounded retries. Only a `session_invalid` 401
+  immediately clears and replaces the private query client.
 
 ---
 
@@ -45,4 +46,5 @@ Pure logic should remain a pure function. `shouldPollLibrary()` is a function, n
 - Polling ready, failed, needs-action, or archived items.
 - Keeping a browser login secret in an effect-independent global or Web Storage.
 - Using an effect to duplicate query-derived state.
-- Forgetting to stop an interval when a challenge is approved.
+- Applying the global unauthorized handler to a recoverable
+  `verification_failed` response.

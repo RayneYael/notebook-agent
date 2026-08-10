@@ -16,7 +16,8 @@ There is no Redux, Zustand, persistent query cache, or browser-auth store. The s
 - **Local interaction state:** open dialog, draft URLs, save reason, current filters, edit mode, and form errors. Owned by `useState`.
 - **URL state:** current route and public item ID. Owned by React Router.
 - **Security state:** session and CSRF raw tokens. Owned by `Secure` cookies; the session cookie is `HttpOnly`.
-- **Ephemeral login state:** challenge public ID and browser secret. Held only in `LoginPage` memory until navigation.
+- **Ephemeral login state:** email address, verification code, and current
+  email/code step. Held only in `LoginPage` memory until navigation.
 
 ---
 
@@ -24,7 +25,12 @@ There is no Redux, Zustand, persistent query cache, or browser-auth store. The s
 
 Do not introduce application-global state for the current MVP. A new global store requires a demonstrated state owner that is neither server state, URL state, nor one component subtree.
 
-The query client is global infrastructure, not the source of truth. It must be cleared on logout and any 401 before another user can authenticate in the same browser.
+The query client is global infrastructure, not the source of truth. Rotate it
+after successful verification and seed only the returned canonical session.
+Clear and replace it on confirmed logout or a `session_invalid` 401 before
+another user can authenticate in the same browser. Operation-specific 401s,
+such as an invalid verification code, stay in the owning form and must not
+trigger global session teardown.
 
 ---
 
@@ -46,3 +52,5 @@ The query client is global infrastructure, not the source of truth. It must be c
 - Deriving retry/archive permissions from UI assumptions.
 - Persisting a transcript cursor after the user leaves the detail session.
 - Creating a second global source of truth for lifecycle labels.
+- Treating every 401 as an expired browser session and destroying a recoverable
+  login flow.

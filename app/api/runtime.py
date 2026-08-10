@@ -5,6 +5,7 @@ from __future__ import annotations
 from datetime import timedelta
 
 from app.api.app import WebApiServices, create_app
+from app.api.conversation_routes import resolve_browser_session_identity
 from app.api.email_auth_routes import EmailWebAuthAdapter
 from app.config import Settings, get_settings
 from app.db import get_session_factory
@@ -16,12 +17,36 @@ from app.web.library import ContentLibraryService
 from app.web.transcript import TranscriptService
 
 
+class _LazyChannelService:
+    """Defer Agent/provider construction until a compatibility route is used."""
+
+    def __init__(self, settings, session_factory) -> None:
+        self._settings = settings
+        self._session_factory = session_factory
+        self._service = None
+
+    def _get(self):
+        if self._service is None:
+            from app.bootstrap import build_channel_service
+
+            self._service = build_channel_service(
+                self._settings,
+                session_factory=self._session_factory,
+            )
+        return self._service
+
+    async def handle(self, envelope):
+        return await self._get().handle(envelope)
+
+
 def build_web_app(
     settings: Settings | None = None,
     *,
     session_factory=None,
     publisher=None,
     object_store=None,
+    email_auth=None,
+    channel_service=None,
     mount_static: bool | None = None,
 ):
     """Wire concrete services while keeping test doubles explicit and local."""
@@ -38,9 +63,11 @@ def build_web_app(
     submission = build_ingest_submission_service(factory, publisher, settings)
     email_enabled = bool(getattr(settings, "web_auth_enabled", False))
     if email_enabled:
-        email_auth = build_email_auth_service(settings, factory)
+        # Tests and embedders may inject the deterministic in-memory service;
+        # production still builds the configured provider-backed service here.
+        email_auth = email_auth or build_email_auth_service(settings, factory)
         web_auth = EmailWebAuthAdapter(email_auth)
-        expected_origin = settings.web_public_origin or ""
+        expected_origin = getattr(settings, "web_public_origin", None) or ""
         public_login_channels = ("email",)
     else:
         # The old channel-approved service remains injectable for existing
@@ -73,6 +100,13 @@ def build_web_app(
     services = WebApiServices(
         web_auth=web_auth,
         email_auth=email_auth,
+        channel_service=channel_service or _LazyChannelService(settings, factory),
+        session_resolver=(email_auth or web_auth).resolve_session,
+        session_identity_resolver=lambda session: resolve_browser_session_identity(
+            session, factory
+        ),
+        session_factory=factory,
+        settings=settings,
         trusted_proxy_hosts=getattr(settings, "web_trusted_proxy_hosts", ""),
         library=ContentLibraryService(
             factory,

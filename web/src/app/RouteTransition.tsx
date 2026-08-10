@@ -4,7 +4,11 @@ import { Link, useNavigate } from "react-router";
 import type { LinkProps, NavigateOptions, To } from "react-router";
 
 type TransitionDocument = Document & {
-  startViewTransition?: (update: () => void) => unknown;
+  startViewTransition?: (update: () => void) => NativeViewTransition | undefined;
+};
+
+type NativeViewTransition = {
+  ready: Promise<unknown>;
 };
 
 export type RouteNavigate = (to: To, options?: NavigateOptions) => void;
@@ -31,7 +35,25 @@ export function startRouteTransition(update: () => void): void {
     return;
   }
 
-  startViewTransition.call(document, () => flushSync(update));
+  const transition = startViewTransition.call(document, () => flushSync(update));
+  if (transition) {
+    void transition.ready.catch((error: unknown) => {
+      // Chromium rejects `ready` with AbortError when a transition is
+      // superseded by the update it was meant to animate (for example when
+      // logout rotates the query client before navigating).  That is an
+      // expected skip; preserve every other failure for the browser to report.
+      if (!isSkippedTransitionError(error)) throw error;
+    });
+  }
+}
+
+function isSkippedTransitionError(error: unknown): boolean {
+  return (
+    typeof error === "object"
+    && error !== null
+    && "name" in error
+    && (error as { name?: unknown }).name === "AbortError"
+  );
 }
 
 export function useRouteNavigate(): RouteNavigate {

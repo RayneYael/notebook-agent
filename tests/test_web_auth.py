@@ -131,3 +131,13 @@ def test_web_origin_rejects_lookalike_loopback_and_paths():
     ):
         with pytest.raises(ValueError, match="WEB_ORIGIN"):
             Settings(**base, web_origin=unsafe).validate_web_auth()
+
+
+def test_web_api_prefix_is_the_fixed_canonical_contract():
+    base = {
+        "database_url": "postgresql+psycopg://unused/unused",
+        "redis_url": "redis://unused/0",
+    }
+    assert Settings(**base, web_api_prefix="/api/v1").web_api_prefix == "/api/v1"
+    with pytest.raises(ValueError, match="WEB_API_PREFIX.*fixed"):
+        Settings(**base, web_api_prefix="/custom-api")

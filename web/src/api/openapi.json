@@ -1,6 +1,19 @@
 {
   "components": {
     "schemas": {
+      "AcceptedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "status": {
+            "const": "accepted",
+            "default": "accepted",
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "title": "AcceptedResponse",
+        "type": "object"
+      },
       "AuthErrorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -195,6 +208,7 @@
             ],
             "items": {
               "enum": [
+                "email",
                 "telegram",
                 "wechat"
               ],
@@ -262,22 +276,6 @@
           "expires_at"
         ],
         "title": "ChallengeCreateResponse",
-        "type": "object"
-      },
-      "ChallengeReferenceRequest": {
-        "additionalProperties": false,
-        "properties": {
-          "public_id": {
-            "maxLength": 200,
-            "minLength": 1,
-            "title": "Public Id",
-            "type": "string"
-          }
-        },
-        "required": [
-          "public_id"
-        ],
-        "title": "ChallengeReferenceRequest",
         "type": "object"
       },
       "ChallengeStatusResponse": {
@@ -388,6 +386,115 @@
         "title": "ChapterResponse",
         "type": "object"
       },
+      "ConsumeLinkTokenInput": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "ConsumeLinkTokenInput",
+        "type": "object"
+      },
+      "ConversationCitationResponse": {
+        "additionalProperties": false,
+        "description": "Browser-safe citation projection without internal row identifiers.",
+        "properties": {
+          "excerpt": {
+            "title": "Excerpt",
+            "type": "string"
+          },
+          "start_sec": {
+            "anyOf": [
+              {
+                "type": "number"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Start Sec"
+          },
+          "title": {
+            "title": "Title",
+            "type": "string"
+          },
+          "url": {
+            "title": "Url",
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "excerpt",
+          "url"
+        ],
+        "title": "ConversationCitationResponse",
+        "type": "object"
+      },
+      "ConversationResponse": {
+        "additionalProperties": false,
+        "description": "Stable compatibility response for the retained conversation surface.",
+        "properties": {
+          "action_results": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "title": "Action Results",
+            "type": "array"
+          },
+          "citations": {
+            "items": {
+              "$ref": "#/components/schemas/ConversationCitationResponse"
+            },
+            "title": "Citations",
+            "type": "array"
+          },
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "text": {
+            "title": "Text",
+            "type": "string"
+          },
+          "thread_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Thread Id"
+          }
+        },
+        "required": [
+          "status",
+          "text"
+        ],
+        "title": "ConversationResponse",
+        "type": "object"
+      },
       "DispatchResponse": {
         "additionalProperties": false,
         "properties": {
@@ -441,6 +548,47 @@
         "title": "DispatchResponse",
         "type": "object"
       },
+      "EmailChallengeRequest": {
+        "additionalProperties": false,
+        "description": "Request an email verification code.\n\nServer-side normalization and validation remain authoritative; the\nbounded field prevents oversized bodies from reaching the auth service.",
+        "properties": {
+          "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email"
+        ],
+        "title": "EmailChallengeRequest",
+        "type": "object"
+      },
+      "EmailVerifyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "maxLength": 6,
+            "minLength": 6,
+            "pattern": "^\\d{6}$",
+            "title": "Code",
+            "type": "string"
+          },
+          "email": {
+            "maxLength": 254,
+            "minLength": 3,
+            "title": "Email",
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "code"
+        ],
+        "title": "EmailVerifyRequest",
+        "type": "object"
+      },
       "ErrorResponse": {
         "additionalProperties": false,
         "properties": {
@@ -458,6 +606,19 @@
           "message"
         ],
         "title": "ErrorResponse",
+        "type": "object"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "title": "Detail",
+            "type": "array"
+          }
+        },
+        "title": "HTTPValidationError",
         "type": "object"
       },
       "HealthResponse": {
@@ -719,6 +880,71 @@
         "title": "LibraryPageResponse",
         "type": "object"
       },
+      "LinkTokenInput": {
+        "additionalProperties": false,
+        "properties": {
+          "target_channel": {
+            "maxLength": 32,
+            "minLength": 1,
+            "title": "Target Channel",
+            "type": "string"
+          }
+        },
+        "required": [
+          "target_channel"
+        ],
+        "title": "LinkTokenInput",
+        "type": "object"
+      },
+      "LinkTokenResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "token": {
+            "title": "Token",
+            "type": "string"
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "title": "LinkTokenResponse",
+        "type": "object"
+      },
+      "LinkedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "linked": {
+            "default": true,
+            "title": "Linked",
+            "type": "boolean"
+          }
+        },
+        "title": "LinkedResponse",
+        "type": "object"
+      },
+      "MessageInput": {
+        "additionalProperties": false,
+        "properties": {
+          "message_id": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Message Id",
+            "type": "string"
+          },
+          "text": {
+            "maxLength": 16000,
+            "minLength": 1,
+            "title": "Text",
+            "type": "string"
+          }
+        },
+        "required": [
+          "message_id",
+          "text"
+        ],
+        "title": "MessageInput",
+        "type": "object"
+      },
       "SessionResponse": {
         "additionalProperties": false,
         "properties": {
@@ -735,6 +961,7 @@
           },
           "login_channel": {
             "enum": [
+              "email",
               "telegram",
               "wechat"
             ],
@@ -812,6 +1039,46 @@
         "title": "TranscriptPageResponse",
         "type": "object"
       },
+      "ValidationError": {
+        "properties": {
+          "ctx": {
+            "title": "Context",
+            "type": "object"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "title": "Location",
+            "type": "array"
+          },
+          "msg": {
+            "title": "Message",
+            "type": "string"
+          },
+          "type": {
+            "title": "Error Type",
+            "type": "string"
+          }
+        },
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError",
+        "type": "object"
+      },
       "WhySavedRequest": {
         "additionalProperties": false,
         "properties": {
@@ -833,10 +1100,6 @@
       }
     },
     "securitySchemes": {
-      "BrowserSecret": {
-        "scheme": "bearer",
-        "type": "http"
-      },
       "SessionCookie": {
         "in": "cookie",
         "name": "__Host-kb_session",
@@ -852,73 +1115,12 @@
   "paths": {
     "/api/v1/auth/challenges": {
       "post": {
-        "operationId": "create_challenge_api_v1_auth_challenges_post",
+        "operationId": "request_challenge_api_v1_auth_challenges_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ChallengeCreateRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "201": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChallengeCreateResponse"
-                }
-              }
-            },
-            "description": "Successful Response"
-          },
-          "400": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
-                }
-              }
-            },
-            "description": "Bad Request"
-          },
-          "422": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
-                }
-              }
-            },
-            "description": "Unprocessable Entity"
-          },
-          "429": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
-                }
-              }
-            },
-            "description": "Too Many Requests"
-          }
-        },
-        "summary": "Create Challenge",
-        "tags": [
-          "authentication"
-        ]
-      }
-    },
-    "/api/v1/auth/challenges/status": {
-      "post": {
-        "operationId": "challenge_status_api_v1_auth_challenges_status_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/ChallengeReferenceRequest"
+                "$ref": "#/components/schemas/EmailChallengeRequest"
               }
             }
           },
@@ -929,23 +1131,13 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/ChallengeStatusResponse"
+                  "$ref": "#/components/schemas/AcceptedResponse"
                 }
               }
             },
             "description": "Successful Response"
           },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/ChallengeStatusResponse"
-                }
-              }
-            },
-            "description": "Accepted"
-          },
-          "401": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -953,17 +1145,7 @@
                 }
               }
             },
-            "description": "Unauthorized"
-          },
-          "410": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
-                }
-              }
-            },
-            "description": "Gone"
+            "description": "Forbidden"
           },
           "422": {
             "content": {
@@ -974,14 +1156,29 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
           }
         },
-        "security": [
-          {
-            "BrowserSecret": []
-          }
-        ],
-        "summary": "Challenge Status",
+        "summary": "Request Challenge",
         "tags": [
           "authentication"
         ]
@@ -1011,7 +1208,7 @@
         ],
         "responses": {
           "204": {
-            "description": "Successful Response"
+            "description": "Session revoked"
           },
           "401": {
             "content": {
@@ -1037,11 +1234,21 @@
             "content": {
               "application/json": {
                 "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            },
+            "description": "Validation Error"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
                   "$ref": "#/components/schemas/AuthErrorResponse"
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Internal Server Error"
           }
         },
         "security": [
@@ -1077,7 +1284,7 @@
             },
             "description": "Unauthorized"
           },
-          "422": {
+          "500": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1085,7 +1292,7 @@
                 }
               }
             },
-            "description": "Unprocessable Entity"
+            "description": "Internal Server Error"
           }
         },
         "security": [
@@ -1099,21 +1306,21 @@
         ]
       }
     },
-    "/api/v1/auth/sessions": {
+    "/api/v1/auth/verify": {
       "post": {
-        "operationId": "exchange_session_api_v1_auth_sessions_post",
+        "operationId": "verify_api_v1_auth_verify_post",
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/ChallengeReferenceRequest"
+                "$ref": "#/components/schemas/EmailVerifyRequest"
               }
             }
           },
           "required": true
         },
         "responses": {
-          "201": {
+          "200": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1122,16 +1329,6 @@
               }
             },
             "description": "Successful Response"
-          },
-          "202": {
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/AuthErrorResponse"
-                }
-              }
-            },
-            "description": "Accepted"
           },
           "401": {
             "content": {
@@ -1143,7 +1340,7 @@
             },
             "description": "Unauthorized"
           },
-          "410": {
+          "403": {
             "content": {
               "application/json": {
                 "schema": {
@@ -1151,7 +1348,7 @@
                 }
               }
             },
-            "description": "Gone"
+            "description": "Forbidden"
           },
           "422": {
             "content": {
@@ -1162,14 +1359,19 @@
               }
             },
             "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AuthErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
           }
         },
-        "security": [
-          {
-            "BrowserSecret": []
-          }
-        ],
-        "summary": "Exchange Session",
+        "summary": "Verify",
         "tags": [
           "authentication"
         ]
@@ -1193,6 +1395,202 @@
         "summary": "Capabilities",
         "tags": [
           "public"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/messages": {
+      "post": {
+        "operationId": "send_message_api_v1_conversations__conversation_id__messages_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MessageInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          },
+          "504": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Gateway Timeout"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Send Message",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/v1/conversations/{conversation_id}/reset": {
+      "post": {
+        "operationId": "reset_conversation_api_v1_conversations__conversation_id__reset_post",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversation_id",
+            "required": true,
+            "schema": {
+              "title": "Conversation Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ConversationResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Reset Conversation",
+        "tags": [
+          "conversation"
         ]
       }
     },
@@ -1868,6 +2266,204 @@
           }
         ],
         "summary": "Save Batch"
+      }
+    },
+    "/api/v1/link-tokens": {
+      "post": {
+        "operationId": "create_token_api_v1_link_tokens_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/LinkTokenInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkTokenResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Create Token",
+        "tags": [
+          "conversation"
+        ]
+      }
+    },
+    "/api/v1/link-tokens/consume": {
+      "post": {
+        "operationId": "consume_token_api_v1_link_tokens_consume_post",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-CSRF-Token",
+            "required": true,
+            "schema": {
+              "maxLength": 200,
+              "minLength": 1,
+              "title": "X-Csrf-Token",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConsumeLinkTokenInput"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LinkedResponse"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unauthorized"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Unprocessable Entity"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            },
+            "description": "Service Unavailable"
+          }
+        },
+        "security": [
+          {
+            "SessionCookie": []
+          }
+        ],
+        "summary": "Consume Token",
+        "tags": [
+          "conversation"
+        ]
       }
     }
   }

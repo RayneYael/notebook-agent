@@ -371,3 +371,42 @@ Redefined full as worker, Beat, MCP, and Notebook Agent gateway with dual-listen
 ### Next Steps
 
 - Push the reviewed commits to origin/dev while leaving main untouched.
+
+
+## Session 14: Web email auth contract and full-browser readiness
+
+**Date**: 2026-08-10
+**Task**: Web email auth contract and full-browser readiness
+**Branch**: `codex/web-email-auth-contract-fix`
+
+### Summary
+
+Unified browser email authentication, canonical FastAPI composition, generated API contracts, frontend login/session behavior, and archived the Trellis task after full automated validation.
+
+### Main Changes
+
+- Unified production browser API composition and email auth/session/logout contracts.
+- Aligned React Query session rotation, routes, generated OpenAPI types, CI, and regression coverage.
+- Recorded browser runtime conventions in Trellis specs and archived the completed task.
+
+### Git Commits
+
+| Hash | Message |
+|------|---------|
+| `b883b27` | (see git log) |
+| `1ae3d9f` | (see git log) |
+| `424e7f5` | (see git log) |
+
+### Testing
+
+- [OK] Python full suite: 542 passed, 74 skipped.
+- [OK] Frontend Vitest 79/79, API contract check, lint, typecheck, and production build passed.
+- [OK] Mobile browser login/logout smoke passed without console errors or horizontal overflow.
+
+### Status
+
+[OK] **Completed**
+
+### Next Steps
+
+- Merge codex/web-email-auth-contract-fix into main and run real dev database ingestion end to end.

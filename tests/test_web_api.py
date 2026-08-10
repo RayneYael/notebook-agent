@@ -10,6 +10,7 @@ from app.agent.types import AgentAnswer
 from app.config import Settings
 from app.models import AppUser, ChannelIdentity, WebAuthChallenge, WebSession
 from app.web_api import SESSION_COOKIE_NAME, build_web_auth_service, create_web_app
+from app.web.auth import CSRF_COOKIE_NAME
 from app.web_auth import InMemoryEmailSender, InMemoryLoginRateLimiter, ResendEmailSender, SmtpEmailSender, WebAuthService
 
 
@@ -61,19 +62,24 @@ async def test_web_api_sets_secure_cookie_rejects_origin_and_builds_trusted_enve
         cookie = response.headers["set-cookie"].lower()
         assert "secure" in cookie and "httponly" in cookie and "samesite=lax" in cookie
         assert SESSION_COOKIE_NAME in client.cookies
+        csrf = client.cookies.get(CSRF_COOKIE_NAME)
+        assert csrf
         response = await client.post(
             "/api/v1/conversations/browser-thread/messages",
             json={"message_id": "m1", "text": "hello"},
-            headers=origin,
+            headers={**origin, "X-CSRF-Token": csrf},
         )
         assert response.status_code == 200
         assert channels.envelopes[-1].channel == "web"
         assert channels.envelopes[-1].external_user_id == "web@example.test"
         assert "access-control-allow-origin" not in response.headers
-        response = await client.delete("/api/v1/session", headers=origin)
+        response = await client.delete(
+            "/api/v1/auth/session",
+            headers={**origin, "X-CSRF-Token": csrf},
+        )
         assert response.status_code == 204
         assert SESSION_COOKIE_NAME in response.headers["set-cookie"]
-        assert (await client.get("/api/v1/session")).status_code == 401
+        assert (await client.get("/api/v1/auth/session")).status_code == 401
 
 
 def _email_settings(**changes) -> Settings:

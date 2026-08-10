@@ -27,6 +27,7 @@ This directory contains guidelines for backend development. Fill in each file wi
 | [Knowledge Item Management](./knowledge-item-management.md) | Tenant-scoped inventory tools, durable destructive confirmation, recycle-bin lifecycle, retry, and bounded purge | Active |
 | [Ingestion Completion Queue](./ingest-completion-queue.md) | Transactional completion outbox, durable broker boundary, at-least-once delivery, and bounded repair sweeps | Active |
 | [MCP Channel Runtime](./mcp-channel-runtime.md) | Official MCP v2 transports, tenant-bound grants, scope-gated tools, URL-token safety, and fail-closed readiness | Active |
+| [Web Browser Runtime](./web-browser-runtime.md) | Canonical browser app ownership, email session/CSRF contract, tenant affinity, OpenAPI composition, and MCP isolation | Active |
 | [Deployment Lifecycle](./deployment-lifecycle.md) | Profile-aware one-command startup, minimal configuration, process ownership, and exactly-one-Beat safety | Active |
 
 ---
