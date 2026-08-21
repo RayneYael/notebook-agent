@@ -43,6 +43,12 @@ function startTime(value: number | null | undefined): string | null {
   return `${minutes}:${seconds}`;
 }
 
+function assistantTextWithoutSourceList(text: string, hasCitations: boolean): string {
+  if (!hasCitations) return text;
+  const sourceListStart = text.lastIndexOf("\n\n来源：\n");
+  return sourceListStart === -1 ? text : text.slice(0, sourceListStart).trimEnd();
+}
+
 export function ChatPage({
   fetchHistory = () => listConversations(),
   fetchTurns = getConversationTurns,
@@ -312,7 +318,7 @@ export function ChatPage({
                     <p className="eyebrow">资料库助手</p>
                     {turn.status === "not_found" ? <p className="chat-answer-state">没有在当前资料库中找到足够依据。</p> : null}
                     {turn.status === "failed" ? <p className="chat-answer-state">这次检索未能完成。</p> : null}
-                    <p>{turn.assistant_text}</p>
+                    <p>{assistantTextWithoutSourceList(turn.assistant_text, (turn.citations?.length ?? 0) > 0)}</p>
                     {(turn.citations?.length ?? 0) > 0 ? <ul className="chat-citations" aria-label="回答来源">{turn.citations?.map((citation) => (
                       <li key={`${citation.url}:${citation.start_sec ?? ""}`}>
                         <a href={citation.url} target="_blank" rel="noreferrer"><strong>{citation.title}</strong>{startTime(citation.start_sec) ? <span>{startTime(citation.start_sec)}</span> : null}<small>{citation.excerpt}</small></a>

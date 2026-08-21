@@ -23,7 +23,7 @@ const turns: ConversationTurns = {
   conversation_id: "conversation-1",
   turns: [{
     user_text: "用户访谈应该怎样做？",
-    assistant_text: "先明确你要验证的假设。",
+    assistant_text: "先明确你要验证的假设。\n\n来源：\n- 访谈方法\n  - [S42] https://example.test/video — 从开放问题开始。",
     status: "ok",
     error_code: null,
     citations: [{
@@ -99,6 +99,8 @@ describe("AI search chat page", () => {
 
     await waitFor(() => expect(fetchTurns).toHaveBeenCalledWith("thread-1"));
     await waitFor(() => expect(screen.getAllByText("先明确你要验证的假设。")).toHaveLength(2));
+    expect(screen.queryByText(/来源：/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/\[S42\]/)).not.toBeInTheDocument();
     expect(screen.getByRole("link", { name: /访谈方法/ })).toHaveAttribute("href", "https://example.test/video");
     expect(screen.getByText("1:05")).toBeInTheDocument();
   });
