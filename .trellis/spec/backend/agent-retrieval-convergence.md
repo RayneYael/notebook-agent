@@ -193,6 +193,15 @@ make at most four provider requests (4000 capped output tokens at the default).
   structured draft, and source rendering owns titles and real URLs. Sources
   are grouped once per item in retrieval order, retain distinct timestamp
   evidence under the item, and never infer chapter titles.
+- Knowledge answers may use restrained Markdown only when it improves
+  readability: paragraphs, short headings, ordered/unordered lists, emphasis,
+  blockquotes, and inline code. The shared text contract applies to every
+  channel, including channels that display Markdown punctuation literally.
+  Model text must not contain Markdown links, images, raw HTML, or a
+  source/reference section. Composer text never writes `[S…]`; it returns
+  structured `citation_ids` and the server appends exact markers. A bounded
+  natural answer must leave each exact `[S<positive segment id>]` marker as
+  ordinary text, never link it, wrap it in code, or replace its spelling.
 - Composer retry exhaustion, timeout, provider failure, or a terminal
   usage-limit failure after the optional compressed attempt discards every
   draft and returns `status=ok` evidence fallback. The
@@ -262,6 +271,9 @@ make at most four provider requests (4000 capped output tokens at the default).
   captured-length recovery, compressed allow-list enforcement, shared timeout,
   no-op compression, and second-limit fallback. Assert no repair starts
   retrieval and no invalid model content reaches history.
+- Cover Markdown inside a valid Composer section and a bounded natural answer;
+  assert structured citation selection and exact-marker validation are
+  unchanged, while model-authored URLs/source headings remain rejected.
 - Cover hybrid duplicate collapse, one-item crowding, six-item selection,
   distant same-item segments, public limit clamping, bounded candidate pool,
   and PostgreSQL tenant predicates during hydration.

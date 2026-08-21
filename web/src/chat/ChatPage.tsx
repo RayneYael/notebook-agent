@@ -14,6 +14,7 @@ import type {
   ConversationTurns,
 } from "../api/contracts";
 import { RouteLink } from "../app/RouteTransition";
+import { MarkdownAnswer } from "./MarkdownAnswer";
 
 interface ChatPageProps {
   fetchHistory?: () => Promise<ConversationHistoryPage>;
@@ -318,7 +319,7 @@ export function ChatPage({
                     <p className="eyebrow">资料库助手</p>
                     {turn.status === "not_found" ? <p className="chat-answer-state">没有在当前资料库中找到足够依据。</p> : null}
                     {turn.status === "failed" ? <p className="chat-answer-state">这次检索未能完成。</p> : null}
-                    <p>{assistantTextWithoutSourceList(turn.assistant_text, (turn.citations?.length ?? 0) > 0)}</p>
+                    <MarkdownAnswer>{assistantTextWithoutSourceList(turn.assistant_text, (turn.citations?.length ?? 0) > 0)}</MarkdownAnswer>
                     {(turn.citations?.length ?? 0) > 0 ? <ul className="chat-citations" aria-label="回答来源">{turn.citations?.map((citation) => (
                       <li key={`${citation.url}:${citation.start_sec ?? ""}`}>
                         <a href={citation.url} target="_blank" rel="noreferrer"><strong>{citation.title}</strong>{startTime(citation.start_sec) ? <span>{startTime(citation.start_sec)}</span> : null}<small>{citation.excerpt}</small></a>

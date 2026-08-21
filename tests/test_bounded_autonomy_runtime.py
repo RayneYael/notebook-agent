@@ -125,7 +125,7 @@ def test_inline_validator_accepts_current_ids_and_rejects_forged_or_malformed():
     )
     assert parse_inline_citation_ids("summary [S3] [S3]") == (3,)
     valid = validate_natural_answer(
-        "summary [S3]",
+        "## Summary\n\n- **grounded** `detail` [S3]",
         citations={3: citation},
         knowledge_search_succeeded=True,
     )

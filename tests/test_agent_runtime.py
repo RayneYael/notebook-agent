@@ -45,13 +45,13 @@ class FakeServices:
         return self.citations[0]
 
 
-def composer_for(*segment_ids: int) -> TestModel:
+def composer_for(*segment_ids: int, text: str = "根据知识库证据的总结。") -> TestModel:
     return TestModel(
         call_tools=[],
         custom_output_text=json.dumps({
             "sections": [
                 {
-                    "text": "根据知识库证据的总结。",
+                    "text": text,
                     "citation_ids": list(segment_ids),
                 }
             ]
@@ -107,6 +107,31 @@ async def test_agent_requires_search_and_returns_only_recorded_sources():
         for part in message.parts
     )
     assert services.calls == ["search_segments"]
+
+
+@pytest.mark.asyncio
+async def test_composer_markdown_keeps_structured_citation_selection():
+    citation = Citation(
+        item_id=2,
+        segment_id=3,
+        title="Only source",
+        excerpt="actual evidence",
+        url="https://example.test/source",
+    )
+    runtime = KnowledgeAgent(
+        TestModel(call_tools=["search_segments"], custom_output_text="stop"),
+        replace(Settings(), agent_timeout_seconds=2),
+        lambda _: FakeServices([citation]),
+        composer_model=composer_for(
+            3,
+            text="## 结论\n\n- **重点**：使用 `open_at`。",
+        ),
+    )
+
+    result = await runtime.run(request())
+
+    assert "## 结论\n\n- **重点**：使用 `open_at`。 [S3]" in result.answer.text
+    assert result.answer.citations == [citation]
 
 
 @pytest.mark.asyncio

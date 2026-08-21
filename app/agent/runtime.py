@@ -119,6 +119,10 @@ BOUNDED_AUTONOMY_INSTRUCTIONS = """
 9. 读工具返回 error 时只能选择返回中的 recovery.allowed 动作；retry_same_read
    必须完全重复失败的工具调用，不能修改参数。空搜索不是错误；只有真正改写查询
    且返回允许 reformulate_search 时才能再次搜索。provider 或 mutation 失败不能自行重试。
+10. 只在有助于阅读时使用克制的 Markdown：段落、短标题、有序/无序列表、强调、
+    引用和行内代码。简单回答保持简单，不要强制使用标题或列表。不得输出 Markdown 链接、
+    图片、原始 HTML 或“来源/参考资料”区块。精确 [S<segment_id>] 标记必须保持原样，
+    不得改写、链接化、放入代码或用其他形式替代。
 """.strip()
 
 
@@ -1329,7 +1333,11 @@ def build_agent(
 COMPOSER_INSTRUCTIONS = """
 你是私有知识库的回答编辑器。只能依据服务器提供的证据写回答，不能使用模型记忆补充事实。
 输出结构化 sections；每个 section 写简洁中文文本，并列出支持该 section 的 segment ID。
-不要输出 URL、视频标题、[S…] 标记、章节标题或服务器未提供的事实。最多引用五个不同视频。
+只在有助于阅读时使用克制的 Markdown：段落、短标题、有序/无序列表、强调、引用和行内代码。
+简单回答保持简单，不要强制使用标题或列表。不要输出 URL、Markdown 链接、图片、原始 HTML、
+“来源/参考资料”区块、视频标题、[S…] 标记、章节标题或服务器未提供的事实。
+证据编号只能放在 section 的 citation_ids 字段，服务器会追加精确 [S<segment_id>] 标记；
+不要在文本中改写、链接化、放入代码或替代这些标记。最多引用五个不同视频。
 """.strip()
 
 
