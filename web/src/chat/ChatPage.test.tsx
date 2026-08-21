@@ -5,6 +5,7 @@ import { MemoryRouter } from "react-router";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ConversationHistoryPage, ConversationResponse, ConversationTurns } from "../api/contracts";
+import { ApiError } from "../api/client";
 import { ChatPage } from "./ChatPage";
 
 const history: ConversationHistoryPage = {
@@ -105,6 +106,21 @@ describe("AI search chat page", () => {
     expect(screen.getByText("1:05")).toBeInTheDocument();
   });
 
+  it("renders a compact plain-text sidebar preview without Markdown markers", async () => {
+    renderPage({
+      fetchHistory: vi.fn().mockResolvedValue({
+        items: [{
+          ...history.items![0],
+          preview: "## 演讲大纲\n\n- **开场**：介绍 `樟宜机场`。 [S42]",
+        }],
+        next_cursor: null,
+      }),
+    });
+
+    expect(await screen.findByText("演讲大纲 开场：介绍 樟宜机场。")).toBeInTheDocument();
+    expect(screen.queryByText(/##|\*\*|`|\[S42\]/)).not.toBeInTheDocument();
+  });
+
   it("sends a question through the selected durable conversation and prevents duplicate submit", async () => {
     const user = userEvent.setup();
     let resolveSend: (value: ConversationResponse) => void;
@@ -128,6 +144,21 @@ describe("AI search chat page", () => {
     expect(send).toHaveBeenCalledOnce();
     resolveSend!({ status: "ok", text: "", citations: [], action_results: [], thread_id: "thread-1", error_code: null });
     await waitFor(() => expect(input).toHaveValue(""));
+  });
+
+  it("describes a server timeout without claiming the network failed", async () => {
+    const user = userEvent.setup();
+    renderPage({
+      send: vi.fn().mockRejectedValue(new ApiError(504, "request_failed", "请求无法完成")),
+    });
+
+    const input = await screen.findByRole("textbox", { name: "向资料库提问" });
+    await waitFor(() => expect(input).toBeEnabled());
+    await user.type(input, "拟定四分钟演讲大纲");
+    await user.click(screen.getByRole("button", { name: "发送问题" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("回答生成超时，请重新发送。");
+    expect(screen.queryByText(/检查网络/)).not.toBeInTheDocument();
   });
 
   it("creates a fresh server conversation from the sidebar control", async () => {

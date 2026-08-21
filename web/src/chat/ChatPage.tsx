@@ -13,6 +13,7 @@ import type {
   ConversationResponse,
   ConversationTurns,
 } from "../api/contracts";
+import { ApiError } from "../api/client";
 import { RouteLink } from "../app/RouteTransition";
 import { MarkdownAnswer } from "./MarkdownAnswer";
 
@@ -23,6 +24,13 @@ interface ChatPageProps {
   send?: (conversationId: string, input: { message_id: string; text: string }) => Promise<ConversationResponse>;
   deleteThread?: (threadId: string) => Promise<void>;
   createId?: () => string;
+}
+
+function sendErrorMessage(error: Error | null): string {
+  if (error instanceof ApiError && error.status === 504) {
+    return "回答生成超时，请重新发送。";
+  }
+  return "请求未能完成。请检查网络后重新发送。";
 }
 
 interface NewConversationResult {
@@ -48,6 +56,20 @@ function assistantTextWithoutSourceList(text: string, hasCitations: boolean): st
   if (!hasCitations) return text;
   const sourceListStart = text.lastIndexOf("\n\n来源：\n");
   return sourceListStart === -1 ? text : text.slice(0, sourceListStart).trimEnd();
+}
+
+function markdownPreviewText(text: string): string {
+  return text
+    .replace(/!\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/\[([^\]]+)\]\([^)]*\)/g, "$1")
+    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-+*]\s+|\d+[.)]\s+)/gm, "")
+    .replace(/\*\*([^*]+)\*\*/g, "$1")
+    .replace(/__([^_]+)__/g, "$1")
+    .replace(/~~([^~]+)~~/g, "$1")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\s*\[S\d+\]/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export function ChatPage({
@@ -242,7 +264,7 @@ export function ChatPage({
                         onClick={() => selectConversation(item.thread_id, item.conversation_id)}
                       >
                         <strong>{item.title}</strong>
-                        {item.preview ? <span>{item.preview}</span> : null}
+                        {item.preview ? <span>{markdownPreviewText(item.preview)}</span> : null}
                         <time dateTime={item.updated_at}>{displayTime(item.updated_at)}</time>
                       </button>
                       <div
@@ -330,7 +352,7 @@ export function ChatPage({
               ))}
               {pendingQuestion ? <li className="chat-turn"><article className="chat-message chat-message--user"><p className="eyebrow">你的问题</p><p>{pendingQuestion}</p></article><article className="chat-message chat-message--assistant"><p className="eyebrow">资料库助手</p><p aria-live="polite">正在检索资料库…</p></article></li> : null}
             </ol>
-            {sendMessage.isError ? <p className="chat-error" role="alert">请求未能完成。请检查网络后重新发送。</p> : null}
+            {sendMessage.isError ? <p className="chat-error" role="alert">{sendErrorMessage(sendMessage.error)}</p> : null}
           </div>
           <form className="chat-compose" onSubmit={submit}>
             <label htmlFor="chat-question">向资料库提问</label>

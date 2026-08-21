@@ -166,6 +166,10 @@ make at most four provider requests (4000 capped output tokens at the default).
   answer composition. Without citations they use phase-accurate failed-limit
   or timeout behavior. The raw hard limits remain defense in depth; increasing
   them is not a convergence fix.
+- Browser/API transport deadlines must cover both independently bounded model
+  stages plus a small dispatch grace period. They must not reuse one stage's
+  `AGENT_TIMEOUT_SECONDS` as the whole-request deadline, because doing so can
+  cancel the evidence-backed composition/fallback path as retrieval expires.
 - The composer has no retrieval or action tools. It receives only the user
   question and bounded Citation title, excerpt, timestamp, and segment-ID
   allow-list. It uses `PromptedOutput(AnswerDraft)` to parse schema-prompted
@@ -230,6 +234,7 @@ make at most four provider requests (4000 capped output tokens at the default).
 | normal search/expansion budgets are exhausted | no further backend retrieval; planner can stop and existing evidence composes |
 | successful searches have no evidence | `not_found/no_evidence`, no composer and no limit wording |
 | planner timeout or usage limit after evidence | log retrieval phase/kind and compose from existing Citations |
+| Web request reaches one retrieval-stage timeout with evidence | transport remains open for composition/fallback; do not return a premature 504 |
 | planner timeout or usage limit without evidence | fail closed with phase-accurate wording |
 | answer draft has unknown IDs or six item IDs | one answer-only retry using the original allow-list |
 | full answer output-token limit or captured `finish_reason=length` | one compressed attempt when the evidence view is smaller |

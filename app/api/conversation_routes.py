@@ -43,6 +43,7 @@ _MAX_MESSAGE_ID = 128
 _MAX_MESSAGE_TEXT = 16_000
 _DEFAULT_HISTORY_LIMIT = 30
 _MAX_HISTORY_LIMIT = 50
+_WEB_AGENT_TIMEOUT_GRACE_SECONDS = 10.0
 _PRIVATE_RESULT_KEYS = frozenset(
     {
         "id",
@@ -64,6 +65,13 @@ CsrfHeader = Annotated[
     str,
     Header(alias="X-CSRF-Token", min_length=1, max_length=200),
 ]
+
+
+def _web_agent_transport_timeout(settings: object) -> float:
+    """Cover the runtime's retrieval and answer stages plus dispatch overhead."""
+
+    stage_timeout = float(getattr(settings, "agent_timeout_seconds", 30.0))
+    return 2 * stage_timeout + _WEB_AGENT_TIMEOUT_GRACE_SECONDS
 
 
 class MessageInput(BaseModel):
@@ -567,6 +575,10 @@ def build_conversation_router(
         if not 1 <= len(conversation_id.strip()) <= _MAX_CONVERSATION_ID:
             raise HTTPException(status_code=422, detail="validation_error")
         try:
+            # The legacy knowledge runtime owns two independently bounded
+            # model stages: retrieval followed by answer composition.  Keep
+            # this transport timeout outside both stage budgets so a retrieval
+            # timeout with trusted evidence can still compose or fall back.
             answer = await asyncio.wait_for(
                 channel.handle(
                     web_envelope(
@@ -576,7 +588,7 @@ def build_conversation_router(
                         payload.text,
                     )
                 ),
-                timeout=float(getattr(settings, "agent_timeout_seconds", 30.0)),
+                timeout=_web_agent_transport_timeout(settings),
             )
         except TimeoutError:
             raise HTTPException(status_code=504, detail="request_failed") from None
